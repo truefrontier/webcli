@@ -49,6 +49,7 @@ REPLY_LIMIT = 2**30  # a reply may carry images, base64
 MAX_WAITING = 32  # commands queued for the turn; more are refused as busy
 START_SECONDS = 20  # how long a command waits for a daemon it started to answer
 HOUSEKEEPING_SECONDS = 300
+SUN_PATH_MAX = 104  # macOS sockaddr_un.sun_path, NUL included: a longer $WEBCLI_HOME can't host a daemon
 SENT_HINT = "The prompt may have been sent: check the chat list before sending it again."
 RESTARTING = "The webcli daemon is stopping or restarting; nothing was run. Retry in a moment."
 
@@ -473,6 +474,8 @@ def serve_command(ident: Identity) -> list[str]:
 def start(ident: Identity) -> None:
     """Start a daemon in the background: kickstart the launchd agent when it is loaded, else spawn `serve`
     detached (a second one exits at once on serve.lock). Its raw output goes nowhere: it logs through redaction."""
+    if len(os.fsencode(socket_path(ident))) >= SUN_PATH_MAX:
+        raise OSError(f"{socket_path(ident)} is too long for a unix socket; commands run in-process")
     if plist_path(ident).exists() and launchd_loaded(ident):
         if subprocess.run(["launchctl", "kickstart", f"gui/{os.getuid()}/{ident.label}"],
                           capture_output=True).returncode == 0:

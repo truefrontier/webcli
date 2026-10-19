@@ -21,6 +21,14 @@ from webcli.sites.chatgpt import fetch
 from webcli.sites.chatgpt.guard import POLICY
 
 IDENT = Identity("chatgpt:default")
+_real_start = daemon.start  # before conftest stubs it
+
+
+async def _timed(coro):
+    import time
+
+    began = time.monotonic()
+    return await coro, time.monotonic() - began
 
 
 @pytest.fixture
@@ -316,3 +324,16 @@ def test_the_daemons_output_goes_through_redaction_into_its_log(monkeypatch):
     assert token not in text and token[:20] not in text and "<redacted>" in text
     assert stat.S_IMODE((config.home() / "logs" / f"serve-{IDENT.dir_name}.log").stat().st_mode) == 0o600
     assert output.RedactingStream  # the stream class serve() installs
+
+
+def test_a_home_too_long_for_a_socket_runs_in_process_without_waiting(monkeypatch):
+    monkeypatch.setattr(daemon, "socket_path", lambda ident: Path("/" + "x" * 120) / "s.sock")
+    monkeypatch.setattr(daemon, "start", _real_start)  # conftest's stub would hide the length check
+    monkeypatch.setenv("WEBCLI_DAEMON", "1")
+
+    async def models(**kwargs):
+        return ["in-process"]
+
+    monkeypatch.setattr(fetch, "models", models)
+    started = asyncio.run(_timed(daemon.call(IDENT, "chatgpt", "models", headed=False)))
+    assert started[0] == ["in-process"] and started[1] < 2  # not START_SECONDS
