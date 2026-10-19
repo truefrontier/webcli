@@ -31,7 +31,12 @@ def rec(id_: str, title: str, audio_id: str, *, transcript: bool = True) -> list
             [[1]] if transcript else None, None, None, audio_id]
 
 
-WORDS = [[[[["Hello", "Hello", "0", "500"], ["world.", "world.", "500", "900"]]]]]
+def word(text: str, start: int) -> list:
+    return [text, text, str(start), str(start + 400), None, None, [0, 1]]
+
+
+# GetTranscription, as captured live (2026-10-19): [[unit, ...]], each unit [[word, ...], 0, language].
+WORDS = [[[[word("Hello", 0)], 0, "en-US"], [[word("world.", 500)], 0, "en-US"]]]
 
 
 # The guard.
@@ -40,8 +45,10 @@ WORDS = [[[[["Hello", "Hello", "0", "500"], ["world.", "world.", "500", "900"]]]
     ("GET", "https://recorder.google.com/"),
     ("GET", "https://recorder.google.com/a1b2c3"),
     ("GET", "https://usercontent.recorder.google.com/download/playback/a1b2c3"),
+    ("POST", RPC + "ListLabels"),  # the app waits for it before GetRecordingList
     ("POST", RPC + "GetRecordingList"),
     ("OPTIONS", RPC + "GetRecordingList"),
+    ("POST", RPC + "GetRecordingInfo"),  # a recording's page waits for it before GetTranscription
     ("POST", RPC + "GetTranscription"),
     ("POST", RPC.replace("$rpc", "%24rpc") + "GetTranscription"),
     ("POST", "https://accounts.google.com/RotateCookies"),
@@ -55,6 +62,13 @@ def test_listed_reads_pass(method, url):
     ("POST", RPC + "UpdateRecordingTitle"),
     ("POST", RPC + "ShareRecording"),
     ("POST", RPC + "GetShareLink"),  # a Get the guard hasn't been told is a read
+    ("POST", RPC + "GetShareList"),  # the page asks for these; nothing webcli reads waits on them
+    ("POST", RPC + "GetAudioTag"),
+    ("POST", RPC + "GetWaveform"),
+    ("POST", RPC + "GetGlobalSearchReadiness"),
+    ("POST", RPC + "ListLabels/extra"),
+    ("POST", RPC.replace("pixelrecorder-pa.clients6.google.com", "pixelrecorder-pa.clients6.google.com.evil.example")
+     + "ListLabels"),
     ("POST", RPC + "GetRecordingList/extra"),
     ("POST", RPC.replace("PlaybackService", "EditingService") + "GetRecordingList"),
     ("POST", RPC.replace("pixelrecorder-pa.clients6.google.com", "evil.example") + "GetRecordingList"),
@@ -65,6 +79,9 @@ def test_listed_reads_pass(method, url):
     ("POST", "https://recorder.google.com/"),
     ("POST", "https://play.google.com/log?format=json"),
     ("GET", "https://peoplestack-pa.clients6.google.com/v1/people"),
+    ("POST", "https://peoplestack-pa.clients6.google.com/$rpc/peoplestack.PeopleStackAutocompleteService/Autocomplete"),
+    ("POST", "https://recorder.google.com/jserror?error=x"),
+    ("POST", "https://recorder.google.com/api/monitoring/apicall"),
 ])
 def test_writes_unknown_methods_and_other_hosts_are_blocked(method, url):
     assert not request_allowed(method, url)
@@ -100,9 +117,12 @@ def test_recordings_rows_and_a_malformed_one_is_skipped():
     assert parse.recordings(None) == [] and parse.recordings({}) == []
 
 
-def test_transcript_joins_words():
+def test_transcript_joins_every_units_words_and_skips_what_doesnt_parse():
     assert parse.transcript(WORDS) == "Hello world."
-    assert parse.transcript([]) == "" and parse.transcript(None) == ""
+    units = [[[word("One", 0), "junk", [], word("two", 400)], 0, "en-US"], "junk", [], [None, 0, "en-US"],
+             [[word("three.", 900)], 0, "en-US"]]
+    assert parse.transcript([units]) == "One two three."  # a bad unit doesn't drop the ones after it
+    assert parse.transcript([]) == "" and parse.transcript(None) == "" and parse.transcript([7]) == ""
 
 
 # The page.

@@ -45,9 +45,9 @@ NOTES = [
     "(a Claude skill file that documents the old binary and that MCP server). `webcli recorder agent-help` is the "
     "agent reference.",
 ]
-WRITES = ["Nothing on Google Recorder: no rename, delete, share, or edit. The guard allows only the GetRecordingList "
-          "and GetTranscription reads. `transcript`, `download`, and `sync` write only the local files you asked "
-          "for."]
+WRITES = ["Nothing on Google Recorder: no rename, delete, share, or edit. The guard allows only the ListLabels, "
+          "GetRecordingList, GetRecordingInfo, and GetTranscription reads. `transcript`, `download`, and `sync` write "
+          "only the local files you asked for."]
 
 group = data.site_group(SITE, "Google Recorder (Pixel) recordings, read-only (unofficial). Identity google:default.")
 

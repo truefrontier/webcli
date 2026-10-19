@@ -32,17 +32,18 @@ def recordings(data: Any, tz: tzinfo | None = None) -> list[dict]:
 
 
 def transcript(data: Any) -> str:
-    """GetTranscription [[[sentence, ...] per segment]] -> the words joined by spaces. Each word: [text,
-    alt_display_text, start_ms, end_ms, ...]."""
-    words = []
+    """GetTranscription [[unit, ...]] -> the words joined by spaces. Each unit: [[word, ...], 0, language]; each
+    word: [text, display_text, start_ms, end_ms, null, null, [flag, speaker]]. A unit or word that doesn't parse
+    is skipped."""
     try:
-        for segment in data[0]:
-            for sentence in segment:
-                for word in sentence:
-                    if isinstance(word, list) and word and isinstance(word[0], str):
-                        words.append(word[0])
+        units = data[0]
     except (IndexError, KeyError, TypeError):
-        pass
+        return ""
+    words = []
+    for unit in units if isinstance(units, list) else []:
+        for word in unit[0] if isinstance(unit, list) and unit and isinstance(unit[0], list) else []:
+            if isinstance(word, list) and word and isinstance(word[0], str):
+                words.append(word[0])
     return " ".join(words).strip()
 
 
