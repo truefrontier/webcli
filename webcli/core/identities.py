@@ -79,6 +79,17 @@ def from_dir(name: str) -> Identity:
     return Identity(f"{provider}:{account}")
 
 
+def _table(value, where: str, key: str | None = None) -> dict:
+    """value[key] (or value) as a TOML table: absent is {}, any other type is a ConfigError (exit 7)."""
+    if key is not None:
+        value, where = value.get(key), f"{where} [{key}]"
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{where} must be a table, not {type(value).__name__}.", hint="Fix config.toml.")
+    return value
+
+
 def resolve(site: "Site", explicit: str | None = None) -> Identity:
     """The identity `site` runs as (see the module doc for the order)."""
     if explicit:
@@ -86,10 +97,9 @@ def resolve(site: "Site", explicit: str | None = None) -> Identity:
     elif os.environ.get(ENV, "").strip():
         source, value = f"${ENV}", os.environ[ENV]
     else:
-        entry = (config.load().get("sites") or {}).get(site.name) or {}
-        if not isinstance(entry, dict):
-            raise ConfigError(f"config.toml [sites.{site.name}] must be a table.")
-        source, value = f"config.toml [sites.{site.name}].identity", entry.get("identity") or f"{site.provider}:default"
+        entry = _table(_table(config.load(), "config.toml", "sites").get(site.name),
+                       f"config.toml [sites.{site.name}]")
+        source, value = f"config.toml [sites.{site.name}].identity", entry.get("identity", f"{site.provider}:default")
         if not isinstance(value, str):
             raise ConfigError(f"{source} must be a string like {site.provider}:default.")
     identity = parse(value)
@@ -102,7 +112,7 @@ def resolve(site: "Site", explicit: str | None = None) -> Identity:
 def known(sites: "list[Site]") -> list[Identity]:
     """Every identity worth reporting: each provider's default, [identities.*] in config.toml, and every profile dir."""
     ids = {f"{site.provider}:default" for site in sites}
-    ids |= set((config.load().get("identities") or {}))
+    ids |= set(_table(config.load(), "config.toml", "identities"))
     root = config.home() / "identities"
     if root.is_dir():
         for entry in root.iterdir():

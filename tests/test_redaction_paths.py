@@ -142,3 +142,10 @@ def test_capture_lines_keep_names_and_drop_values():
     path = capture.write("chatgpt", {"traffic": [f"GET {SAS}"], "title": f"Bearer {JWT}"})
     text = path.read_text()
     assert leaked(text) == [] and path.stat().st_mode & 0o777 == 0o600
+
+
+def test_die_redacts_nested_extras(capsys):
+    with pytest.raises(SystemExit):
+        die("failed", 5, details={"auth": {"header": f"Bearer {JWT}"}, "urls": [SAS]})
+    err = capsys.readouterr().err
+    assert leaked(err) == [] and json.loads(err)["details"]["auth"]["header"] == "Bearer <redacted>"

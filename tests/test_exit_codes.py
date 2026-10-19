@@ -128,3 +128,31 @@ def test_usage_and_sign_in_codes(monkeypatch):
     assert run(llmcli, "gemini", "status", env={"LLMCLI_FORMAT": "yaml"}).exit_code == 2
     stub(monkeypatch, "chatgpt", "status", {"signedIn": False, "plan": None, "email": None})
     assert run(llmcli, "chatgpt", "status").exit_code == 4
+
+
+@pytest.mark.parametrize(("text", "app", "args"), [
+    ('sites = "oops"', llmcli, ["gemini", "status"]),
+    ("[sites]\ngemini = 3", llmcli, ["gemini", "status"]),
+    ("[sites.gemini]\nidentity = false", llmcli, ["gemini", "status"]),
+    ("identities = 42", webcli_app, ["identity", "list"]),
+    ("identities = 42", webcli_app, ["doctor", "--no-browser"]),
+])
+def test_a_badly_shaped_config_exits_7_not_a_traceback(text, app, args):
+    config.ensure_home()
+    (config.home() / "config.toml").write_text(text + "\n")
+    result = run(app, *args)
+    assert result.exit_code == 7, (text, args, result.output)
+    assert "Traceback" not in result.output and json.loads(result.stderr)["code"] == 7
+
+
+def test_an_unexpected_error_is_redacted_exit_5_with_the_traceback_in_the_log(monkeypatch):
+    token = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLWZha2U"
+    from webcli.sites import llm
+
+    monkeypatch.setattr(llm, "uniform", lambda result: (_ for _ in ()).throw(KeyError(f"Bearer {token}")))
+    stub(monkeypatch, "gemini", "ask", ANSWER)
+    result = run(llmcli, "gemini", "ask", "q")
+    assert result.exit_code == 5 and token not in result.output and "Traceback" not in result.output
+    assert json.loads(result.stderr)["error"].startswith("Unexpected error: KeyError")
+    log = (config.home() / "logs" / "llmcli.log").read_text()
+    assert "Traceback" in log and token not in log

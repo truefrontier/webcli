@@ -4,8 +4,10 @@ endpoints table as a Policy, and anything the policy doesn't allow is aborted.
 `state` holds the running command's policy and permissions. It is set when the command's page opens and reset when
 it closes (browser.page_at), so permissions belong to that page alone:
   - no command running (Chrome starting, the daemon idle): no policy, every request is aborted;
-  - only the command's own page (and its frames) gets the policy, through a page route; every other page falls
-    through to the context route, which aborts everything (sign-in excepted: it may finish in a new tab);
+  - only the command's own page (and its frames) gets the policy, through a page route bound to that command's
+    lease; every other page falls through to the context route, which aborts everything (sign-in excepted: it may
+    finish in a new tab), and a page left over from an earlier command (a tab whose close failed) holds a stale
+    lease, so it never inherits a later command's send or download permission;
   - send (the prompt and its uploads) only for `ask` / `-p`; download (gemini's full-size image rpc) only for
     `--image-out`; sign_in only for `identity login`.
 A policy that raises counts as "no": a guard that raises would leave the request hanging.
@@ -14,7 +16,7 @@ A policy that raises counts as "no": a guard that raises would leave the request
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 from urllib.parse import urlsplit
 
 from webcli.core.redact import redact_url
@@ -40,16 +42,20 @@ class Guard:
     sign_in: bool = False
     expect_models: frozenset[str] | None = None  # chatgpt -m: the model slugs a prompt may name
     blocked: list[str] = field(default_factory=list)  # what was aborted during this command, as describe() lines
+    lease: object | None = None  # the running command's; its page's route carries the same object
 
-    def begin(self, policy: Policy, *, send: bool = False, download: bool = False, sign_in: bool = False) -> None:
+    def begin(self, policy: Policy, *, send: bool = False, download: bool = False, sign_in: bool = False) -> object:
+        """Start a command's permissions; returns its lease for the page's route."""
         self.policy, self.send, self.download, self.sign_in = policy, send, download, sign_in
         self.expect_models = None
         self.blocked.clear()
+        self.lease = object()
+        return self.lease
 
     def end(self) -> None:
         """Back to deny-all. `blocked` stays readable until the next command begins."""
         self.policy, self.send, self.download, self.sign_in = None, False, False, False
-        self.expect_models = None
+        self.expect_models, self.lease = None, None
 
 
 state = Guard()
@@ -84,12 +90,16 @@ def check(request: "Request", *, own_page: bool) -> bool:
     return False
 
 
-async def page_route(route: "Route") -> None:
-    """On the command's page: the policy decides."""
-    if check(route.request, own_page=True):
-        await route.continue_()
-    else:
-        await route.abort("blockedbyclient")
+def page_route(lease: object) -> Callable[["Route"], Awaitable[None]]:
+    """The route for a command's page: the policy decides while `lease` is the running command's."""
+
+    async def handler(route: "Route") -> None:
+        if check(route.request, own_page=lease is state.lease):
+            await route.continue_()
+        else:
+            await route.abort("blockedbyclient")
+
+    return handler
 
 
 async def context_route(route: "Route") -> None:

@@ -120,14 +120,36 @@ def test_routes_continue_or_abort_and_websockets_close():
         async def close(self):
             self.closed = True
 
-    guard.state.begin(CHATGPT)
+    route = guard.page_route(guard.state.begin(CHATGPT))
     ok, bad, other = (Route(Request("GET", "https://chatgpt.com/")), Route(Request("GET", "https://evil.example/")),
                       Route(Request("GET", "https://chatgpt.com/")))
-    asyncio.run(guard.page_route(ok))
-    asyncio.run(guard.page_route(bad))
+    asyncio.run(route(ok))
+    asyncio.run(route(bad))
     asyncio.run(guard.context_route(other))
     socket = Socket()
     asyncio.run(guard.websocket(socket))
     assert (ok.outcome, bad.outcome, other.outcome, socket.closed) == ("continue", "blockedbyclient",
                                                                        "blockedbyclient", True)
     assert guard.state.blocked[-1] == "WS chatgpt.com/ws"
+
+
+def test_a_page_left_over_from_an_earlier_command_inherits_nothing():
+    """A tab whose close failed keeps its route; a later command's send permission must not reach it."""
+    class Route:
+        def __init__(self, request):
+            self.request, self.outcome = request, None
+
+        async def continue_(self):
+            self.outcome = "continue"
+
+        async def abort(self, reason):
+            self.outcome = reason
+
+    stale = guard.page_route(guard.state.begin(GEMINI))  # an earlier command's page
+    guard.state.end()
+    fresh = guard.page_route(guard.state.begin(GEMINI, send=True))  # now `ask` runs
+    prompt = Request("POST", CHANNEL + "?VER=8&RID=1")
+    old, new = Route(prompt), Route(prompt)
+    asyncio.run(stale(old))
+    asyncio.run(fresh(new))
+    assert (old.outcome, new.outcome) == ("blockedbyclient", "continue")

@@ -241,8 +241,8 @@ async def page_at(context: "BrowserContext", policy: Policy | None, *, mode: str
     try:
         page = await context.new_page() if new or not context.pages else context.pages[0]
         if policy is not None:
-            guard.state.begin(policy, send=send, download=download, sign_in=sign_in)
-            await page.route("**/*", guard.page_route)
+            lease = guard.state.begin(policy, send=send, download=download, sign_in=sign_in)
+            await page.route("**/*", guard.page_route(lease))
         if url:
             await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             if ready is not None:

@@ -1,8 +1,81 @@
 # webcli / llmcli
 
-Consolidated, agent-native CLIs over your own signed-in Chrome sessions.
+Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
-- `llmcli` — chat AIs (Gemini, ChatGPT; more later)
-- `webcli` — data sites (adapters land in later phases)
+- `llmcli`: chat AIs. Phase 1 ships `llmcli gemini` (gweb parity) and `llmcli chatgpt` (cgpt parity).
+- `webcli`: data sites. Phase 1 ships no site adapters yet, only `identity`, `doctor`, `sites`, and `serve`.
 
-Data home: `~/.webcli/`. See `BUILD_SPEC.md` (Phase 1) and `docs/consolidation-design.md`.
+Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
+
+## Install
+
+```sh
+pipx install --force -e .
+```
+
+This puts `webcli` and `llmcli` in `~/.local/bin`. It uses your installed Google Chrome (`channel="chrome"`), so `playwright install` is not needed.
+
+## Sign in (a person, once per identity)
+
+Each identity is one Chrome profile. Phase 1 uses two:
+
+| Identity | Used by | Profile |
+|---|---|---|
+| `google:default` | `llmcli gemini` | `~/.webcli/identities/google-default/chrome-profile` |
+| `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
+
+Sign in opens a visible Chrome window, so run it yourself, never from an agent:
+
+```sh
+webcli identity login google:default     # same as: llmcli gemini login
+webcli identity login chatgpt:default    # same as: llmcli chatgpt login
+```
+
+Profiles start fresh. Nothing is copied from `~/.gemini-web-cli` or `~/.chatgpt-web-cli`.
+
+## Use
+
+```sh
+llmcli gemini -p "What is 2+2?"                 # print mode, like claude -p
+llmcli chatgpt -p -m gpt-6 "Summarize this" --file notes.md
+llmcli gemini ask "Draw a fox" --image-out ~/Downloads/
+llmcli chatgpt chats list --format md
+llmcli gemini agent-help --format json          # commands, flags, exit codes, env
+webcli doctor                                   # hardening, Chrome, identities, daemons
+```
+
+Output is JSON when piped and human on a terminal. `LLMCLI_FORMAT` / `WEBCLI_FORMAT` (`json|table|text|md`) change the default.
+
+The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-file P --output-file A` writes the answer text to `A`, and errors go to stderr as JSON when the format env is `json`.
+
+## Exit codes (every site, both binaries)
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 2 | usage error |
+| 3 | not found |
+| 4 | sign-in needed, or Cloudflare needs a visible check (`hidden_browser_blocked`) |
+| 5 | site or network error |
+| 6 | rate limited: JSON `{"error":"rate_limited","code":6,"message",...,"resets_at"}` (or `model_fallback` with `--strict-model`) |
+| 7 | config error (config.toml, identity, site) |
+| 128+N | killed by signal N |
+
+## How it stays hidden and private
+
+- Every command runs Chrome headless. `ignore_default_args` drops `--enable-automation` and `--use-mock-keychain`, so cookies stay under the real macOS Keychain key.
+- One headless Chrome per identity runs in a daemon (`llmcli serve --identity ID`, socket `~/.webcli/run/<identity>.sock`, 0600). Commands start it on demand. `WEBCLI_DAEMON=0` runs Chrome in-process instead.
+- A fail-closed request guard aborts anything a site's endpoint table doesn't list. Prompts go out only from `ask` / `-p`.
+- Every log line and printed error goes through the redaction module.
+- `~/.webcli` is 0700, excluded from Time Machine, and marked for Spotlight (`.metadata_never_index`) and sync tools (`.nosync`) when first created. `webcli doctor` re-checks it, and `webcli doctor --fix` re-applies it.
+
+## Develop
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -e . pytest
+.venv/bin/python -m pytest -q      # offline: no browser, no network, temp WEBCLI_HOME
+```
+
+After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](docs/post-login-verification.md).
+
+See `BUILD_SPEC.md` (Phase 1) and `docs/consolidation-design.md` for the plan.

@@ -25,7 +25,7 @@ from typing import Any, Callable, Iterable, Sequence
 import click
 
 from webcli.core.errors import AuthRequired, Challenged, ConfigError, Interrupted, NotFound, ProfileBusy, RateLimited
-from webcli.core.redact import redact_text
+from webcli.core.redact import redact_text, redact_value
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -294,7 +294,7 @@ def die(message: str, code: int = EXIT_API, hint: str | None = None, *, error: s
     {"error": message, "code", **extra, "hint"}."""
     message = redact_text(message)
     hint = redact_text(hint) if hint else None
-    extra = {k: redact_text(v) if isinstance(v, str) else v for k, v in extra.items()}
+    extra = redact_value(extra)
     if json_errors():
         payload = {"error": error, "code": code, "message": message} if error else {"error": message, "code": code}
         payload.update(extra)
@@ -389,6 +389,13 @@ class AgentGroup(click.Group):
             die("Aborted.", 128 + 2)
         except ConfigError as exc:
             die(str(exc), EXIT_CONFIG, hint=exc.hint)
+        except Exception as exc:  # a bug: never a raw (unredacted) traceback on the terminal
+            try:
+                logger(APP).exception("unexpected error")
+            except Exception:
+                pass
+            die(f"Unexpected error: {type(exc).__name__}: {exc}", EXIT_API,
+                hint=f"The traceback is in ~/.webcli/logs/{APP}.log (redacted).")
         raise SystemExit(rv if isinstance(rv, int) else EXIT_OK)
 
 
