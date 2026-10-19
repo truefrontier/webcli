@@ -1,6 +1,6 @@
 [project]
 name = "webcli"
-version = "0.3.0"
+version = "0.3.1"
 description = "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidden Chrome sessions."
 readme = "README.md"
 license = "MIT"
