@@ -12,6 +12,7 @@ from typing import Any
 import click
 
 from webcli.core import output
+from webcli.core.errors import RateLimited
 from webcli.core.output import (
     EXIT_API,
     EXIT_AUTH,
@@ -125,6 +126,8 @@ def _call(op: str, *args, headed: bool = False, **kwargs) -> Any:
     except SystemExit:
         raise
     except Exception as exc:
+        if isinstance(exc, RateLimited) and exc.resets_at is None:
+            exc.resets_at = resets_at(exc.message)  # a notice raised without one: read it from Gemini's text
         output.fail(exc, site="Gemini", login=LOGIN_HINT, chats=CHATS_CMD)
 
 

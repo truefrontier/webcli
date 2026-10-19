@@ -48,7 +48,7 @@ def tokenish(value: str) -> bool:
     they only travel under names (oai-did, oai-device-id, chatgpt-account-id) that SENSITIVE_NAME covers. An ISO 8601
     time (resets_at, a log line's stamp) is no secret either."""
     value = value.strip()
-    if _UUID.match(value) or _ISO_TIME.match(value):
+    if _UUID.match(value) or _ISO_TIME.match(value.rstrip(".:,;")):
         return False
     if _JWT.match(value) or _HEX.match(value) or _LONG_NUMBER.match(value):
         return True
