@@ -157,7 +157,7 @@ def test_a_challenge_in_hidden_chrome_exits_4_and_never_opens_a_window(monkeypat
         assert result.exit_code == 4, command
         error = json.loads(result.stderr)
         assert error["error"] == "hidden_browser_blocked", command
-        assert error["message"] == f"Cloudflare needs a visible check: {cli.LOGIN_HINT}"
+        assert error["message"] == f"Cloudflare needs a visible check: {"a person runs: llmcli chatgpt login (or webcli identity login chatgpt:default)"}"
         assert "llmcli chatgpt login" in error["hint"] and "No window is ever shown" in error["hint"]
         assert [kwargs["headed"] for _args, kwargs in calls] == [False]  # one hidden try, no visible retry
 

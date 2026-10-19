@@ -32,7 +32,6 @@ from webcli.sites.chatgpt import ADAPTER as SITE
 from webcli.sites.chatgpt import fetch, images
 from webcli.sites.chatgpt.parse import clean_chat_id, error_reply, limit_reply, resets_at
 
-LOGIN_HINT = "a person runs: llmcli chatgpt login (or webcli identity login chatgpt:default)"
 CHALLENGE_HINT = ("A person runs `llmcli chatgpt login`, clicks \"Verify you are human\" in the Chrome window it "
                   "opens, waits until it says signed in, then retries.")
 CHATS_CMD = "llmcli chatgpt chats list"
@@ -99,7 +98,7 @@ _write = llm.writer("ChatGPT", "llmcli chatgpt chats show", "chatgpt.com")
 
 
 def _fail(exc: BaseException) -> None:
-    output.fail(exc, site="ChatGPT", login=LOGIN_HINT, chats=CHATS_CMD, challenge=CHALLENGE_HINT)
+    output.fail(exc, site="ChatGPT", login=llm.login_hint(SITE), chats=CHATS_CMD, challenge=CHALLENGE_HINT)
 
 
 def _call(op: str, *args, headed: bool = False, **kwargs) -> Any:
@@ -122,7 +121,7 @@ def _id_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> st
 
 def _need_session() -> None:
     if not llm.identity().profile_exists():
-        die(f"No session yet for {llm.identity().id}.", EXIT_AUTH, hint=LOGIN_HINT)
+        die(f"No session yet for {llm.identity().id}.", EXIT_AUTH, hint=llm.login_hint(SITE))
 
 
 def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, **kwargs) -> dict:
@@ -262,7 +261,7 @@ def status_cmd(headed: bool, fmt: str | None, quiet: bool) -> None:
     else:
         kv_table("ChatGPT session", info, out)
     if not info["signedIn"]:
-        die("Not signed in to ChatGPT.", EXIT_AUTH, hint=LOGIN_HINT)
+        die("Not signed in to ChatGPT.", EXIT_AUTH, hint=llm.login_hint(SITE))
     raise SystemExit(EXIT_OK)
 
 

@@ -315,7 +315,7 @@ def test_exit_codes_and_json_errors(monkeypatch):
     stub(monkeypatch, "ask", AuthRequired("Not signed in to Gemini."))
     result = run("ask", "q")
     assert result.exit_code == 4
-    assert json.loads(result.stderr) == {"error": "Not signed in to Gemini.", "code": 4, "hint": cli.LOGIN_HINT}
+    assert json.loads(result.stderr) == {"error": "Not signed in to Gemini.", "code": 4, "hint": "a person runs: llmcli gemini login (or webcli identity login google:default)"}
     stub(monkeypatch, "ask", cli.fetch.NotFound("No model matches 'gpt'. Available: Fast.", hint="run: gweb models"))
     result = run("ask", "q", "--model", "gpt")
     assert (result.exit_code, json.loads(result.stderr)["hint"]) == (3, "run: gweb models")
@@ -333,7 +333,7 @@ def test_no_profile_is_exit_4_without_chrome(monkeypatch):
         stub(monkeypatch, name, AssertionError("must not launch Chrome"))
     for args in (("ask", "q"), ("chats", "list"), ("chats", "show", "1a2b3c4d5e6f7a8b"), ("models",)):
         result = run(*args)
-        assert (result.exit_code, json.loads(result.stderr)["hint"]) == (4, cli.LOGIN_HINT)
+        assert (result.exit_code, json.loads(result.stderr)["hint"]) == (4, "a person runs: llmcli gemini login (or webcli identity login google:default)")
     result = run("status")
     assert result.exit_code == 4
     assert json.loads(result.stdout) == {"identity": "google:default", "signedIn": False, "name": None, "email": None,

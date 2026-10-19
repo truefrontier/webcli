@@ -48,6 +48,13 @@ def identity() -> Identity:
     return browser.current()
 
 
+def login_hint(site: Site) -> str:
+    """What to run to sign the command's identity in (a person, at a visible window)."""
+    ident = identity()
+    flag = "" if ident.id == f"{site.provider}:default" else f" --identity {ident.id}"
+    return f"a person runs: llmcli {site.name}{flag} login (or webcli identity login {ident.id})"
+
+
 def _wait_arg(ctx: click.Context, param: click.Parameter, value: float) -> float:
     try:
         return browser.parse_wait(value)

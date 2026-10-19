@@ -60,6 +60,8 @@ def test_a_wrong_provider_is_a_config_error_wherever_it_comes_from(monkeypatch):
 def test_the_cli_runs_as_the_resolved_identity():
     result = CliRunner().invoke(llmcli.build(), ["gemini", "--identity", "google:work", "status"])
     assert result.exit_code == 4 and json.loads(result.stdout)["identity"] == "google:work"
+    assert json.loads(result.stderr)["hint"] == ("a person runs: llmcli gemini --identity google:work login "
+                                                 "(or webcli identity login google:work)")
     result = CliRunner().invoke(llmcli.build(), ["gemini", "status"], env={"WEBCLI_IDENTITY": "google:env"})
     assert json.loads(result.stdout)["identity"] == "google:env"
     result = CliRunner().invoke(llmcli.build(), ["chatgpt", "status"])
@@ -125,3 +127,26 @@ def test_sites_lists_both_llm_sites_and_no_data_sites():
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini"] and data["webcli"] == []
     assert {s["defaultIdentity"] for s in data["llmcli"]} == {"chatgpt:default", "google:default"}
+
+
+def test_every_dir_the_code_creates_under_the_home_is_0700():
+    config.private_dir(Identity("google:default").path)
+    config.private_dir(config.site_dir("gemini") / "google-default")
+    for path in config.home().rglob("*"):
+        if path.is_dir():
+            assert stat.S_IMODE(path.stat().st_mode) == 0o700, path
+
+
+def test_a_home_first_created_by_a_command_still_gets_the_hardening(tool_calls):
+    import asyncio
+
+    from webcli.core import browser
+
+    async def lock():
+        async with browser.profile_lock(Identity("google:default"), wait=0):
+            pass
+
+    asyncio.run(lock())  # the first thing to touch the home: a command taking its profile lock
+    root = config.home()
+    assert ["tmutil", "addexclusion", str(root)] in tool_calls
+    assert (root / ".metadata_never_index").exists()

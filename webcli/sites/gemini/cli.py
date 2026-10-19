@@ -34,7 +34,6 @@ from webcli.sites.gemini import ADAPTER as SITE
 from webcli.sites.gemini import fetch, images
 from webcli.sites.gemini.parse import clean_chat_id, error_reply, limit_reply, resets_at
 
-LOGIN_HINT = "a person runs: llmcli gemini login (or webcli identity login google:default)"
 CHATS_CMD = "llmcli gemini chats list"
 CHAT_FIELDS = ("id", "title", "updated", "pinned", "url")
 CHAT_COMPACT = ("id", "title", "updated")
@@ -128,7 +127,7 @@ def _call(op: str, *args, headed: bool = False, **kwargs) -> Any:
     except Exception as exc:
         if isinstance(exc, RateLimited) and exc.resets_at is None:
             exc.resets_at = resets_at(exc.message)  # a notice raised without one: read it from Gemini's text
-        output.fail(exc, site="Gemini", login=LOGIN_HINT, chats=CHATS_CMD)
+        output.fail(exc, site="Gemini", login=llm.login_hint(SITE), chats=CHATS_CMD)
 
 
 def _id_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
@@ -142,7 +141,7 @@ def _id_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> st
 
 def _need_session() -> None:
     if not llm.identity().profile_exists():
-        die(f"No session yet for {llm.identity().id}.", EXIT_AUTH, hint=LOGIN_HINT)
+        die(f"No session yet for {llm.identity().id}.", EXIT_AUTH, hint=llm.login_hint(SITE))
 
 
 def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, canvas_out: Path | None = None,
@@ -355,7 +354,7 @@ def status_cmd(headed: bool, fmt: str | None, quiet: bool) -> None:
     else:
         kv_table("Gemini session", info, out)
     if not info["signedIn"]:
-        die("Not signed in to Gemini.", EXIT_AUTH, hint=LOGIN_HINT)
+        die("Not signed in to Gemini.", EXIT_AUTH, hint=llm.login_hint(SITE))
     raise SystemExit(EXIT_OK)
 
 

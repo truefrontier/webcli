@@ -89,8 +89,8 @@ def _version(text: str) -> tuple[int, ...]:
 
 
 def log(message: str) -> None:
-    """A daemon log line on stderr, which serve() routes through redaction into the rotated log."""
-    print(f"{output.stamp()} {redact_text(message)}", file=sys.stderr, flush=True)
+    """A daemon log line on stderr, which serve() routes through redaction (and a timestamp) into the rotated log."""
+    print(redact_text(message), file=sys.stderr, flush=True)
 
 
 def site_op(ident: Identity, site_name: str, op: str) -> Callable[..., Awaitable[Any]]:
@@ -426,7 +426,7 @@ def _redirect_output(ident: Identity) -> None:
     def write_line(line: str) -> None:
         file_log.info(line)
         if echo:
-            original.write(line + "\n")
+            original.write(f"{output.stamp()} {line}\n")
             original.flush()
 
     sys.stdout = sys.stderr = output.RedactingStream(write_line)

@@ -35,8 +35,20 @@ def home() -> Path:
 
 
 def private_dir(path: Path) -> Path:
-    """mkdir -p with mode 0700, and fix the mode if the dir already existed (umask-proof)."""
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """mkdir -p with mode 0700 for `path` and every parent it creates (mkdir's own parents=True leaves those at
+    the umask's mode), and fix `path`'s mode if it already existed (umask-proof). A path under a home that doesn't
+    exist yet creates the home first, through ensure_home, so its H4 hardening is never skipped."""
+    root = home()
+    if root in path.parents and not root.exists():
+        ensure_home()
+    missing = []
+    while not path.exists() and path != path.parent:
+        missing.append(path)
+        path = path.parent
+    for created in reversed(missing):
+        created.mkdir(mode=0o700, exist_ok=True)
+        created.chmod(0o700)
+    path = missing[0] if missing else path
     path.chmod(0o700)
     return path
 
