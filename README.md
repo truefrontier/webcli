@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Plus `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Three social sites: `webcli linkedin` (messages, activity, and Boost stats, limsg parity; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). Plus `identity`, `doctor`, `sites`, and `serve`.
 
 Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
@@ -17,13 +17,15 @@ This puts `webcli` and `llmcli` in `~/.local/bin`. It uses your installed Google
 
 ## Sign in (a person, once per identity)
 
-Each identity is one Chrome profile. There are three:
+Each identity is one Chrome profile. There are five:
 
 | Identity | Used by | Profile |
 |---|---|---|
 | `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
-| `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
+| `meta:default` | `llmcli muse`, `webcli facebook` | `~/.webcli/identities/meta-default/chrome-profile` |
+| `linkedin:default` | `webcli linkedin` | `~/.webcli/identities/linkedin-default/chrome-profile` |
+| `loom:default` | `webcli loom` | `~/.webcli/identities/loom-default/chrome-profile` |
 
 Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 
@@ -31,6 +33,8 @@ Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 webcli identity login google:default     # same as: llmcli gemini login
 webcli identity login chatgpt:default    # same as: llmcli chatgpt login
 webcli identity login meta:default       # same as: llmcli muse login
+webcli identity login linkedin:default   # LinkedIn: sign in as kevnk (writes refuse any other account)
+webcli identity login loom:default       # Loom
 ```
 
 Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
@@ -38,6 +42,8 @@ Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed
 Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
 
 The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, Recorder, Contacts, and Gmail. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, `~/.recorder-cli`, `~/.google-contacts-cli`, or `~/.gmail-cli`.
+
+`webcli facebook` has no sign-in of its own. It shares `meta:default` with Muse, whose sign-in passes through facebook.com, so that profile usually holds a Facebook session. If `webcli facebook status` exits 4, run `webcli identity login meta:default` and sign in to facebook.com in that window too. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
@@ -62,6 +68,10 @@ webcli recorder sync -o ~/Backups/recorder      # every transcript and audio fil
 webcli contacts search ada --compact            # Google Contacts: My Contacts, then Other contacts
 webcli contacts label add Newsletter --from-label "Conference 2026"   # dry run: shows what would change
 webcli gmail filters create --from alerts@example.com --skip-inbox     # dry run: prints the plan
+webcli linkedin messages history Boardy --limit 5 # read-only; the guard blocks mark-as-read
+webcli linkedin post create --text-file post.txt --image card.png      # dry run: checks the author, posts nothing
+webcli facebook sync && webcli facebook search --city springfield      # read-only on Facebook; cache is local
+webcli loom transcript https://www.loom.com/share/<id>                 # Loom's official transcript, as text
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
 
@@ -84,12 +94,16 @@ The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-fi
 
 ## Writes
 
-Only two data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
+Only four data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
 
 - `webcli contacts label add|remove LABEL` adds the selected contacts to one of your labels or removes them from it.
 - `webcli gmail filters create|delete` creates one filter or deletes one filter.
+- `webcli linkedin messages send THREAD --text T` sends one DM to one existing thread (`--send` works too).
+- `webcli linkedin post create --text T --image P` publishes one post: text plus one image.
 
-Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. Passing `--dry-run` and `--confirm` together exits 2. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; or one filter write, bound to that filter's id or criteria. See [docs/google-data-sites.md](docs/google-data-sites.md).
+Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; or one DM or one post, bound to its thread, sender, text, and image. See [docs/google-data-sites.md](docs/google-data-sites.md).
+
+The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle is the expected author: `kevnk`, unless `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml` says otherwise. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](docs/social-data-sites.md).
 
 ## How it stays hidden and private
 
