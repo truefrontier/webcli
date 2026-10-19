@@ -26,6 +26,7 @@ walkie = "webcli.sites.walkie:ADAPTER"
 keep = "webcli.sites.keep:ADAPTER"
 photos = "webcli.sites.photos:ADAPTER"
 youtube = "webcli.sites.youtube:ADAPTER"
+recorder = "webcli.sites.recorder:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
