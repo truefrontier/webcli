@@ -14,6 +14,8 @@ from webcli.sites.llm import env_help
 NOTES = [
     "Each data site is `webcli <site>` (`webcli sites` lists them; `webcli <site> agent-help` has its reference); chat "
     "AIs live under `llmcli`. aa (a public API) and walkie (local SQLite) need no browser or identity.",
+    "keep, photos, youtube, and recorder run as google:default, the identity `webcli identity login google:default` "
+    "signs in (through gemini); they have no login of their own.",
     "Every command that opens Chrome runs it headless: no window, no Dock icon, no focus change. Only `identity login` "
     "and an explicit --headed show a window, and login needs a person.",
     "`identity` and `doctor` are shared with `llmcli` (one data home ~/.webcli); either binary manages the same store.",

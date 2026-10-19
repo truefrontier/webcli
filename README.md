@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity) and `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), plus `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), and four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server). Plus `identity`, `doctor`, `sites`, and `serve`.
 
 Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
@@ -21,7 +21,7 @@ Each identity is one Chrome profile. There are three:
 
 | Identity | Used by | Profile |
 |---|---|---|
-| `google:default` | `llmcli gemini` | `~/.webcli/identities/google-default/chrome-profile` |
+| `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
 | `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
 
@@ -36,6 +36,8 @@ webcli identity login meta:default       # same as: llmcli muse login
 Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
 
 Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
+
+The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, and Recorder. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, or `~/.recorder-cli`.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
@@ -53,6 +55,10 @@ llmcli muse -p --chat main "What's on my list today?"   # muse: no models, files
 llmcli gemini agent-help --format json          # commands, flags, exit codes, env
 webcli aa digest smart-fast --limit 5           # Artificial Analysis: smart and fast LLMs
 webcli walkie meetings transcript standup --format md
+webcli keep search picnic --compact             # Google Keep notes (read-only)
+webcli photos download AF1Qip... -o ~/Downloads # the original photo or video file
+webcli youtube history --since 2026-10-01       # exact times from My Activity, else day precision
+webcli recorder sync -o ~/Backups/recorder      # every transcript and audio file
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
 
