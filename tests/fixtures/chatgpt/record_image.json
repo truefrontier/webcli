@@ -1,0 +1,379 @@
+{
+ "title": "Synthetic chat title",
+ "create_time": 1760814000.0,
+ "update_time": 1760814000.0,
+ "plugin_ids": null,
+ "conversation_id": "00000000-0000-4000-8000-000000000001",
+ "gizmo_type": null,
+ "is_archived": false,
+ "is_starred": null,
+ "default_model_slug": "gpt-6-thinking",
+ "atlas_mode_enabled": null,
+ "conversation_origin": null,
+ "is_read_only": null,
+ "async_status": 4,
+ "disabled_tool_ids": [],
+ "is_temporary_chat": false,
+ "is_do_not_remember": false,
+ "memory_scope": "global_enabled",
+ "sugar_item_visible": false,
+ "is_study_mode": false,
+ "sectioned_conversation": null,
+ "mapping": {
+  "client-created-root": {
+   "id": "client-created-root",
+   "message": null,
+   "parent": null,
+   "children": [
+    "00000000-0000-4000-8000-000000000002"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000002": {
+   "id": "00000000-0000-4000-8000-000000000002",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000002",
+    "author": {
+     "role": "user",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": 1760814000.0,
+    "content": {
+     "content_type": "text",
+     "parts": [
+      "Create a square image: seamless tileable pattern of small blue stars on white"
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": null,
+    "weight": 1.0,
+    "metadata": {
+     "message_source": null,
+     "can_save": false
+    },
+    "recipient": "all",
+    "channel": null
+   },
+   "parent": "client-created-root",
+   "children": [
+    "00000000-0000-4000-8000-000000000003"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000003": {
+   "id": "00000000-0000-4000-8000-000000000003",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "author": {
+     "role": "tool",
+     "name": "t2uay3k.sj1i4kz",
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": 1760814000.0,
+    "content": {
+     "content_type": "multimodal_text",
+     "parts": [
+      {
+       "content_type": "image_asset_pointer",
+       "asset_pointer": "sediment://file_00000000000000000000000000000001",
+       "mime_type": "image/png",
+       "size_bytes": 1200158,
+       "width": 1254,
+       "height": 1254,
+       "fovea": null,
+       "metadata": {
+        "dalle": {
+         "gen_id": "00000000-0000-4000-8000-000000000004",
+         "prompt": "",
+         "parent_gen_id": null,
+         "edit_op": null,
+         "serialization_title": "DALL-E generation metadata"
+        },
+        "generation": {
+         "gen_id": "00000000-0000-4000-8000-000000000004",
+         "gen_size": "smimage",
+         "gen_size_v2": "24",
+         "parent_gen_id": null,
+         "height": 1254,
+         "width": 1254,
+         "transparent_background": false,
+         "is_sticker": false,
+         "is_purchasable": null,
+         "serialization_title": "Image Generation metadata",
+         "orientation": "square",
+         "projection": "rectilinear",
+         "spritesheet": null,
+         "animation": null,
+         "selected_speed": null,
+         "gif_speed_variants": null,
+         "watermarked_gif_speed_variants": null
+        },
+        "container_pixel_height": 1254,
+        "container_pixel_width": 1254,
+        "emu_omit_glimpse_image": null,
+        "sanitized": false,
+        "is_no_auth_placeholder": null
+       }
+      }
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": null,
+    "weight": 0.0,
+    "metadata": {
+     "ghostrider": {
+      "status": "final",
+      "is_feature_trial": false
+     },
+     "parent_id": "00000000-0000-4000-8000-000000000002",
+     "image_gen_title": "Synthetic image title",
+     "cot_version": "v5",
+     "permissions": [
+      {
+       "type": "notification",
+       "status": "requested",
+       "notification_channel_id": "image_gen",
+       "notification_channel_name": "ImageGen",
+       "notification_priority": 4
+      }
+     ],
+     "can_save": false
+    },
+    "recipient": "all",
+    "channel": "final"
+   },
+   "parent": "00000000-0000-4000-8000-000000000002",
+   "children": [
+    "00000000-0000-4000-8000-000000000005"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000005": {
+   "id": "00000000-0000-4000-8000-000000000005",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "author": {
+     "role": "tool",
+     "name": "t2uay3k.sj1i4kz",
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": null,
+    "content": {
+     "content_type": "multimodal_text",
+     "parts": [
+      {
+       "content_type": "image_asset_pointer",
+       "asset_pointer": "sediment://file_00000000000000000000000000000001",
+       "mime_type": "image/png",
+       "size_bytes": 1200158,
+       "width": 1254,
+       "height": 1254,
+       "fovea": null,
+       "metadata": {
+        "dalle": {
+         "gen_id": "00000000-0000-4000-8000-000000000004",
+         "prompt": "",
+         "parent_gen_id": null,
+         "edit_op": null,
+         "serialization_title": "DALL-E generation metadata"
+        },
+        "generation": {
+         "gen_id": "00000000-0000-4000-8000-000000000004",
+         "gen_size": "smimage",
+         "gen_size_v2": "24",
+         "parent_gen_id": null,
+         "height": 1254,
+         "width": 1254,
+         "transparent_background": false,
+         "is_sticker": false,
+         "is_purchasable": null,
+         "serialization_title": "Image Generation metadata",
+         "orientation": "square",
+         "projection": "rectilinear",
+         "spritesheet": null,
+         "animation": null,
+         "selected_speed": null,
+         "gif_speed_variants": null,
+         "watermarked_gif_speed_variants": null
+        },
+        "container_pixel_height": 1254,
+        "container_pixel_width": 1254,
+        "emu_omit_glimpse_image": null,
+        "sanitized": false,
+        "is_no_auth_placeholder": null
+       }
+      },
+      "Synthetic tool text."
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": null,
+    "weight": 0.0,
+    "metadata": {
+     "image_gen_title": "Synthetic image title",
+     "permissions": [
+      {
+       "type": "notification",
+       "status": "requested",
+       "notification_channel_id": "image_gen",
+       "notification_channel_name": "ImageGen",
+       "notification_priority": 4
+      }
+     ],
+     "citations": [],
+     "content_references": [],
+     "resolved_model_slug": "gpt-5-4-auto-thinking",
+     "cot_version": "v5",
+     "model_slug": "gpt-5-4-thinking",
+     "message_type": "next",
+     "requested_model_slug": "gpt-5-4-auto-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "is_visually_hidden_from_conversation": true,
+     "parent_id": "00000000-0000-4000-8000-000000000006",
+     "can_save": false
+    },
+    "recipient": "all",
+    "channel": "commentary"
+   },
+   "parent": "00000000-0000-4000-8000-000000000003",
+   "children": [
+    "00000000-0000-4000-8000-000000000007"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000007": {
+   "id": "00000000-0000-4000-8000-000000000007",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000007",
+    "author": {
+     "role": "tool",
+     "name": "t2uay3k.sj1i4kz",
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": null,
+    "content": {
+     "content_type": "text",
+     "parts": [
+      "Synthetic tool text."
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": null,
+    "weight": 1.0,
+    "metadata": {
+     "citations": [],
+     "content_references": [],
+     "resolved_model_slug": "gpt-5-4-auto-thinking",
+     "cot_version": "v5",
+     "model_slug": "gpt-5-4-thinking",
+     "message_type": "next",
+     "requested_model_slug": "gpt-5-4-auto-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "is_visually_hidden_from_conversation": true,
+     "parent_id": "00000000-0000-4000-8000-000000000005",
+     "can_save": false
+    },
+    "recipient": "all",
+    "channel": "commentary"
+   },
+   "parent": "00000000-0000-4000-8000-000000000005",
+   "children": [
+    "00000000-0000-4000-8000-000000000008"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000008": {
+   "id": "00000000-0000-4000-8000-000000000008",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000008",
+    "author": {
+     "role": "assistant",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": null,
+    "content": {
+     "content_type": "reasoning_recap",
+     "content": "Worked for 15s"
+    },
+    "status": "finished_successfully",
+    "end_turn": false,
+    "weight": 1.0,
+    "metadata": {
+     "reasoning_status": "reasoning_ended",
+     "finished_duration_sec": 15,
+     "reasoning_start_time": 1792350427.910754,
+     "reasoning_end_time": 1792350443.1619794,
+     "reasoning_recap_type": "hide_all",
+     "cot_version": "v5",
+     "conversation_followup_suggestions_eligible": true,
+     "message_type": "next",
+     "resolved_model_slug": "gpt-5-4-auto-thinking",
+     "model_slug": "gpt-5-4-auto-thinking",
+     "requested_model_slug": "gpt-5-4-auto-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "can_save": false,
+     "parent_id": "00000000-0000-4000-8000-000000000007",
+     "model_switcher_deny": []
+    },
+    "recipient": "all",
+    "channel": null
+   },
+   "parent": "00000000-0000-4000-8000-000000000007",
+   "children": [
+    "00000000-0000-4000-8000-000000000009"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000009": {
+   "id": "00000000-0000-4000-8000-000000000009",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000009",
+    "author": {
+     "role": "assistant",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": null,
+    "content": {
+     "content_type": "text",
+     "parts": [
+      ""
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": true,
+    "weight": 1.0,
+    "metadata": {
+     "finish_details": {
+      "type": "stop",
+      "stop_tokens": [
+       200002
+      ]
+     },
+     "is_complete": true,
+     "citations": [],
+     "content_references": [],
+     "resolved_model_slug": "gpt-5-4-auto-thinking",
+     "cot_version": "v5",
+     "conversation_followup_suggestions_eligible": true,
+     "model_slug": "gpt-5-4-thinking",
+     "message_type": "next",
+     "requested_model_slug": "gpt-5-4-auto-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "can_save": false,
+     "is_visually_hidden_from_conversation": true,
+     "parent_id": "00000000-0000-4000-8000-000000000008",
+     "model_switcher_deny": []
+    },
+    "recipient": "all",
+    "channel": "final"
+   },
+   "parent": "00000000-0000-4000-8000-000000000008",
+   "children": []
+  }
+ },
+ "current_node": "00000000-0000-4000-8000-000000000009",
+ "context_truncation_continuation": null
+}

@@ -1,0 +1,1149 @@
+{
+ "title": "6",
+ "secondary_title": "",
+ "models": [
+  {
+   "slug": "gpt-5-6",
+   "title": "GPT-5.6 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "auto",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5-6-instant",
+   "title": "GPT-5.6 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5-6-thinking",
+   "title": "GPT-5.6 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5.6-sol-wm",
+   "title": "GPT-5.6 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-sol-wm",
+   "title": "GPT-6 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-luna-wm",
+   "title": "GPT-6 Luna",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6.1-sol-wm",
+   "title": "GPT-6.1 Sol",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5.6-terra-wm",
+   "title": "GPT-5.6 Terra",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5.6-luna-wm",
+   "title": "GPT-5.6 Luna",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-astra-wm",
+   "title": "GPT-6 Astra",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": true,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5-3-mini",
+   "title": "GPT-5.3 Mini",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5-6-mini",
+   "title": "GPT-5.6 Luna",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-5-6-t-mini",
+   "title": "GPT-5.6 Luna",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "research",
+   "title": "Deep Research",
+   "description": "Advanced Data Analysis, and DALL\u00b7E are now built into GPT-4",
+   "tags": [
+    "gpt4"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6",
+   "title": "GPT-6",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "auto",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-instant",
+   "title": "GPT-6",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-thinking",
+   "title": "GPT-6",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": true,
+   "thinking_efforts": [
+    {
+     "thinking_effort": "standard",
+     "full_label": "Thinking",
+     "mobile_full_label": "Thinking",
+     "short_label": "Standard",
+     "description": "Balanced thinking and speed"
+    },
+    {
+     "thinking_effort": "extended",
+     "full_label": "Extended thinking",
+     "mobile_full_label": "Extended",
+     "short_label": "Extended",
+     "description": "Thinks longer for complex questions"
+    }
+   ],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-t-mini",
+   "title": "GPT-6",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "reasoning",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  },
+  {
+   "slug": "gpt-6-mini",
+   "title": "GPT-6",
+   "description": "Our latest and most advanced model",
+   "tags": [
+    "history_off_approved"
+   ],
+   "capabilities": {},
+   "product_features": {
+    "attachments": {
+     "type": "retrieval",
+     "image_mime_types": [
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg"
+     ],
+     "can_accept_all_mime_types": true
+    },
+    "contextual_answers": {
+     "is_eligible_for_contextual_answers": true
+    }
+   },
+   "enable_infer": false,
+   "enable_infer_opt_out": false,
+   "reasoning_type": "none",
+   "configurable_thinking_effort": false,
+   "thinking_efforts": [],
+   "is_work_mode_model": false,
+   "enabled_tools": [
+    "tools",
+    "tools2",
+    "search",
+    "canvas",
+    "image_gen_tool_enabled"
+   ]
+  }
+ ],
+ "internal_groups": [],
+ "categories": [
+  {
+   "category": "gpt_5_6_reasoning",
+   "human_category_name": "Thinking",
+   "human_category_short_name": "5.6 Sol",
+   "color": "#5B41F9",
+   "icon": "connected",
+   "subscription_level": "plus",
+   "default_model": "gpt-5-6-thinking",
+   "subcategory": "Legacy models",
+   "supported_models": [
+    "gpt-5-6-thinking"
+   ],
+   "model_version": "5.6",
+   "model_lane": "thinking",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-06-15T00:00:00",
+   "action_pill_short_name": "Thinking",
+   "slash_command_enabled": true,
+   "short_explainer": "",
+   "tagline": "For complex questions"
+  },
+  {
+   "category": "gpt_5_6_instant",
+   "human_category_name": "Instant",
+   "human_category_short_name": "5.6 Sol",
+   "color": "#5B41F9",
+   "icon": "auto",
+   "subscription_level": "plus",
+   "default_model": "gpt-5-6-instant",
+   "subcategory": "Legacy models",
+   "supported_models": [
+    "gpt-5-6-instant"
+   ],
+   "model_version": "5.6",
+   "model_lane": "instant",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-07-27T00:00:00",
+   "slash_command_enabled": false,
+   "short_explainer": "",
+   "tagline": "For everyday chats"
+  },
+  {
+   "category": "<synthetic>",
+   "human_category_name": "Thinking mini",
+   "human_category_short_name": "5.6 Luna",
+   "color": "#00BCE5",
+   "icon": "reasoning",
+   "subscription_level": "free",
+   "default_model": "gpt-5-6-t-mini",
+   "subcategory": "Legacy models",
+   "supported_models": [
+    "gpt-5-6-t-mini"
+   ],
+   "model_version": "5.6",
+   "model_lane": "thinking_mini",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-07-22T00:00:00",
+   "action_pill_short_name": "Thinking",
+   "slash_command_enabled": true,
+   "short_explainer": "",
+   "tagline": "Thinks quickly"
+  },
+  {
+   "category": "gpt_6_reasoning",
+   "human_category_name": "Thinking",
+   "human_category_short_name": "6 Thinking",
+   "color": "#5B41F9",
+   "icon": "connected",
+   "subscription_level": "plus",
+   "default_model": "gpt-6-thinking",
+   "supported_models": [
+    "gpt-6-thinking"
+   ],
+   "model_version": "6",
+   "model_lane": "thinking",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-10-02T00:00:00",
+   "action_pill_short_name": "Thinking",
+   "slash_command_enabled": true,
+   "short_explainer": "Thinks longer for better answers",
+   "tagline": "For complex questions"
+  },
+  {
+   "category": "gpt_6_instant",
+   "human_category_name": "Instant",
+   "human_category_short_name": "6 Instant",
+   "color": "#5B41F9",
+   "icon": "auto",
+   "subscription_level": "plus",
+   "default_model": "gpt-6-instant",
+   "supported_models": [
+    "gpt-6-instant"
+   ],
+   "model_version": "6",
+   "model_lane": "instant",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-10-02T00:00:00",
+   "slash_command_enabled": false,
+   "short_explainer": "Answers right away",
+   "tagline": "For everyday chats"
+  },
+  {
+   "category": "<synthetic>",
+   "human_category_name": "Thinking mini",
+   "human_category_short_name": "6 Thinking",
+   "color": "#00BCE5",
+   "icon": "reasoning",
+   "subscription_level": "free",
+   "default_model": "gpt-6-t-mini",
+   "subcategory": "Legacy models",
+   "supported_models": [
+    "gpt-6-t-mini"
+   ],
+   "model_version": "6",
+   "model_lane": "thinking_mini",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-10-02T00:00:00",
+   "action_pill_short_name": "Thinking",
+   "slash_command_enabled": true,
+   "short_explainer": "",
+   "tagline": "Thinks quickly"
+  },
+  {
+   "category": "gpt_5_auto",
+   "human_category_name": "Instant",
+   "human_category_short_name": "6 Instant",
+   "color": "#5B41F9",
+   "icon": "auto",
+   "subscription_level": "free",
+   "default_model": "gpt-6",
+   "supported_models": [
+    "gpt-6"
+   ],
+   "model_version": "6",
+   "model_lane": "auto",
+   "supported_features": [
+    "canvas_supported",
+    "targeted_reply",
+    "tool_use",
+    "tool_search",
+    "attachment",
+    "custom_instructions",
+    "image",
+    "python",
+    "gizmo_project"
+   ],
+   "render_header_type": "short_label",
+   "date_updated": "2026-10-02T00:00:00",
+   "slash_command_enabled": false,
+   "short_explainer": "Decides how long to think",
+   "tagline": "For everyday chats"
+  }
+ ],
+ "versions": [
+  {
+   "id": "latest",
+   "display_text": "GPT-6",
+   "display_text_full": "GPT-6",
+   "display_text_for_intelligence": "GPT-6",
+   "short_display_text_for_intelligence": "GPT-6",
+   "slugs": [
+    "gpt-6",
+    "gpt-6-instant",
+    "gpt-6-thinking"
+   ],
+   "enabled": true,
+   "intelligence_presets": [
+    {
+     "id": 0,
+     "title": "Instant",
+     "selected_display_title": "Instant",
+     "model_slug": "gpt-6-instant",
+     "lane": "instant",
+     "preset_type": "available"
+    },
+    {
+     "id": 1,
+     "title": "Medium",
+     "selected_display_title": "Medium",
+     "model_slug": "gpt-6-thinking",
+     "lane": "thinking",
+     "thinking_effort": "standard",
+     "preset_type": "available"
+    },
+    {
+     "id": 2,
+     "title": "High",
+     "selected_display_title": "High",
+     "model_slug": "gpt-6-thinking",
+     "lane": "thinking",
+     "thinking_effort": "extended",
+     "preset_type": "available"
+    }
+   ]
+  },
+  {
+   "id": "5.6",
+   "display_text": "5.6",
+   "display_text_full": "Legacy \u2022 5.6",
+   "display_text_for_intelligence": "GPT-5.6 Sol",
+   "short_display_text_for_intelligence": "5.6 Sol",
+   "slugs": [
+    "gpt-5-6-instant",
+    "gpt-5-6-thinking",
+    "gpt-5-6-t-mini"
+   ],
+   "enabled": true,
+   "intelligence_presets": [
+    {
+     "id": 0,
+     "title": "Instant",
+     "selected_display_title": "Instant",
+     "selected_display_version": "5.6",
+     "model_slug": "gpt-5-6-instant",
+     "lane": "instant",
+     "preset_type": "available"
+    },
+    {
+     "id": 1,
+     "title": "Medium",
+     "selected_display_title": "Medium",
+     "selected_display_version": "5.6",
+     "model_slug": "gpt-5-6-thinking",
+     "lane": "thinking",
+     "thinking_effort": "standard",
+     "preset_type": "available"
+    },
+    {
+     "id": 2,
+     "title": "High",
+     "selected_display_title": "High",
+     "selected_display_version": "5.6",
+     "model_slug": "gpt-5-6-thinking",
+     "lane": "thinking",
+     "thinking_effort": "extended",
+     "preset_type": "available"
+    }
+   ]
+  }
+ ],
+ "default_model_slug": "gpt-6",
+ "model_picker_version": 2
+}

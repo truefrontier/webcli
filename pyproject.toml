@@ -1,0 +1,32 @@
+[project]
+name = "webcli"
+version = "0.1.0"
+description = "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidden Chrome sessions."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "True Frontier" }]
+dependencies = [
+    "playwright>=1.40",
+    "click>=8.1",
+    "rich>=13",
+    "tomli>=1.1; python_version < '3.11'",
+]
+
+[project.scripts]
+webcli = "webcli.apps.webcli:main"
+llmcli = "webcli.apps.llmcli:main"
+
+[project.entry-points."webcli.sites"]
+gemini = "webcli.sites.gemini:ADAPTER"
+chatgpt = "webcli.sites.chatgpt:ADAPTER"
+
+[tool.hatch.build.targets.wheel]
+packages = ["webcli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

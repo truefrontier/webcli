@@ -1,0 +1,172 @@
+{
+ "title": "Synthetic chat title",
+ "create_time": 1760814000.0,
+ "update_time": 1760814000.0,
+ "plugin_ids": null,
+ "conversation_id": "00000000-0000-4000-8000-000000000001",
+ "gizmo_type": null,
+ "is_archived": false,
+ "is_starred": null,
+ "default_model_slug": "gpt-6-thinking",
+ "atlas_mode_enabled": null,
+ "conversation_origin": null,
+ "is_read_only": null,
+ "async_status": null,
+ "disabled_tool_ids": [],
+ "is_temporary_chat": false,
+ "is_do_not_remember": false,
+ "memory_scope": "global_enabled",
+ "sugar_item_visible": false,
+ "is_study_mode": false,
+ "sectioned_conversation": null,
+ "mapping": {
+  "client-created-root": {
+   "id": "client-created-root",
+   "message": null,
+   "parent": null,
+   "children": [
+    "00000000-0000-4000-8000-000000000002"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000002": {
+   "id": "00000000-0000-4000-8000-000000000002",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000002",
+    "author": {
+     "role": "user",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": 1760814000.0,
+    "content": {
+     "content_type": "text",
+     "parts": [
+      "Reply with exactly: pong"
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": null,
+    "weight": 1.0,
+    "metadata": {
+     "message_source": null,
+     "can_save": false
+    },
+    "recipient": "all",
+    "channel": null
+   },
+   "parent": "client-created-root",
+   "children": [
+    "00000000-0000-4000-8000-000000000003"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000003": {
+   "id": "00000000-0000-4000-8000-000000000003",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "author": {
+     "role": "assistant",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": 1760814000.0,
+    "content": {
+     "content_type": "reasoning_recap",
+     "content": "Worked for a couple of seconds"
+    },
+    "status": "finished_successfully",
+    "end_turn": false,
+    "weight": 1.0,
+    "metadata": {
+     "reasoning_status": "reasoning_ended",
+     "finished_duration_sec": 1,
+     "reasoning_start_time": 1792350092.0176098,
+     "reasoning_end_time": 1792350093.7225797,
+     "reasoning_recap_type": "hide_all",
+     "cot_version": "v5",
+     "conversation_followup_suggestions_eligible": false,
+     "message_type": "next",
+     "resolved_model_slug": "gpt-6-thinking",
+     "model_slug": "gpt-6-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "can_save": false,
+     "parent_id": "00000000-0000-4000-8000-000000000004",
+     "hide_inline_actions": true,
+     "model_switcher_deny": []
+    },
+    "recipient": "all",
+    "channel": null
+   },
+   "parent": "00000000-0000-4000-8000-000000000002",
+   "children": [
+    "00000000-0000-4000-8000-000000000005"
+   ]
+  },
+  "00000000-0000-4000-8000-000000000005": {
+   "id": "00000000-0000-4000-8000-000000000005",
+   "message": {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "author": {
+     "role": "assistant",
+     "name": null,
+     "metadata": {}
+    },
+    "create_time": 1760814000.0,
+    "update_time": 1760814000.0,
+    "content": {
+     "content_type": "text",
+     "parts": [
+      "pong"
+     ]
+    },
+    "status": "finished_successfully",
+    "end_turn": true,
+    "weight": 1.0,
+    "metadata": {
+     "finish_details": {
+      "type": "stop",
+      "stop_tokens": [
+       200002
+      ]
+     },
+     "is_complete": true,
+     "citations": [],
+     "content_references": [],
+     "model_dil_v2": {
+      "code": "DIL.render(__dil.jsx(()=>{const __dilConstants=DIL.useConstants();const __dilModelDataBindings=DIL.useAppData((appData)=>appData.opGenui?.modelDataBindings??{});return __dil.jsx(\"text\",null,__dilConstants[\"0\"]);},{\"key\":\"body:0\"}));",
+      "constants": {
+       "0": "pong"
+      },
+      "fallbackMarkdown": "pong",
+      "fallbackMarkdownVersion": 1,
+      "appData": {
+       "opGenui": {
+        "componentResults": {},
+        "interactionSurface": "mainline",
+        "modelDataBindings": {}
+       }
+      }
+     },
+     "view_state": {},
+     "resolved_model_slug": "gpt-6-thinking",
+     "search_result_groups": [],
+     "cot_version": "v5",
+     "conversation_followup_suggestions_eligible": true,
+     "message_type": "next",
+     "model_slug": "gpt-6-thinking",
+     "default_model_slug": "gpt-6-thinking",
+     "can_save": true,
+     "parent_id": "00000000-0000-4000-8000-000000000003",
+     "model_switcher_deny": []
+    },
+    "recipient": "all",
+    "channel": "final"
+   },
+   "parent": "00000000-0000-4000-8000-000000000003",
+   "children": []
+  }
+ },
+ "current_node": "00000000-0000-4000-8000-000000000005",
+ "context_truncation_continuation": null
+}

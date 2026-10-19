@@ -1,0 +1,4 @@
+)]}'
+
+931
+[["wrb.fr","hNvQHb","[[[[\"c_1a2b3c4d5e6f7a8b\",\"r_newer000000001\"],null,[[\"And in winter?\"]],[[[\"rc_newer00000001\",[\"Winter in Kyoto is quiet [cite: 1, 2].\\n\\nhttp://googleusercontent.com/image_collection/image_retrieval/123456\\n\"],null,null,null,null,null,null,[2],null,null,null,[null,null,null,{\"44\":[[[\" [cite: 1, 2]\"],[[null,null,null,[[\"https://www.google.com/s2/favicons?domain=kyoto.travel\",\"https://kyoto.travel/en/\",\"Kyoto City Official Travel Guide\"]]],[null,null,null,[[\"https://www.google.com/s2/favicons?domain=jnto.go.jp\",\"https://www.japan.travel/en/destinations/kansai/kyoto/\",\"Kyoto | JNTO\"]]]]],[[\" [cite: 2]\"],[[null,null,null,[[\"fav\",\"https://example.com/dup\",\"Duplicate of 2 (first wins)\"]]]]]]}],null,null,null,null,null,null,null,null,null,null]]],[1760450400,123000000]]],\"cursor_older\"]",null,null,[0],"generic"],["di",187],["af.httprm",186,"-4271880281862545069",9]]
