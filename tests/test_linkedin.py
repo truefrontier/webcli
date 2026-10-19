@@ -1,5 +1,5 @@
 """webcli linkedin, offline: the author check on both writes (dry run by default; --confirm refuses, exit 4, unless
-signed in as the expected author, kevnk by default), the guard and its one-command write scope, limsg's parsers, and
+signed in as the expected author, which is configured; no personal handle ships as a default), the guard and its one-command write scope, limsg's parsers, and
 the messaging reads. Nothing reaches LinkedIn: pages are scripted, and every write a scripted page receives first
 passes the page's real policy, the way the guard would (a refused write never leaves: status 0). No Chrome starts.
 """
@@ -252,6 +252,13 @@ def test_send_needs_a_thread_among_the_newest(tab):
 
 # The CLI: dry run by default, --dry-run wins, exit 4 on a mismatch.
 
+@pytest.fixture(autouse=True)
+def _configured_author():
+    # The package ships no personal default; tests that assume an author configure kevnk here.
+    config.save({"sites": {"linkedin": {"expect_author": "kevnk"}}})
+    yield
+
+
 @pytest.fixture
 def calls(monkeypatch):
     make_profile("linkedin:default")
@@ -298,7 +305,7 @@ def test_post_create_is_a_dry_run_unless_confirm_alone(calls, png, flags):
 
 
 @pytest.mark.parametrize("flag", ["--confirm", "--yes"])
-def test_post_create_confirm_publishes_as_kevnk_by_default(calls, png, flag):
+def test_post_create_confirm_publishes_as_the_configured_author(calls, png, flag):
     seen, answers = calls
     answers["post"] = post_answer()
     result = run("post", "create", "--text", "Shipping today.", "--image", png, "--format", "json", flag)
@@ -394,6 +401,16 @@ def test_expect_author_flag_env_and_config_reach_the_site(calls, png, monkeypatc
 def test_an_empty_expected_author_is_a_usage_error_before_any_call(calls, png, args):
     seen, _ = calls
     assert run(*[a.replace("{png}", png) for a in args]).exit_code == 2 and seen == []
+
+
+@pytest.mark.parametrize("args", [["post", "create", "--text", "hi", "--image", "{png}", "--confirm"],
+                                  ["messages", "send", "x", "--text", "hi", "--confirm"]])
+def test_a_write_with_no_author_configured_refuses_before_any_call(calls, png, args):
+    seen, _ = calls
+    config.save({})  # no --expect-author, no env, no configured author -> refuse
+    result = run(*[a.replace("{png}", png) for a in args])
+    assert result.exit_code == 2 and seen == []
+    assert "No LinkedIn author is configured" in result.stderr
 
 
 ROBOTS = "https://www.linkedin.com/robots.txt"

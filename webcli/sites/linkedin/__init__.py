@@ -2,7 +2,7 @@
 "linkedin" (linkedin:default, its own sign-in: a person runs `webcli identity login linkedin:default`).
 
 Read-only except `messages send` and `post create`: both are dry runs by default, and both refuse to write (exit 4)
-unless the signed-in account's handle is the expected author (kevnk unless configured), checked before the first
+unless the signed-in account's handle is the expected author (configured via expect_author; writes refuse until it is set), checked before the first
 write and again right before the last one.
 """
 

@@ -59,7 +59,8 @@ AUTH_WALL = ("login", "checkpoint", "authwall", "uas/login")
 # --- Writes -------------------------------------------------------------------------------------------------------
 MAX_TEXT = 3000  # a post, counted like LinkedIn's composer (UTF-16 units)
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # LinkedIn takes larger images; 10 MB keeps the single in-page upload small
-DEFAULT_EXPECT_AUTHOR = "kevnk"  # the handle (linkedin.com/in/<handle>) writes must come from
+# No personal default ships: with nothing configured every write refuses (see author.expected).
+DEFAULT_EXPECT_AUTHOR = None  # the handle (linkedin.com/in/<handle>) writes must come from
 EXPECT_AUTHOR_ENV = "WEBCLI_LINKEDIN_EXPECT_AUTHOR"
 
 # --- Pacing -------------------------------------------------------------------------------------------------------

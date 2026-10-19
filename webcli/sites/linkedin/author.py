@@ -4,7 +4,7 @@ handle (linkedin.com/in/<handle>) equals the expected author, ignoring case, che
 right before the last one (same handle, profile urn, and member urn).
 
 The expected author: --expect-author, then $WEBCLI_LINKEDIN_EXPECT_AUTHOR, then expect_author in config.toml's
-[sites.linkedin], then kevnk.
+[sites.linkedin]. With none of these set, every write refuses (no personal handle ships in the package).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import os
 from typing import Any
 
 from webcli.core import config
-from webcli.sites.linkedin.endpoints import DEFAULT_EXPECT_AUTHOR, EXPECT_AUTHOR_ENV
+from webcli.sites.linkedin.endpoints import EXPECT_AUTHOR_ENV
 
 
 def expected(flag: str | None = None) -> str:
@@ -24,7 +24,9 @@ def expected(flag: str | None = None) -> str:
         site = sites.get("linkedin") if isinstance(sites, dict) else None
         value = site.get("expect_author") if isinstance(site, dict) else None
     if value is None:
-        value = DEFAULT_EXPECT_AUTHOR
+        raise ValueError("No LinkedIn author is configured, so every write is refused. Set the handle writes must "
+                         "come from with --expect-author, $WEBCLI_LINKEDIN_EXPECT_AUTHOR, or expect_author under "
+                         "[sites.linkedin] in ~/.webcli/config.toml.")
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"The expected author must be a LinkedIn handle (the part after linkedin.com/in/), got "
                          f"{value!r}.")

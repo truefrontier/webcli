@@ -168,6 +168,16 @@ def test_help_works_and_names_the_identity(name):
     assert reference["writes"] and reference["notes"]
 
 
+
+@pytest.fixture(autouse=True)
+def _linkedin_author():
+    # The package ships no personal default author; real users configure one. Cross-site wiring tests that
+    # exercise LinkedIn writes/launch/profile behavior configure kevnk so those paths run (the guard itself is
+    # covered in test_linkedin.py).
+    config.save({"sites": {"linkedin": {"expect_author": "kevnk"}}})
+    yield
+
+
 # Headless only.
 
 @pytest.mark.parametrize("command_", HIDDEN_COMMANDS, ids=" ".join)

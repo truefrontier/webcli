@@ -134,10 +134,14 @@ def _safety(out: dict, did: str, verb: str) -> None:
 @agent_output_options(rows=False)
 def status_cmd(expect_author, fmt, quiet) -> None:
     """The signed-in LinkedIn account, and whether writes would be allowed for it (exit 4 if signed out)."""
-    expect = _expected(expect_author)
+    try:  # status is a read: it reports sign-in even when no write-author is configured.
+        expect = authors.expected(expect_author)
+    except ValueError:
+        expect = None
     info = data.call(SITE, "status") if data.identity().profile_exists() else {"signedIn": False}
     if info["signedIn"]:
-        info = {**info, "expectedAuthor": expect, "authorMatches": authors.matches(info, expect)}
+        info = {**info, "expectedAuthor": expect,
+                "authorMatches": authors.matches(info, expect) if expect is not None else False}
     data.emit_record("LinkedIn", info, fmt)
     if not info["signedIn"]:
         die("Not signed in to LinkedIn.", EXIT_AUTH, hint=data.login_hint())

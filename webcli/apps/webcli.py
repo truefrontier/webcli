@@ -31,7 +31,7 @@ WRITES = ["Three data sites write, and only with --confirm (alias --yes): `conta
           "nothing; --dry-run with --confirm exits 2 for contacts and gmail and stays a dry run for linkedin. Every "
           "other data-site verb is read-only (facebook and loom entirely).",
           "linkedin's writes also refuse (exit 4, nothing written) unless the signed-in account is the expected author "
-          "(kevnk unless configured), checked before the first write and again right before the last.",
+          "(configured via expect_author; writes refuse until it is set), checked before the first write and again right before the last.",
           "Local files a site keeps are in its `agent-help`."]
 
 
