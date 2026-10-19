@@ -67,10 +67,9 @@ and adds each site's cli group. Just register the adapter; no app edits needed b
 
 ## Identities
 - google:default  — contacts, keep, photos, recorder, gmail, youtube  (already logged in)
-- meta:default    — facebook  (SHARES Muse's Meta profile; muse.ai login cycles through
-                    facebook.com so the profile likely holds a facebook.com session. Verify
-                    live; if www.facebook.com is not usable, report that Kevin must sign into
-                    facebook.com in the meta:default login window. Use provider "meta".)
+- facebook:default — facebook  (its own login. Built first on Muse's meta:default, but checked
+                    live that profile never held facebook.com's session (c_user, xs), so it
+                    moved to provider "facebook" on 2026-10-19.)
 - linkedin:default — linkedin  (NEW login; needs a person)
 - loom:default    — loom  (NEW login; needs a person)
 - (none)          — aa (PUBLIC HTTP, status_op=None), walkie (local SQLite, status_op=None)
@@ -115,7 +114,7 @@ SAFETY (KEEP limsg's): `send` and `post create` default to dry-run; actually sen
 REFUSES unless the dry-run author matches `kevnk` (the configured account handle) — port the
 `--expect-author` / author check, exit 4 on mismatch. Never send or post during the build.
 
-### facebook — Facebook  (source: facebook-contacts-cli / fbc; provider "meta", shares meta:default)
+### facebook — Facebook  (source: facebook-contacts-cli / fbc; provider "facebook", facebook:default)
 Verbs: `webcli facebook sync|search|about|enrich|export|status`. STRICTLY read-only on Facebook
 (the source has a test that the code contains no clicks — keep that guarantee). Friends cache
 moves under `~/.webcli/sites/facebook/`. `enrich`'s optional Tavily (`tvly`) dependency stays

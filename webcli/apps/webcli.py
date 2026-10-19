@@ -16,9 +16,9 @@ NOTES = [
     "AIs live under `llmcli`. aa (a public API) and walkie (local SQLite) need no browser or identity.",
     "keep, photos, youtube, recorder, contacts, and gmail run as google:default, the identity `webcli identity login "
     "google:default` signs in (through gemini); they have no login of their own.",
-    "facebook runs as meta:default, Muse's Meta profile (`webcli identity login meta:default`, through muse); it has "
-    "no login of its own. linkedin runs as linkedin:default and loom as loom:default, each signed in once with "
-    "`webcli identity login linkedin:default` / `loom:default`.",
+    "facebook, linkedin, and loom each run as their own identity (facebook:default, linkedin:default, "
+    "loom:default), each signed in once with `webcli identity login <identity>`. Muse's meta:default is not "
+    "facebook's.",
     "Every command that opens Chrome runs it headless: no window, no Dock icon, no focus change. Only `identity login` "
     "and an explicit --headed show a window, and login needs a person.",
     "`identity` and `doctor` are shared with `llmcli` (one data home ~/.webcli); either binary manages the same store.",

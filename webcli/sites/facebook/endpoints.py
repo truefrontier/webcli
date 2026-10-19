@@ -1,6 +1,6 @@
 """Every URL, GraphQL operation name, and selector webcli facebook touches on facebook.com, in one place (verbatim
-from fbc's endpoints.py, minus its sign-in tables: sign-in is meta:default's, through muse). Fix this file first
-when Facebook moves something.
+from fbc's endpoints.py, minus its sign-in tables: `identity login` runs unguarded, as every webcli sign-in does).
+Fix this file first when Facebook moves something.
 
 webcli facebook reads Facebook the way a person scrolling would: full page loads (GET) and the DOM they render.
 Facebook's "Comet" web app sends almost everything else as POST /api/graphql/ with a form body:
@@ -18,6 +18,10 @@ from __future__ import annotations
 ORIGIN = "https://www.facebook.com"
 APP_HOST = "www.facebook.com"
 ME_URL = ORIGIN + "/me"
+LOGIN_URL = ORIGIN + "/login/"  # fbc's; signed in, it goes on to the home feed
+# Facebook's session cookies, set only once a sign-in (and any checkpoint or two-factor step) is done. Login waits for
+# both, by name: their values never leave Chrome.
+SESSION_COOKIES = frozenset({"c_user", "xs"})
 FRIENDS_URL = ORIGIN + "/me/friends"  # redirects to the signed-in account's own Friends tab
 # Each is a full page load, with a pause in between. "about" is the default About tab (an overview: "Works at",
 # "Lives in", "From"); the others add the full work history, education, and the websites / social links.

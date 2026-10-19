@@ -1,10 +1,10 @@
-"""Browser-side work for webcli facebook (fbc's fetch.py on the shared core): status, the Friends tab, and About
-sections. READ-ONLY.
+"""Browser-side work for webcli facebook (fbc's fetch.py on the shared core): login, status, the Friends tab, and
+About sections. READ-ONLY.
 
 Everything is a full page load (GET) under the guard, then the rendered [role="main"] HTML is handed to parse.py.
 Nothing here clicks, types, or submits: it navigates, waits, reads, and scrolls the window. The only GraphQL the
-guard lets through is the Friends-tab pagination query, during `sync` (endpoints.SYNC_QUERIES). There is no login:
-meta:default signs in through muse (`webcli identity login meta:default`).
+guard lets through is the Friends-tab pagination query, during `sync` (endpoints.SYNC_QUERIES). `login` is a
+person's: a visible Chrome with no guard, where they type and click, never this code.
 
 People cross the daemon as {key, username, numericId} dicts.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import urlsplit
 
 from webcli.core import browser, guard
@@ -22,13 +22,17 @@ from webcli.sites.facebook import parse
 from webcli.sites.facebook.endpoints import (
     ABOUT_QUERIES,
     ABOUT_SECTIONS,
+    APP_HOST,
     AUTH_PATHS,
     FRIENDS_URL,
+    LOGIN_URL,
     MAX_SCROLLS,
     ME_URL,
+    ORIGIN,
     PAGE_PAUSE,
     SCROLL_PAUSE,
     SELECTORS,
+    SESSION_COOKIES,
     STALL_SCROLLS,
     SYNC_QUERIES,
 )
@@ -153,6 +157,49 @@ async def status(*, headed: bool = False) -> dict:
     """headed is accepted for the daemon contract; data sites always run headless."""
     async with browser.site_page(POLICY) as page:
         return await session(page)
+
+
+async def _signed_in_tab(page: "Page") -> bool:
+    """True once Facebook has set its session cookies and a tab reads as signed in from /me (fbc's check). Until both
+    cookies exist no tab is touched, so nothing navigates away from a sign-in, checkpoint, or two-factor page."""
+    tabs = [p for p in page.context.pages if not p.is_closed()]
+    if not tabs:
+        raise AuthRequired("The Chrome window closed before sign-in finished.")
+    if not SESSION_COOKIES <= {cookie["name"] for cookie in await page.context.cookies(ORIGIN)}:  # names only
+        return False
+    for tab in tabs:  # sign-in may finish in another tab
+        try:
+            if urlsplit(tab.url).hostname != APP_HOST or _auth_path(tab.url):
+                continue
+            if await tab.evaluate(SIGNED_OUT_JS, SELECTORS["login_form"]):
+                continue
+            if (await session(tab))["signedIn"]:
+                return True
+        except Exception:  # tab is mid-navigation
+            continue
+    return False
+
+
+async def login(timeout: int, on_state: Callable[[str], None] = lambda _state: None) -> dict:
+    """A visible Chrome on Facebook's login page with no guard (sign-in may cross a checkpoint, two-factor, or a
+    captcha). Done once Facebook's own session cookies (c_user, xs) are set and a tab reads as signed in from /me: a
+    Meta account sign-in elsewhere doesn't count. Then, with that window closed, a fresh headless Chrome on the same
+    profile (no daemon runs during sign-in) must read as signed in too, as every command will. Returns status()'s
+    record. Needs a person; only `identity login` calls it."""
+    on_state("signing in")
+    async with browser.open_page(None, mode="visible") as page:
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not await _signed_in_tab(page):
+            if loop.time() >= deadline:
+                raise AuthRequired(f"Timed out after {timeout}s waiting for Facebook sign-in.")
+            await asyncio.sleep(2)
+    info = await status()
+    if not info["signedIn"]:
+        raise AuthRequired("Facebook read as signed in in the sign-in window, but a fresh hidden Chrome on the same "
+                           "profile reads as signed out.")
+    return info
 
 
 async def sync(limit: int | None = None, *, headed: bool = False) -> dict:

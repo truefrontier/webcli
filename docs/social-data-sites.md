@@ -1,6 +1,6 @@
 # Social data sites: linkedin, facebook, loom
 
-All three sites are built, tested offline, and registered. None has run against a live session yet: the build was not allowed to sign in. LinkedIn and Loom each need a person to sign in once. Facebook shares Muse's Meta profile and has no sign-in of its own.
+All three sites are built, tested offline, and registered. Each has its own identity, and a person signs each one in once. LinkedIn has run live (read-only); Facebook and Loom wait on a new sign-in.
 
 Only LinkedIn can write, and only two verbs: `messages send` and `post create`. Both are dry runs unless `--confirm`, and both refuse to write unless the signed-in account is the expected author (`kevnk` by default). Facebook and Loom are read-only.
 
@@ -9,7 +9,7 @@ Only LinkedIn can write, and only two verbs: `messages send` and `post create`. 
 | Site | Verbs | Source | Identity | How it reads |
 |---|---|---|---|---|
 | `webcli linkedin` | `messages list`, `messages history`, `messages read`, `activity comments`, `activity reactions`, `activity posts`, `activity export`, `boost list`, `boost stats`, `status`; writes: `messages send`, `post create` | linkedin-messages-cli (limsg) | `linkedin:default` | In-page Voyager and Campaign Manager GETs; Recent activity read from the rendered cards |
-| `webcli facebook` | `sync`, `search`, `about`, `enrich`, `export`, `status` | facebook-contacts-cli (fbc) | `meta:default` (shared with `llmcli muse`) | Full page loads read from the DOM; scrolling the Friends tab |
+| `webcli facebook` | `sync`, `search`, `about`, `enrich`, `export`, `status` | facebook-contacts-cli (fbc) | `facebook:default` | Full page loads read from the DOM; scrolling the Friends tab |
 | `webcli loom` | `list`, `info`, `transcript`, `status` | loom-cli | `loom:default` | Loom's own GraphQL queries in the page; the transcript file the share page fetches |
 
 All three:
@@ -23,12 +23,16 @@ All three:
 
 ```sh
 webcli identity login linkedin:default   # sign in as kevnk: writes refuse any other account
+webcli identity login facebook:default
 webcli identity login loom:default
 ```
 
-Facebook needs no command of its own. `webcli facebook status` checks the `meta:default` profile. If it exits 4, run `webcli identity login meta:default` (Muse's sign-in) and sign in to facebook.com in that same window.
+Each login opens a visible Chrome window with no request guard, like Muse's: sign-in may cross Google, Apple, Atlassian, SSO, a checkpoint, or two-factor. Each finishes only once the site's own session works:
 
-Both new logins open a visible Chrome window with no request guard, like Muse's: sign-in may cross Google, Apple, Atlassian, SSO, or a checkpoint. They finish once a tab is signed in (LinkedIn: `GET /voyager/api/me` returns a profile; Loom: a tab shows the library, a video, or settings).
+- **LinkedIn:** `GET /voyager/api/me` returns a profile.
+- **Facebook:** Facebook's session cookies `c_user` and `xs` are set (checked by name only), and a tab off the login, checkpoint, and two-factor pages reads as signed in from `/me`. Then the window closes, and a fresh hidden Chrome on the profile must read as signed in too.
+
+Facebook used to share Muse's `meta:default`. That profile holds Facebook's device cookies (`datr`, `sb`) from Muse's Meta sign-in, but never `c_user` or `xs`, so `webcli facebook status` stayed signed out. Muse stays on `meta:default`.
 
 ## LinkedIn writes: the author check
 
@@ -111,7 +115,7 @@ These are deliberate trade-offs. Each one needs a script running in the command'
 
 Checked live on 2026-10-19 (read-only, headless, under `window_check`): `linkedin:default` is signed in. `webcli linkedin status` and `webcli linkedin messages list` both exit 0, with 0 windows and no focus change. Before the fix, `status` exited 4 whenever it was the first command on a fresh Chrome. The cause: LinkedIn's csrf token is the JSESSIONID cookie, a session cookie, so a fresh Chrome has none, and robots.txt (where `status`, `boost`, and both writes run) never sets one. Those commands now load the messaging page first when the cookie is missing, as every messaging read already did.
 
-Checked live on 2026-10-19 (read-only, headless): `meta:default` holds a Muse session but no facebook.com session. `webcli facebook status` exits 4, and `facebook.com/me` lands on Facebook's signed-out home page. A person runs `webcli identity login meta:default` and signs in to facebook.com in that window before the first `sync`.
+Checked live on 2026-10-19 (read-only, headless): `meta:default` holds a Muse session but no facebook.com session, which is why facebook moved to `facebook:default`. A person runs `webcli identity login facebook:default` before the first `sync`.
 
 These come from the source tools and were never checked under webcli's guard:
 

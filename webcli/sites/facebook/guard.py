@@ -1,7 +1,8 @@
 """www.facebook.com's request policy for the core guard (fbc's guard on the shared core). Read-only, fail-closed.
 
 read_policy(reads) is a command's policy: `reads` are the GraphQL queries that command may run (endpoints.py:
-SYNC_QUERIES for sync, none for About pages). There is no sign-in mode: meta:default signs in through muse.
+SYNC_QUERIES for sync, none for About pages). There is no sign-in mode: `webcli identity login facebook:default`
+opens Chrome with no guard, as every webcli sign-in does.
 """
 
 from __future__ import annotations

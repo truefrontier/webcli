@@ -1,5 +1,5 @@
-"""What linkedin, facebook, and loom share: how they register (facebook on meta:default with no login of its own,
-linkedin and loom each with their own), that no verb ever asks for a visible Chrome, that each verb exists with its
+"""What linkedin, facebook, and loom share: how they register (each on its own identity with its own login, none on
+Muse's meta:default), that no verb ever asks for a visible Chrome, that each verb exists with its
 options, that secrets never reach output, errors, or logs, and that the identity daemon serves them only on their own
 provider.
 
@@ -33,7 +33,7 @@ except ModuleNotFoundError:  # Python 3.10
 from conftest import LaunchStopped, make_profile
 from test_no_visible_window import assert_hidden
 
-SITES = {"linkedin": "linkedin", "facebook": "meta", "loom": "loom"}
+SITES = {"linkedin": "linkedin", "facebook": "facebook", "loom": "loom"}
 VERBS = {
     "linkedin": {"messages", "activity", "boost", "post", "status", "agent-help"},
     "facebook": {"sync", "search", "about", "enrich", "export", "status", "agent-help"},
@@ -144,12 +144,13 @@ def test_each_site_registers_as_a_data_site_in_both_places(name):
     assert fetch.POLICY.site == name and fetch.APP_URL.startswith("https://")  # what `capture` needs
 
 
-def test_facebook_borrows_the_meta_login_and_the_new_providers_bring_their_own():
+def test_each_brings_its_own_login_and_muse_keeps_meta():
     every = list(sites.registry().values())
-    assert sites.get("facebook").login is None and "login" not in sites.get("facebook").cli().commands
+    for name in SITES:
+        assert sites.get(name).login is not None
+        assert identities.login_site(Identity(f"{name}:default"), every).name == name
     assert identities.login_site(Identity("meta:default"), every).name == "muse"
-    assert identities.login_site(Identity("linkedin:default"), every).name == "linkedin"
-    assert identities.login_site(Identity("loom:default"), every).name == "loom"
+    assert (sites.get("muse").provider, sites.get("facebook").provider) == ("meta", "facebook")
     for name in SITES:
         assert "login" not in sites.get(name).cli().commands  # sign-in is `webcli identity login`, a person's job
 
@@ -192,7 +193,7 @@ def test_no_verb_offers_headed_and_headed_true_still_runs_headless(fake_playwrig
     assert_hidden(fake_playwright[0])
 
 
-@pytest.mark.parametrize("ident", ["linkedin:default", "loom:default"])
+@pytest.mark.parametrize("ident", ["linkedin:default", "loom:default", "facebook:default"])
 def test_identity_login_is_the_only_visible_path(fake_playwright, ident):
     result = run("identity", "login", ident)
     assert result.exit_code == 5

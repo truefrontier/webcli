@@ -338,6 +338,93 @@ def test_status_reads_the_account_from_me(page):
     assert asyncio.run(fetch.status()) == fetch.signed_out()
 
 
+# login: Facebook's own session, then a fresh hidden Chrome.
+
+class LoginTab(FakePage):
+    """login's visible tab. Each cookie read is one poll; `script` gives, per poll, the cookie names Chrome holds for
+    facebook.com and the URL the person is on (None: unchanged), the last entry repeating."""
+
+    def __init__(self, script, pages, redirects=None) -> None:
+        super().__init__(pages, redirects)
+        self.script, self.polls = list(script), 0
+        self.context = SimpleNamespace(pages=[self], cookies=self.cookies)
+
+    def is_closed(self) -> bool:
+        return False
+
+    async def cookies(self, url):
+        assert url == FB
+        names, at = self.script[min(self.polls, len(self.script) - 1)]
+        self.polls += 1
+        self.url = at or self.url
+        return [{"name": name, "value": "not-read"} for name in names]
+
+
+@pytest.fixture
+def window(page, monkeypatch):
+    """window(tab, after) -> (the visible tab, how it was opened, the headless pages): login's own Chrome yields `tab`;
+    `after` (pages, redirects) is the fresh hidden Chrome status() reads afterwards."""
+    async def no_sleep(_seconds):
+        pass
+
+    monkeypatch.setattr(fetch.asyncio, "sleep", no_sleep)
+
+    def use(tab: LoginTab, after: tuple):
+        opened = []
+
+        @asynccontextmanager
+        async def open_page(policy, **options):
+            opened.append((policy, options))
+            yield tab
+
+        monkeypatch.setattr(browser, "open_page", open_page)
+        _, headless = page(*after)
+        return tab, opened, headless
+
+    return use
+
+
+HOME = '<div role="main"><h1>Feed</h1></div>'
+SIGNED_IN = ({f"{FB}/kevin.example": OVERVIEW}, {endpoints.ME_URL: f"{FB}/kevin.example"})
+DEVICE = {"datr", "sb", "fr"}  # what Muse's Meta sign-in left in meta:default: device cookies, no session
+
+
+def test_login_waits_for_facebooks_own_session_then_a_fresh_hidden_chrome(window):
+    tab, opened, headless = window(LoginTab(
+        [(DEVICE, None), (DEVICE | {"c_user"}, f"{FB}/"), (DEVICE | {"c_user", "xs"}, None)],
+        {endpoints.LOGIN_URL: LOGIN_PAGE, f"{FB}/": HOME, f"{FB}/kevin.example": OVERVIEW},
+        {endpoints.ME_URL: f"{FB}/kevin.example"}), SIGNED_IN)
+    states = []
+    info = asyncio.run(fetch.login(60, states.append))
+    assert info == {"signedIn": True, "name": "Jane Doe", "key": "kevin.example", "profileUrl": f"{FB}/kevin.example"}
+    assert opened == [(None, {"mode": "visible"})] and states == ["signing in"]
+    assert tab.polls == 3 and tab.visits == [endpoints.LOGIN_URL, endpoints.ME_URL]  # untouched until c_user and xs
+    assert headless == [POLICY]  # then status() in a hidden Chrome of its own, under the read-only guard
+
+
+@pytest.mark.parametrize("at", [f"{FB}/checkpoint/1501092823525282/", f"{FB}/two_step_verification/two_factor/",
+                                endpoints.LOGIN_URL])
+def test_login_is_not_done_on_a_checkpoint_or_a_login_form_even_with_both_cookies(window, at):
+    tab, _, headless = window(LoginTab([({"c_user", "xs"}, at)], {endpoints.LOGIN_URL: LOGIN_PAGE}), SIGNED_IN)
+    with pytest.raises(AuthRequired, match="Timed out after 0.05s waiting for Facebook sign-in"):
+        asyncio.run(fetch.login(0.05))
+    assert tab.visits == [endpoints.LOGIN_URL] and headless == []
+
+
+def test_login_fails_when_a_fresh_hidden_chrome_reads_signed_out(window):
+    window(LoginTab([({"c_user", "xs"}, f"{FB}/")], {f"{FB}/": HOME, f"{FB}/kevin.example": OVERVIEW},
+                    {endpoints.ME_URL: f"{FB}/kevin.example"}), ({}, {endpoints.ME_URL: f"{FB}/login/?next=x"}))
+    with pytest.raises(AuthRequired, match="fresh hidden Chrome on the same profile reads as signed out"):
+        asyncio.run(fetch.login(60))
+
+
+def test_login_stops_when_the_window_closes(window):
+    tab, _, _ = window(LoginTab([(set(), None)], {}), SIGNED_IN)
+    tab.context.pages = []
+    with pytest.raises(AuthRequired, match="closed before sign-in finished"):
+        asyncio.run(fetch.login(60))
+
+
 def test_unavailable_profile_is_not_found(page):
     page({f"{FB}/gone.person/about": fixture("profile_unavailable.html")})
     with pytest.raises(NotFound, match="isn't available"):
@@ -376,11 +463,11 @@ def test_enrich_never_fetches_a_facebook_host():
 
 @pytest.fixture
 def calls(monkeypatch):
-    make_profile("meta:default")
+    make_profile("facebook:default")
     seen, answers = [], {}
 
     async def call(ident, site, op, *args, **kwargs):
-        assert ident.id == "meta:default"  # Muse's Meta profile: no login of its own
+        assert ident.id == "facebook:default"  # its own profile, not Muse's meta:default
         seen.append((op, args, kwargs))
         value = answers[op]
         return value(*args, **kwargs) if callable(value) else value
@@ -431,9 +518,9 @@ def test_enrich_reads_about_through_the_daemon_then_caches(calls, monkeypatch):
     assert cached["currentCity"] == "Springfield, Missouri" and len(seen) == 1  # --cached: no Chrome
 
 
-def test_status_signed_out_points_at_the_meta_login(calls):
+def test_status_signed_out_points_at_the_facebook_login(calls):
     _, answers = calls
     answers["status"] = fetch.signed_out()
     result = run("status")
-    assert result.exit_code == 4 and "webcli identity login meta:default" in result.stderr
-    assert "facebook.com" in result.stderr
+    assert result.exit_code == 4 and "webcli identity login facebook:default" in result.stderr
+    assert "meta:default" not in result.stderr

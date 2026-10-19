@@ -17,13 +17,14 @@ This puts `webcli` and `llmcli` in `~/.local/bin`. It uses your installed Google
 
 ## Sign in (a person, once per identity)
 
-Each identity is one Chrome profile. There are five:
+Each identity is one Chrome profile. There are six:
 
 | Identity | Used by | Profile |
 |---|---|---|
 | `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
-| `meta:default` | `llmcli muse`, `webcli facebook` | `~/.webcli/identities/meta-default/chrome-profile` |
+| `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
+| `facebook:default` | `webcli facebook` | `~/.webcli/identities/facebook-default/chrome-profile` |
 | `linkedin:default` | `webcli linkedin` | `~/.webcli/identities/linkedin-default/chrome-profile` |
 | `loom:default` | `webcli loom` | `~/.webcli/identities/loom-default/chrome-profile` |
 
@@ -33,6 +34,7 @@ Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 webcli identity login google:default     # same as: llmcli gemini login
 webcli identity login chatgpt:default    # same as: llmcli chatgpt login
 webcli identity login meta:default       # same as: llmcli muse login
+webcli identity login facebook:default   # Facebook (its own profile, not Muse's)
 webcli identity login linkedin:default   # LinkedIn: sign in as kevnk (writes refuse any other account)
 webcli identity login loom:default       # Loom
 ```
@@ -43,7 +45,7 @@ Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-we
 
 The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, Recorder, Contacts, and Gmail. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, `~/.recorder-cli`, `~/.google-contacts-cli`, or `~/.gmail-cli`.
 
-`webcli facebook` has no sign-in of its own. It shares `meta:default` with Muse, whose sign-in passes through facebook.com, but that doesn't leave a Facebook session behind: as of 2026-10-19 the profile has none. Run `webcli identity login meta:default` and sign in to facebook.com in that window too; `webcli facebook status` exits 0 once it's there. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
+`webcli facebook` has its own identity, `facebook:default`. It used to share Muse's `meta:default`, but Muse's sign-in leaves only Facebook's device cookies there, never its session (`c_user` and `xs`), so `webcli facebook status` stayed signed out. `webcli identity login facebook:default` finishes only once Facebook's own session is set, the account reads as signed in from `/me`, and a fresh hidden Chrome on the profile agrees. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 

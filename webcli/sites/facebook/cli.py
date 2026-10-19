@@ -36,10 +36,10 @@ SEARCH_FIELDS = ["key", "name", "subtitle", "city", "employer", "role", "linkedi
 SEARCH_COMPACT = ("key", "name", "city", "employer")
 SEARCH_COLUMNS = ["key", "name", "city", "employer", "role", "subtitle"]
 NOTES = [
-    "Identity meta:default, shared with muse: Muse's Meta sign-in cycles through facebook.com, so that profile holds "
-    "the Facebook session. There is no Facebook login of its own; when `status` exits 4, a person runs `webcli "
-    "identity login meta:default` and signs in to facebook.com in that window too. Commands run one at a time in "
-    "the identity's daemon, a hidden headless Chrome: no window, no Dock icon, no focus change.",
+    "Identity facebook:default, its own profile (not Muse's meta:default). When `status` exits 4, a person runs "
+    "`webcli identity login facebook:default` and signs in to Facebook; it finishes once Facebook's own session is "
+    "set and the account reads as signed in from a fresh hidden Chrome. Commands run one at a time in the "
+    "identity's daemon, a hidden headless Chrome: no window, no Dock icon, no focus change.",
     "Profile ids are a username (jane.doe), a numeric id, or a profile URL (facebook.com/profile.php?id=N works).",
     "`search` and `export` read only the local cache (~/.webcli/sites/facebook/friends.sqlite): no Chrome, no "
     "Facebook traffic. Run `sync` first.",
@@ -61,7 +61,7 @@ WRITES = [
 ]
 
 group = data.site_group(SITE, "Facebook friends: sync, search, about, enrich, export; read-only on Facebook "
-                              "(unofficial). Identity meta:default (shared with muse).")
+                              "(unofficial). Identity facebook:default.")
 
 
 def _person_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> Person | None:
@@ -137,8 +137,7 @@ def status_cmd(fmt: str | None, quiet: bool) -> None:
     info = data.call(SITE, "status") if data.identity().profile_exists() else fetch.signed_out()
     _emit_record("Facebook session", info, fmt)
     if not info["signedIn"]:
-        die("Not signed in to Facebook.", EXIT_AUTH,
-            hint=f"{data.login_hint()}, and signs in to facebook.com in that window")
+        die("Not signed in to Facebook.", EXIT_AUTH, hint=data.login_hint())
     raise SystemExit(EXIT_OK)
 
 
