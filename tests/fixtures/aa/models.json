@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "tier": "free",
+    "intelligence_index_version": 4.3,
+    "pagination": {
+      "page": 1,
+      "page_size": 200,
+      "total_pages": 1,
+      "has_more": false
+    }
+  },
+  "data": [
+    {
+      "id": "1",
+      "name": "GPT-4o",
+      "slug": "gpt-4o",
+      "release_date": "2024-05-13",
+      "model_creator": {
+        "id": "openai-id",
+        "name": "OpenAI"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 85.2,
+        "artificial_analysis_coding_index": 88.5,
+        "artificial_analysis_agentic_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 150.0,
+        "cost_per_task": {
+          "total_cost": 0.015
+        }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 5.0,
+        "price_1m_output_tokens": 15.0,
+        "price_1m_cache_hit_tokens": 0.5,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 85.0,
+        "median_time_to_first_token_seconds": 0.35,
+        "median_time_to_first_answer_token_seconds": 0.35,
+        "median_end_to_end_response_time_seconds": 5.2
+      }
+    },
+    {
+      "id": "2",
+      "name": "Claude 3.5 Sonnet",
+      "slug": "claude-3-5-sonnet",
+      "release_date": "2024-06-20",
+      "model_creator": {
+        "id": "anthropic-id",
+        "name": "Anthropic"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 87.1,
+        "artificial_analysis_coding_index": 90.2,
+        "artificial_analysis_agentic_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 120.0,
+        "cost_per_task": {
+          "total_cost": 0.012
+        }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 3.0,
+        "price_1m_output_tokens": 15.0,
+        "price_1m_cache_hit_tokens": 0.3,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 92.0,
+        "median_time_to_first_token_seconds": 0.28,
+        "median_time_to_first_answer_token_seconds": 0.28,
+        "median_end_to_end_response_time_seconds": 4.8
+      }
+    },
+    {
+      "id": "3",
+      "name": "Llama 3.1 405B",
+      "slug": "llama-3-1-405b",
+      "release_date": "2024-07-23",
+      "model_creator": {
+        "id": "meta-id",
+        "name": "Meta"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 78.5,
+        "artificial_analysis_coding_index": 75.8,
+        "artificial_analysis_agentic_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 80.0,
+        "cost_per_task": {
+          "total_cost": 0.008
+        }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 2.0,
+        "price_1m_output_tokens": 8.0,
+        "price_1m_cache_hit_tokens": null,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 65.0,
+        "median_time_to_first_token_seconds": 0.42,
+        "median_time_to_first_answer_token_seconds": 0.42,
+        "median_end_to_end_response_time_seconds": 6.5
+      }
+    },
+    {
+      "id": "4",
+      "name": "DeepSeek Coder V2",
+      "slug": "deepseek-coder-v2",
+      "release_date": "2024-06-17",
+      "model_creator": {
+        "id": "deepseek-id",
+        "name": "DeepSeek"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 72.3,
+        "artificial_analysis_coding_index": 82.1,
+        "artificial_analysis_agentic_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 30.0,
+        "cost_per_task": {
+          "total_cost": 0.003
+        }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 0.5,
+        "price_1m_output_tokens": 2.0,
+        "price_1m_cache_hit_tokens": null,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 120.0,
+        "median_time_to_first_token_seconds": 0.18,
+        "median_time_to_first_answer_token_seconds": 0.18,
+        "median_end_to_end_response_time_seconds": 3.2
+      }
+    },
+    {
+      "id": "5",
+      "name": "Qwen 2.5 72B",
+      "slug": "qwen-2-5-72b",
+      "release_date": "2024-09-19",
+      "model_creator": {
+        "id": "alibaba-id",
+        "name": "Alibaba"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 75.1,
+        "artificial_analysis_coding_index": null,
+        "artificial_analysis_agentic_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 60.0,
+        "cost_per_task": {
+          "total_cost": 0.006
+        }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 1.2,
+        "price_1m_output_tokens": 5.0,
+        "price_1m_cache_hit_tokens": null,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 95.0,
+        "median_time_to_first_token_seconds": 0.25,
+        "median_time_to_first_answer_token_seconds": 0.25,
+        "median_end_to_end_response_time_seconds": 4.5
+      }
+    }
+  ]
+}

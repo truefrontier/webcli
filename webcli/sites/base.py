@@ -9,6 +9,8 @@ from typing import Any, Awaitable, Callable
 
 import click
 
+NO_IDENTITY = "none"  # the provider of a site that never signs in (aa, walkie): no identity, no browser
+
 
 class Strategy(Enum):
     """How a verb gets its data (OpenCLI's four, matched to what the sites already do)."""
@@ -23,7 +25,8 @@ class Strategy(Enum):
 class Site:
     name: str
     kind: str  # "llm" (an `llmcli` site) or "data" (a `webcli` site)
-    provider: str  # the identity provider it signs in with: its default identity is "<provider>:default"
+    provider: str  # the identity provider it signs in with: its default identity is "<provider>:default"; NO_IDENTITY
+    # for a site with no sign-in
     summary: str
     cli: Callable[[], click.Group]  # the site's command group (imported lazily)
     fetch: str  # module whose functions the identity daemon may run
@@ -37,5 +40,7 @@ class Site:
 
     def describe(self) -> dict[str, Any]:
         return {"name": self.name, "kind": self.kind, "binary": "llmcli" if self.kind == "llm" else "webcli",
-                "provider": self.provider, "defaultIdentity": f"{self.provider}:default", "summary": self.summary,
+                "provider": self.provider,
+                "defaultIdentity": None if self.provider == NO_IDENTITY else f"{self.provider}:default",
+                "summary": self.summary,
                 "verbs": {name: strategy.value for name, strategy in self.verbs.items()}}

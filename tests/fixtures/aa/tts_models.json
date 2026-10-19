@@ -1,0 +1,65 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "id": "tts-1",
+      "name": "ElevenLabs v4",
+      "slug": "elevenlabs-v4",
+      "model_creator": {
+        "id": "eleven-id",
+        "name": "ElevenLabs"
+      },
+      "elo": 1315.2,
+      "rank": 1,
+      "ci95": 12.5
+    },
+    {
+      "id": "tts-2",
+      "name": "Sonic 3.6",
+      "slug": "sonic-3-6",
+      "model_creator": {
+        "id": "cartesia-id",
+        "name": "Cartesia"
+      },
+      "elo": 1289.7,
+      "rank": 2,
+      "ci95": 11.3
+    },
+    {
+      "id": "tts-3",
+      "name": "Gemini 3.8 Flash TTS",
+      "slug": "gemini-3-8-flash-tts",
+      "model_creator": {
+        "id": "google-id",
+        "name": "Google"
+      },
+      "elo": 1267.4,
+      "rank": 3,
+      "ci95": 10.8
+    },
+    {
+      "id": "tts-4",
+      "name": "Qwen-Audio-3.0-TTS-Plus",
+      "slug": "qwen-audio-3-0-tts-plus",
+      "model_creator": {
+        "id": "alibaba-id",
+        "name": "Alibaba"
+      },
+      "elo": 1245.1,
+      "rank": 4,
+      "ci95": 13.2
+    },
+    {
+      "id": "tts-5",
+      "name": "Azure OpenAI TTS HD",
+      "slug": "azure-openai-tts-hd",
+      "model_creator": {
+        "id": "microsoft-id",
+        "name": "Microsoft"
+      },
+      "elo": 1220.6,
+      "rank": 5,
+      "ci95": 9.7
+    }
+  ]
+}

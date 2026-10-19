@@ -111,7 +111,9 @@ def resolve(site: "Site", explicit: str | None = None) -> Identity:
 
 def known(sites: "list[Site]") -> list[Identity]:
     """Every identity worth reporting: each provider's default, [identities.*] in config.toml, and every profile dir."""
-    ids = {f"{site.provider}:default" for site in sites}
+    from webcli.sites.base import NO_IDENTITY
+
+    ids = {f"{site.provider}:default" for site in sites if site.provider != NO_IDENTITY}
     ids |= set(_table(config.load(), "config.toml", "identities"))
     root = config.home() / "identities"
     if root.is_dir():

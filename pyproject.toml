@@ -21,6 +21,7 @@ llmcli = "webcli.apps.llmcli:main"
 gemini = "webcli.sites.gemini:ADAPTER"
 chatgpt = "webcli.sites.chatgpt:ADAPTER"
 muse = "webcli.sites.muse:ADAPTER"
+aa = "webcli.sites.aa:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
