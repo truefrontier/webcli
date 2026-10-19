@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from conftest import FIXTURES
+from conftest import FIXTURES, FakeCDP
 from webcli.core import guard
 from webcli.sites.chatgpt.guard import POLICY as CHATGPT
 from webcli.sites.muse import guard as muse_guard
@@ -232,6 +232,9 @@ def test_page_at_gives_sockets_only_to_a_policy_that_lists_them_and_closes_them(
         async def new_page(self):
             return self.page
 
+        async def new_cdp_session(self, _page):
+            return FakeCDP([])
+
     context, ws = Context(), Socket(GATEWAY)
 
     async def main():
@@ -269,6 +272,9 @@ def test_page_at_revokes_the_lease_before_closing_sockets_even_if_cancelled():
 
         async def new_page(self):
             return Page()
+
+        async def new_cdp_session(self, _page):
+            return FakeCDP([])
 
     async def main():
         async with browser.page_at(Context(), POLICY, new=True) as page:

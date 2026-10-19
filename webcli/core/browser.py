@@ -7,6 +7,9 @@ fallback: on macOS every headed variant tried (2026-10-18: --window-position=-32
 app, CDP window bounds) still put a window on screen or took focus, so a check headless Chrome can't pass raises
 Challenged instead. Inside the daemon (shared is set) a visible Chrome is refused outright.
 
+Fingerprint: headless Chrome's own user agent says "HeadlessChrome", so every headless page presents as the installed
+Chrome instead (user_agent, ua_metadata, present_as_chrome).
+
 H2: Playwright starts Chrome with --use-mock-keychain on macOS, which encrypts cookies with a fixed, public key.
 Dropping it (IGNORED_DEFAULT_ARGS) makes Chrome keep cookies under its own "Chrome Safe Storage" Keychain key, like
 any Chrome profile. webcli itself never reads the Keychain or any cookie value; Chrome does, as it always does.
@@ -17,8 +20,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import itertools
+import json
 import math
 import os
+import platform
 import plistlib
 import signal
 import socket
@@ -39,6 +45,8 @@ MODES = ("headless", "visible")
 STEALTH = ["--disable-blink-features=AutomationControlled"]
 IGNORED_DEFAULT_ARGS = ["--enable-automation", "--use-mock-keychain"]
 CHROME_PLIST = Path("/Applications/Google Chrome.app/Contents/Info.plist")
+# present_as_chrome: each new cross-site iframe and worker waits, paused, for its override.
+AUTO_ATTACH = {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False}
 LOCK_WAIT_ENV = "WEBCLI_LOCK_WAIT"
 
 # Seconds a command waits for another command (or its Chrome) to let go of the profile. Set by --lock-wait.
@@ -65,19 +73,95 @@ def parse_wait(value: str | float) -> float:
     return wait
 
 
-def user_agent(plist: Path = CHROME_PLIST) -> str | None:
-    """Chrome's own user agent without "HeadlessChrome": Cloudflare answers headless Chrome's UA with its "Just a
-    moment..." check, which never clears. Chrome sends a reduced UA (major version, then .0.0.0); None (no
-    override) when Chrome's version can't be read."""
+def chrome_version(plist: Path = CHROME_PLIST) -> str | None:
+    """The installed Chrome's full version ("155.0.8059.80"), or None when it can't be read."""
     try:
         version = plistlib.loads(plist.read_bytes())["CFBundleShortVersionString"]
     except (OSError, KeyError, ValueError, plistlib.InvalidFileException):
         return None
-    major = version.split(".")[0]
-    if not major.isdigit():
+    return version if version.split(".")[0].isdigit() else None
+
+
+def user_agent(plist: Path = CHROME_PLIST) -> str | None:
+    """Chrome's own user agent without "HeadlessChrome": Cloudflare answers headless Chrome's UA with its "Just a
+    moment..." check, which never clears. Chrome sends a reduced UA (major version, then .0.0.0); None (no
+    override) when Chrome's version can't be read."""
+    version = chrome_version(plist)
+    if version is None:
         return None
     return (f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
-            f"Chrome/{major}.0.0.0 Safari/537.36")
+            f"Chrome/{version.split('.')[0]}.0.0.0 Safari/537.36")
+
+
+def brands(version: str, *, full: bool = False) -> list[dict]:
+    """Google Chrome's brand list for `version`, its GREASE brand included, as Chrome builds it (Chromium's
+    GenerateBrandVersionList, seeded by the major version): Sec-CH-UA, or with `full` Sec-CH-UA-Full-Version-List."""
+    seed = int(version.split(".")[0])
+    chars = " (:-./);=?_"
+    grease = ("8", "99", "24")[seed % 3]
+    entries = [(f"Not{chars[seed % 11]}A{chars[(seed + 1) % 11]}Brand", f"{grease}.0.0.0" if full else grease),
+               ("Chromium", version if full else str(seed)), ("Google Chrome", version if full else str(seed))]
+    order = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))[seed % 6]
+    ordered = [{}] * 3
+    for slot, (brand, brand_version) in zip(order, entries):
+        ordered[slot] = {"brand": brand, "version": brand_version}
+    return ordered
+
+
+def ua_metadata(version: str) -> dict:
+    """The User-Agent Client Hints this Mac's visible Chrome `version` sends. Playwright derives them from
+    user_agent()'s frozen "Intel Mac OS X 10_15_7", so on its own a headless page claims x86 and macOS "10_15_7"
+    (a form no real Chrome sends) while a visible one says arm and "26.6.2". The brands are spelled out: a worker
+    inheriting an override without them reports none."""
+    macos = (platform.mac_ver()[0].split(".") + ["0", "0"])[:3]  # Chrome always sends major.minor.patch
+    return {"brands": brands(version), "fullVersionList": brands(version, full=True), "fullVersion": version,
+            "platform": "macOS", "platformVersion": ".".join(macos),
+            "architecture": "arm" if platform.machine() == "arm64" else "x86",
+            "model": "", "mobile": False, "bitness": "64", "wow64": False}
+
+
+async def present_as_chrome(context: "BrowserContext", page: "Page") -> None:
+    """Pin `page`'s user agent and client hints to user_agent() and ua_metadata(), what a real Chrome sends:
+    Cloudflare checks them together, and a fresh profile (no cf_clearance yet) only gets through when they agree
+    with a real Chrome's.
+    Auto-attach pauses each cross-site iframe (Cloudflare's Turnstile), however deeply nested, and each worker until it
+    has the same override, so none runs with Playwright's own (x86, macOS "10_15_7"). Non-flat sessions: Playwright's
+    CDPSession can't address flat child sessions, so a nested target is reached through each session above it."""
+    version, ua = chrome_version(), user_agent()
+    if version is None or ua is None:
+        return
+    override = {"userAgent": ua, "userAgentMetadata": ua_metadata(version)}
+    cdp = await context.new_cdp_session(page)
+    ids = itertools.count(1)
+
+    async def send(path: tuple[str, ...], method: str, params: dict) -> None:
+        """`method` to the target at the end of `path` (session ids, outermost first), wrapped once per level."""
+        for session_id in reversed(path):
+            params = {"sessionId": session_id,
+                      "message": json.dumps({"id": next(ids), "method": method, "params": params})}
+            method = "Target.sendMessageToTarget"
+        with contextlib.suppress(Exception):  # a worker has no Emulation, a target may be gone: neither is fatal
+            await cdp.send(method, params)
+
+    async def attached(path: tuple[str, ...]) -> None:
+        try:
+            await send(path, "Emulation.setUserAgentOverride", override)
+            await send(path, "Target.setAutoAttach", AUTO_ATTACH)  # its own cross-site iframes and workers
+        finally:
+            await send(path, "Runtime.runIfWaitingForDebugger", {})  # unreleased, it stays paused
+
+    async def received(event: dict, path: tuple[str, ...] = ()) -> None:
+        """An event from a nested target: its attachments are paused targets one level deeper."""
+        path, message = (*path, event["sessionId"]), json.loads(event["message"])
+        if message.get("method") == "Target.attachedToTarget":
+            await attached((*path, message["params"]["sessionId"]))
+        elif message.get("method") == "Target.receivedMessageFromTarget":
+            await received(message["params"], path)
+
+    cdp.on("Target.attachedToTarget", lambda event: attached((event["sessionId"],)))
+    cdp.on("Target.receivedMessageFromTarget", received)
+    await cdp.send("Emulation.setUserAgentOverride", override)
+    await cdp.send("Target.setAutoAttach", AUTO_ATTACH)
 
 
 def launch_options(profile: Path, mode: str, *, guarded: bool = True) -> dict:
@@ -237,10 +321,13 @@ async def page_at(context: "BrowserContext", policy: Policy | None, *, mode: str
     unguarded, chatgpt's sign-in window), send only for `ask` / `-p`, download only for `--image-out`, sign_in only
     for `identity login`. With `url` the page goes there first, then `ready(page, mode)` may refuse it (chatgpt's
     Cloudflare check raises Challenged) before anything is yielded. A policy that lists sockets gets them on this
-    page only, closed when it is done."""
+    page only, closed when it is done. A headless page presents as Chrome (present_as_chrome) before it loads
+    anything."""
     page = None
     try:
         page = await context.new_page() if new or not context.pages else context.pages[0]
+        if mode == "headless":
+            await present_as_chrome(context, page)
         if policy is not None:
             lease = guard.state.begin(policy, send=send, download=download, sign_in=sign_in)
             await page.route("**/*", guard.page_route(lease))

@@ -4,6 +4,7 @@ signals, and Playwright's protocol logging."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import socket
@@ -212,3 +213,93 @@ def test_user_agent_drops_headless(tmp_path):
     ua = browser.user_agent(plist)
     assert "Chrome/155.0.0.0 Safari/537.36" in ua and "Headless" not in ua
     assert browser.user_agent(tmp_path / "missing.plist") is None
+
+
+def test_brands_are_the_ones_chrome_sends():
+    """Chrome 155 as read from the installed Chrome's navigator.userAgentData (2026-10-19); Chrome 120's Sec-CH-UA."""
+    assert browser.brands("155.0.8059.80") == [{"brand": "Google Chrome", "version": "155"},
+                                               {"brand": "Chromium", "version": "155"},
+                                               {"brand": "Not(A:Brand", "version": "24"}]
+    assert browser.brands("155.0.8059.80", full=True) == [{"brand": "Google Chrome", "version": "155.0.8059.80"},
+                                                          {"brand": "Chromium", "version": "155.0.8059.80"},
+                                                          {"brand": "Not(A:Brand", "version": "24.0.0.0"}]
+    assert browser.brands("120.0.6099.71") == [{"brand": "Not_A Brand", "version": "8"},
+                                               {"brand": "Chromium", "version": "120"},
+                                               {"brand": "Google Chrome", "version": "120"}]
+
+
+def test_ua_metadata_is_this_macs_chrome(monkeypatch):
+    monkeypatch.setattr(browser.platform, "mac_ver", lambda: ("26.6", ("", "", ""), "arm64"))
+    monkeypatch.setattr(browser.platform, "machine", lambda: "arm64")
+    metadata = browser.ua_metadata("155.0.8059.80")
+    assert {key: metadata[key] for key in ("platform", "platformVersion", "architecture", "bitness", "mobile",
+                                           "model", "fullVersion")} == {
+        "platform": "macOS", "platformVersion": "26.6.0", "architecture": "arm", "bitness": "64", "mobile": False,
+        "model": "", "fullVersion": "155.0.8059.80"}
+
+
+def unwrap(method: str, params: dict) -> tuple:
+    """A CDP send to a nested target as (session path, the method it carries, that method's params)."""
+    path = ()
+    while method == "Target.sendMessageToTarget":
+        inner = json.loads(params["message"])
+        path, method, params = (*path, params["sessionId"]), inner["method"], inner["params"]
+    return path, method, params
+
+
+def event(method: str, params: dict) -> str:
+    return json.dumps({"method": method, "params": params})
+
+
+def presented(monkeypatch) -> tuple:
+    """present_as_chrome on a FakeContext's tab: (context, its CDP session)."""
+    from conftest import FakeContext
+
+    monkeypatch.setattr(browser, "chrome_version", lambda _plist=None: "155.0.8059.80")
+    context = FakeContext()
+    asyncio.run(browser.present_as_chrome(context, context.pages[0]))
+    return context, context.sessions[0]
+
+
+def test_every_paused_frame_and_worker_gets_the_override_however_deep(monkeypatch):
+    """Auto-attach pauses each cross-site iframe (Cloudflare's Turnstile), the ones nested in it, and each worker.
+    Each gets the page's override and an auto-attach of its own, then is released."""
+    context, cdp = presented(monkeypatch)
+    override = context.cdp[0][1]
+    auto_attach = {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False}
+    assert context.cdp == [("Emulation.setUserAgentOverride", override), ("Target.setAutoAttach", auto_attach)]
+
+    asyncio.run(cdp.handlers["Target.attachedToTarget"]({"sessionId": "turnstile"}))
+    asyncio.run(cdp.handlers["Target.receivedMessageFromTarget"](  # an iframe inside Turnstile's
+        {"sessionId": "turnstile", "message": event("Target.attachedToTarget", {"sessionId": "inner"})}))
+    asyncio.run(cdp.handlers["Target.receivedMessageFromTarget"](  # a worker inside that one
+        {"sessionId": "turnstile", "message": event("Target.receivedMessageFromTarget", {
+            "sessionId": "inner", "message": event("Target.attachedToTarget", {"sessionId": "worker"})})}))
+    assert [unwrap(*sent) for sent in context.cdp[2:]] == [
+        (path, method, params)
+        for path in (("turnstile",), ("turnstile", "inner"), ("turnstile", "inner", "worker"))
+        for method, params in (("Emulation.setUserAgentOverride", override), ("Target.setAutoAttach", auto_attach),
+                               ("Runtime.runIfWaitingForDebugger", {}))]
+
+
+def test_a_paused_target_is_released_even_when_its_override_fails(monkeypatch):
+    """One left paused would hang the page: release follows a refused override (a worker has no Emulation) and a
+    cancelled one."""
+    _context, cdp = presented(monkeypatch)
+    sent, failure = [], {}
+
+    async def send(method, params):
+        path, inner, _ = unwrap(method, params)
+        sent.append((path, inner))
+        if inner == "Emulation.setUserAgentOverride":
+            raise failure["error"]
+
+    cdp.send = send
+    failure["error"] = RuntimeError("'Emulation.setUserAgentOverride' wasn't found")
+    asyncio.run(cdp.handlers["Target.attachedToTarget"]({"sessionId": "worker"}))
+    failure["error"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(cdp.handlers["Target.attachedToTarget"]({"sessionId": "closing"}))
+    assert sent == [(("worker",), "Emulation.setUserAgentOverride"), (("worker",), "Target.setAutoAttach"),
+                    (("worker",), "Runtime.runIfWaitingForDebugger"),
+                    (("closing",), "Emulation.setUserAgentOverride"), (("closing",), "Runtime.runIfWaitingForDebugger")]
