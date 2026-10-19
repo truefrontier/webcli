@@ -1,0 +1,106 @@
+{
+ "responseContext": {},
+ "actions": [
+  {
+   "clickTrackingParams": "CT",
+   "openPopupAction": {
+    "popup": {
+     "multiPageMenuRenderer": {
+      "header": {
+       "activeAccountHeaderRenderer": {
+        "accountName": {
+         "simpleText": "Test Viewer"
+        },
+        "accountPhoto": {
+         "thumbnails": [
+          {
+           "url": "https://yt3.ggpht.com/x",
+           "width": 88,
+           "height": 88
+          }
+         ]
+        },
+        "settingsEndpoint": {
+         "commandMetadata": {
+          "webCommandMetadata": {
+           "url": "/account"
+          }
+         },
+         "applicationSettingsEndpoint": {}
+        },
+        "manageAccountTitle": {
+         "runs": [
+          {
+           "text": "View your channel"
+          }
+         ]
+        },
+        "channelHandle": {
+         "simpleText": "@testviewer"
+        }
+       }
+      },
+      "sections": [
+       {
+        "multiPageMenuSectionRenderer": {
+         "items": [
+          {
+           "compactLinkRenderer": {
+            "icon": {
+             "iconType": "GOOGLE"
+            },
+            "title": {
+             "runs": [
+              {
+               "text": "Google Account"
+              }
+             ]
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "multiPageMenuSectionRenderer": {
+         "items": [
+          {
+           "compactLinkRenderer": {
+            "title": {
+             "runs": [
+              {
+               "text": "Switch account"
+              }
+             ]
+            },
+            "navigationEndpoint": {
+             "getMultiPageMenuAction": {
+              "menu": {
+               "multiPageMenuRenderer": {
+                "header": {
+                 "googleAccountHeaderRenderer": {
+                  "name": {
+                   "simpleText": "Test Viewer"
+                  },
+                  "email": {
+                   "simpleText": "viewer@example.com"
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "popupType": "DROPDOWN"
+   }
+  }
+ ]
+}

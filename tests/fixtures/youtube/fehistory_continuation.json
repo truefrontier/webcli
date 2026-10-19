@@ -1,0 +1,749 @@
+{
+ "responseContext": {
+  "mainAppWebResponseContext": {
+   "loggedOut": false
+  }
+ },
+ "trackingParams": "TP",
+ "onResponseReceivedActions": [
+  {
+   "clickTrackingParams": "CT",
+   "appendContinuationItemsAction": {
+    "continuationItems": [
+     {
+      "itemSectionRenderer": {
+       "contents": [
+        {
+         "videoRenderer": {
+          "videoId": "eeeeeeeeeee",
+          "thumbnail": {
+           "thumbnails": [
+            {
+             "url": "https://i.ytimg.com/vi/eeeeeeeeeee/hqdefault.jpg",
+             "width": 480,
+             "height": 270
+            }
+           ]
+          },
+          "title": {
+           "runs": [
+            {
+             "text": "A short in a list"
+            }
+           ],
+           "accessibility": {
+            "accessibilityData": {
+             "label": "A short in a list"
+            }
+           }
+          },
+          "descriptionSnippet": {
+           "runs": [
+            {
+             "text": "A description."
+            }
+           ]
+          },
+          "longBylineText": {
+           "runs": [
+            {
+             "text": "Shorty",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@shorty",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCeeeeeeeeeeeeeeeeeeeeee",
+               "canonicalBaseUrl": "/@shorty"
+              }
+             }
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "1,234 views"
+          },
+          "navigationEndpoint": {
+           "clickTrackingParams": "CT",
+           "commandMetadata": {
+            "webCommandMetadata": {
+             "url": "/watch?v=eeeeeeeeeee"
+            }
+           },
+           "reelWatchEndpoint": {
+            "videoId": "eeeeeeeeeee",
+            "playerParams": "x"
+           }
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "Shorty",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@shorty",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCeeeeeeeeeeeeeeeeeeeeee",
+               "canonicalBaseUrl": "/@shorty"
+              }
+             }
+            }
+           ]
+          },
+          "shortBylineText": {
+           "runs": [
+            {
+             "text": "Shorty",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@shorty",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCeeeeeeeeeeeeeeeeeeeeee",
+               "canonicalBaseUrl": "/@shorty"
+              }
+             }
+            }
+           ]
+          },
+          "trackingParams": "TP",
+          "thumbnailOverlays": [
+           {
+            "thumbnailOverlayResumePlaybackRenderer": {
+             "percentDurationWatched": 100
+            }
+           },
+           {
+            "thumbnailOverlayTimeStatusRenderer": {
+             "text": {
+              "runs": [
+               {
+                "text": "SHORTS"
+               }
+              ]
+             },
+             "style": "SHORTS"
+            }
+           },
+           {
+            "thumbnailOverlayNowPlayingRenderer": {
+             "text": {
+              "runs": [
+               {
+                "text": "Now playing"
+               }
+              ]
+             }
+            }
+           }
+          ],
+          "menu": {
+           "menuRenderer": {
+            "items": [
+             {
+              "menuServiceItemRenderer": {
+               "text": {
+                "runs": [
+                 {
+                  "text": "Remove from watch history"
+                 }
+                ]
+               },
+               "serviceEndpoint": {
+                "feedbackEndpoint": {
+                 "feedbackToken": "FT",
+                 "actions": []
+                }
+               }
+              }
+             }
+            ]
+           }
+          }
+         }
+        }
+       ],
+       "trackingParams": "TP"
+      }
+     },
+     {
+      "itemSectionRenderer": {
+       "contents": [
+        {
+         "videoRenderer": {
+          "videoId": "fffffffffff",
+          "thumbnail": {
+           "thumbnails": [
+            {
+             "url": "https://i.ytimg.com/vi/fffffffffff/hqdefault.jpg",
+             "width": 480,
+             "height": 270
+            }
+           ]
+          },
+          "title": {
+           "runs": [
+            {
+             "text": "Live stream replay"
+            }
+           ],
+           "accessibility": {
+            "accessibilityData": {
+             "label": "Live stream replay"
+            }
+           }
+          },
+          "descriptionSnippet": {
+           "runs": [
+            {
+             "text": "A description."
+            }
+           ]
+          },
+          "longBylineText": {
+           "runs": [
+            {
+             "text": "Live Co",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@liveco",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCffffffffffffffffffffff",
+               "canonicalBaseUrl": "/@liveco"
+              }
+             }
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "1,234 views"
+          },
+          "navigationEndpoint": {
+           "clickTrackingParams": "CT",
+           "commandMetadata": {
+            "webCommandMetadata": {
+             "url": "/watch?v=fffffffffff"
+            }
+           },
+           "watchEndpoint": {
+            "videoId": "fffffffffff",
+            "watchEndpointSupportedOnesieConfig": {}
+           }
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "Live Co",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@liveco",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCffffffffffffffffffffff",
+               "canonicalBaseUrl": "/@liveco"
+              }
+             }
+            }
+           ]
+          },
+          "shortBylineText": {
+           "runs": [
+            {
+             "text": "Live Co",
+             "navigationEndpoint": {
+              "clickTrackingParams": "CT",
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/@liveco",
+                "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                "rootVe": 3611,
+                "apiUrl": "/youtubei/v1/browse"
+               }
+              },
+              "browseEndpoint": {
+               "browseId": "UCffffffffffffffffffffff",
+               "canonicalBaseUrl": "/@liveco"
+              }
+             }
+            }
+           ]
+          },
+          "trackingParams": "TP",
+          "thumbnailOverlays": [
+           {
+            "thumbnailOverlayResumePlaybackRenderer": {
+             "percentDurationWatched": 100
+            }
+           },
+           {
+            "thumbnailOverlayTimeStatusRenderer": {
+             "text": {
+              "accessibility": {
+               "accessibilityData": {
+                "label": "x"
+               }
+              },
+              "simpleText": "LIVE"
+             },
+             "style": "LIVE"
+            }
+           },
+           {
+            "thumbnailOverlayNowPlayingRenderer": {
+             "text": {
+              "runs": [
+               {
+                "text": "Now playing"
+               }
+              ]
+             }
+            }
+           }
+          ],
+          "menu": {
+           "menuRenderer": {
+            "items": [
+             {
+              "menuServiceItemRenderer": {
+               "text": {
+                "runs": [
+                 {
+                  "text": "Remove from watch history"
+                 }
+                ]
+               },
+               "serviceEndpoint": {
+                "feedbackEndpoint": {
+                 "feedbackToken": "FT",
+                 "actions": []
+                }
+               }
+              }
+             }
+            ]
+           }
+          }
+         }
+        }
+       ],
+       "trackingParams": "TP",
+       "header": {
+        "itemSectionHeaderRenderer": {
+         "title": {
+          "runs": [
+           {
+            "text": "Oct 3"
+           }
+          ]
+         },
+         "trackingParams": "TP"
+        }
+       }
+      }
+     },
+     {
+      "itemSectionRenderer": {
+       "contents": [
+        {
+         "lockupViewModel": {
+          "contentImage": {
+           "thumbnailViewModel": {
+            "image": {
+             "sources": [
+              {
+               "url": "https://i.ytimg.com/vi/ggggggggggg/hqdefault.jpg",
+               "width": 480,
+               "height": 270
+              }
+             ]
+            },
+            "overlays": [
+             {
+              "thumbnailOverlayBadgeViewModel": {
+               "thumbnailBadges": [
+                {
+                 "thumbnailBadgeViewModel": {
+                  "icon": null,
+                  "text": "10:05",
+                  "badgeStyle": "THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT",
+                  "animationActivationTargetId": "ggggggggggg",
+                  "rendererContext": {}
+                 }
+                }
+               ],
+               "position": "THUMBNAIL_OVERLAY_BADGE_POSITION_BOTTOM_END"
+              }
+             }
+            ]
+           }
+          },
+          "metadata": {
+           "lockupMetadataViewModel": {
+            "title": {
+             "content": "Last year's video"
+            },
+            "metadata": {
+             "contentMetadataViewModel": {
+              "metadataRows": [
+               {
+                "metadataParts": [
+                 {
+                  "text": {
+                   "content": "Old Channel",
+                   "styleRuns": [
+                    {
+                     "startIndex": 0,
+                     "length": 11
+                    }
+                   ],
+                   "commandRuns": [
+                    {
+                     "startIndex": 0,
+                     "length": 11,
+                     "onTap": {
+                      "innertubeCommand": {
+                       "clickTrackingParams": "CT",
+                       "commandMetadata": {
+                        "webCommandMetadata": {
+                         "url": "/@old",
+                         "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                         "rootVe": 3611,
+                         "apiUrl": "/youtubei/v1/browse"
+                        }
+                       },
+                       "browseEndpoint": {
+                        "browseId": "UCgggggggggggggggggggggg",
+                        "canonicalBaseUrl": "/@old"
+                       }
+                      }
+                     }
+                    }
+                   ]
+                  }
+                 }
+                ]
+               },
+               {
+                "metadataParts": [
+                 {
+                  "text": {
+                   "content": "10K views"
+                  }
+                 },
+                 {
+                  "text": {
+                   "content": "2 years ago"
+                  }
+                 }
+                ]
+               }
+              ],
+              "delimiter": " \u2022 "
+             }
+            },
+            "menuButton": {
+             "buttonViewModel": {
+              "iconName": "MORE_VERT",
+              "onTap": {
+               "innertubeCommand": {
+                "showSheetCommand": {
+                 "panelLoadingStrategy": {
+                  "inlineContent": {
+                   "sheetViewModel": {
+                    "content": {
+                     "listViewModel": {
+                      "listItems": [
+                       {
+                        "listItemViewModel": {
+                         "title": {
+                          "content": "Remove from watch history"
+                         },
+                         "rendererContext": {
+                          "commandContext": {
+                           "onTap": {
+                            "innertubeCommand": {
+                             "feedbackEndpoint": {
+                              "feedbackToken": "FT"
+                             }
+                            }
+                           }
+                          }
+                         }
+                        }
+                       }
+                      ]
+                     }
+                    }
+                   }
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          },
+          "contentId": "ggggggggggg",
+          "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+          "rendererContext": {
+           "loggingContext": {},
+           "accessibilityContext": {
+            "label": "Last year's video"
+           },
+           "commandContext": {
+            "onTap": {
+             "innertubeCommand": {
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/watch?v=ggggggggggg",
+                "webPageType": "WEB_PAGE_TYPE_WATCH"
+               }
+              },
+              "watchEndpoint": {
+               "videoId": "ggggggggggg"
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       ],
+       "trackingParams": "TP",
+       "header": {
+        "itemSectionHeaderRenderer": {
+         "title": {
+          "runs": [
+           {
+            "text": "Oct 3, 2025"
+           }
+          ]
+         },
+         "trackingParams": "TP"
+        }
+       }
+      }
+     },
+     {
+      "itemSectionRenderer": {
+       "contents": [
+        {
+         "lockupViewModel": {
+          "contentImage": {
+           "thumbnailViewModel": {
+            "image": {
+             "sources": [
+              {
+               "url": "https://i.ytimg.com/vi/hhhhhhhhhhh/hqdefault.jpg",
+               "width": 480,
+               "height": 270
+              }
+             ]
+            },
+            "overlays": [
+             {
+              "thumbnailOverlayBadgeViewModel": {
+               "thumbnailBadges": [
+                {
+                 "thumbnailBadgeViewModel": {
+                  "icon": null,
+                  "text": "4:00",
+                  "badgeStyle": "THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT",
+                  "animationActivationTargetId": "hhhhhhhhhhh",
+                  "rendererContext": {}
+                 }
+                }
+               ],
+               "position": "THUMBNAIL_OVERLAY_BADGE_POSITION_BOTTOM_END"
+              }
+             }
+            ]
+           }
+          },
+          "metadata": {
+           "lockupMetadataViewModel": {
+            "title": {
+             "content": "Undated"
+            },
+            "metadata": {
+             "contentMetadataViewModel": {
+              "metadataRows": [
+               {
+                "metadataParts": [
+                 {
+                  "text": {
+                   "content": "Mystery",
+                   "styleRuns": [
+                    {
+                     "startIndex": 0,
+                     "length": 7
+                    }
+                   ],
+                   "commandRuns": [
+                    {
+                     "startIndex": 0,
+                     "length": 7,
+                     "onTap": {
+                      "innertubeCommand": {
+                       "clickTrackingParams": "CT",
+                       "commandMetadata": {
+                        "webCommandMetadata": {
+                         "url": "/@mystery",
+                         "webPageType": "WEB_PAGE_TYPE_CHANNEL",
+                         "rootVe": 3611,
+                         "apiUrl": "/youtubei/v1/browse"
+                        }
+                       },
+                       "browseEndpoint": {
+                        "browseId": "UChhhhhhhhhhhhhhhhhhhhhh",
+                        "canonicalBaseUrl": "/@mystery"
+                       }
+                      }
+                     }
+                    }
+                   ]
+                  }
+                 }
+                ]
+               },
+               {
+                "metadataParts": [
+                 {
+                  "text": {
+                   "content": "10K views"
+                  }
+                 },
+                 {
+                  "text": {
+                   "content": "2 years ago"
+                  }
+                 }
+                ]
+               }
+              ],
+              "delimiter": " \u2022 "
+             }
+            },
+            "menuButton": {
+             "buttonViewModel": {
+              "iconName": "MORE_VERT",
+              "onTap": {
+               "innertubeCommand": {
+                "showSheetCommand": {
+                 "panelLoadingStrategy": {
+                  "inlineContent": {
+                   "sheetViewModel": {
+                    "content": {
+                     "listViewModel": {
+                      "listItems": [
+                       {
+                        "listItemViewModel": {
+                         "title": {
+                          "content": "Remove from watch history"
+                         },
+                         "rendererContext": {
+                          "commandContext": {
+                           "onTap": {
+                            "innertubeCommand": {
+                             "feedbackEndpoint": {
+                              "feedbackToken": "FT"
+                             }
+                            }
+                           }
+                          }
+                         }
+                        }
+                       }
+                      ]
+                     }
+                    }
+                   }
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          },
+          "contentId": "hhhhhhhhhhh",
+          "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+          "rendererContext": {
+           "loggingContext": {},
+           "accessibilityContext": {
+            "label": "Undated"
+           },
+           "commandContext": {
+            "onTap": {
+             "innertubeCommand": {
+              "commandMetadata": {
+               "webCommandMetadata": {
+                "url": "/watch?v=hhhhhhhhhhh",
+                "webPageType": "WEB_PAGE_TYPE_WATCH"
+               }
+              },
+              "watchEndpoint": {
+               "videoId": "hhhhhhhhhhh"
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       ],
+       "trackingParams": "TP",
+       "header": {
+        "itemSectionHeaderRenderer": {
+         "title": {
+          "runs": [
+           {
+            "text": "Sometime"
+           }
+          ]
+         },
+         "trackingParams": "TP"
+        }
+       }
+      }
+     }
+    ],
+    "targetId": "browse-feedFEhistory"
+   }
+  }
+ ]
+}
