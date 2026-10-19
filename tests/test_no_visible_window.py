@@ -27,7 +27,11 @@ HIDDEN_COMMANDS = [
     ("chatgpt", "status"), ("chatgpt", "models"), ("chatgpt", "chats", "list"),
     ("chatgpt", "chats", "show", "68f3c1a2-1234-8000-9abc-0123456789ab"), ("chatgpt", "ask", "hi"),
     ("chatgpt", "-p", "hi"), ("chatgpt", "-p", "-m", "gpt-6", "--image-out", "{tmp}/", "draw"),
+    ("muse", "status"), ("muse", "chats", "list"), ("muse", "chats", "show", "7c9e6679-7425-40de-944b-e07fc1f90ae7"),
+    ("muse", "chats", "show", "main"), ("muse", "ask", "hi"), ("muse", "ask", "--chat", "main", "hi"),
+    ("muse", "-p", "hi"),
 ]
+IDENTITY = {"gemini": "google:default", "chatgpt": "chatgpt:default", "muse": "meta:default"}
 
 
 def assert_hidden(options: dict) -> None:
@@ -41,7 +45,7 @@ def assert_hidden(options: dict) -> None:
 
 @pytest.fixture
 def profiles():
-    return make_profile("google:default"), make_profile("chatgpt:default")
+    return make_profile("google:default"), make_profile("chatgpt:default"), make_profile("meta:default")
 
 
 @pytest.mark.parametrize("command", HIDDEN_COMMANDS, ids=" ".join)
@@ -51,13 +55,18 @@ def test_every_command_launches_hidden_chrome_only(fake_playwright, profiles, tm
     assert result.exit_code == 5, result.output  # the fake stops at the launch: a site error
     assert len(fake_playwright) == 1
     assert_hidden(fake_playwright[0])
-    ident = Identity("google:default" if command[0] == "gemini" else "chatgpt:default")
-    assert fake_playwright[0]["user_data_dir"] == str(ident.profile)
+    assert fake_playwright[0]["user_data_dir"] == str(Identity(IDENTITY[command[0]]).profile)
 
 
-@pytest.mark.parametrize("site", ["gemini", "chatgpt"])
-def test_only_an_explicit_headed_shows_a_window(fake_playwright, profiles, site):
-    result = CliRunner().invoke(llmcli.build(), [site, "models", "--headed"])
+def test_muse_models_never_opens_chrome(fake_playwright, profiles):
+    result = CliRunner().invoke(llmcli.build(), ["muse", "models"])
+    assert result.exit_code == 0 and fake_playwright == []
+
+
+@pytest.mark.parametrize("args", [["gemini", "models", "--headed"], ["chatgpt", "models", "--headed"],
+                                  ["muse", "status", "--headed"], ["muse", "ask", "--headed", "hi"]])
+def test_only_an_explicit_headed_shows_a_window(fake_playwright, profiles, args):
+    result = CliRunner().invoke(llmcli.build(), args)
     assert result.exit_code == 5
     options = fake_playwright[0]
     assert options["headless"] is False and options["channel"] == "chrome"
@@ -67,8 +76,10 @@ def test_only_an_explicit_headed_shows_a_window(fake_playwright, profiles, site)
 @pytest.mark.parametrize(("args", "profile"), [
     (["identity", "login", "google:default"], "google:default"),
     (["identity", "login", "chatgpt:default"], "chatgpt:default"),
+    (["identity", "login", "meta:default"], "meta:default"),
     (["gemini", "login"], "google:default"),
     (["chatgpt", "login"], "chatgpt:default"),
+    (["muse", "login"], "meta:default"),
 ])
 def test_identity_login_is_the_other_visible_path(fake_playwright, args, profile):
     result = CliRunner().invoke(llmcli.build(), args)
@@ -79,7 +90,7 @@ def test_identity_login_is_the_other_visible_path(fake_playwright, args, profile
 
 
 def test_status_and_doctor_without_a_profile_never_launch(fake_playwright):
-    for app, args in ((llmcli, ["gemini", "status"]), (llmcli, ["chatgpt", "status"]),
+    for app, args in ((llmcli, ["gemini", "status"]), (llmcli, ["chatgpt", "status"]), (llmcli, ["muse", "status"]),
                       (webcli_app, ["doctor"]), (webcli_app, ["identity", "status"])):
         result = CliRunner().invoke(app.build(), args)
         assert result.exit_code in (0, 4), result.output
@@ -89,7 +100,7 @@ def test_status_and_doctor_without_a_profile_never_launch(fake_playwright):
 def test_doctor_checks_sign_in_with_hidden_chrome(fake_playwright, profiles):
     result = CliRunner().invoke(webcli_app.build(), ["doctor"])
     assert result.exit_code == 0
-    assert len(fake_playwright) == 2
+    assert len(fake_playwright) == 3  # one sign-in check per identity: google, chatgpt, meta
     for options in fake_playwright:
         assert_hidden(options)
 

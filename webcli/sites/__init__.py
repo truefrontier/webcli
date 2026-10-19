@@ -11,7 +11,8 @@ from webcli.core.errors import ConfigError
 from webcli.sites.base import Site
 
 GROUP = "webcli.sites"
-BUILTIN = {"gemini": "webcli.sites.gemini:ADAPTER", "chatgpt": "webcli.sites.chatgpt:ADAPTER"}
+BUILTIN = {"gemini": "webcli.sites.gemini:ADAPTER", "chatgpt": "webcli.sites.chatgpt:ADAPTER",
+           "muse": "webcli.sites.muse:ADAPTER"}
 
 
 def _load(target: str) -> Site:

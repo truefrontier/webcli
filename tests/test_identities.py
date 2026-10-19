@@ -15,14 +15,16 @@ from webcli.core import config, hardening, identities
 from webcli.core.errors import ConfigError
 from webcli.core.identities import Identity, resolve
 
-GEMINI, CHATGPT = sites.get("gemini"), sites.get("chatgpt")
+GEMINI, CHATGPT, MUSE = sites.get("gemini"), sites.get("chatgpt"), sites.get("muse")
 
 
 def test_default_identities_map_to_their_dirs():
-    google, chatgpt = resolve(GEMINI), resolve(CHATGPT)
-    assert (google.id, chatgpt.id) == ("google:default", "chatgpt:default")
+    google, chatgpt, meta = resolve(GEMINI), resolve(CHATGPT), resolve(MUSE)
+    assert (google.id, chatgpt.id, meta.id) == ("google:default", "chatgpt:default", "meta:default")
     assert google.profile == config.home() / "identities" / "google-default" / "chrome-profile"
     assert chatgpt.profile == config.home() / "identities" / "chatgpt-default" / "chrome-profile"
+    assert meta.profile == config.home() / "identities" / "meta-default" / "chrome-profile"
+    assert meta.label == "com.truefrontier.webcli.meta-default"
     assert google.label == "com.truefrontier.webcli.google-default"
     assert google.run_file(".sock") == config.home() / "run" / "google-default.sock"
     assert identities.from_dir("google-my-work").id == "google:my-work"  # the mapping reverses
@@ -73,12 +75,13 @@ def test_identity_list_and_login_site():
     (Identity("google:work").profile / "Local State").write_text("{}")
     rows = json.loads(CliRunner().invoke(webcli_app.build(), ["identity", "list"]).stdout)
     assert {r["id"]: r["profileExists"] for r in rows} == {"chatgpt:default": False, "google:default": False,
-                                                           "google:work": True}
+                                                           "google:work": True, "meta:default": False}
     all_sites = list(sites.registry().values())
     assert identities.login_site(Identity("google:work"), all_sites).name == "gemini"
     assert identities.login_site(Identity("chatgpt:default"), all_sites).name == "chatgpt"
+    assert identities.login_site(Identity("meta:default"), all_sites).name == "muse"
     with pytest.raises(ConfigError):
-        identities.login_site(Identity("meta:default"), all_sites)
+        identities.login_site(Identity("linkedin:default"), all_sites)
 
 
 def test_config_round_trips_and_is_private():
@@ -117,16 +120,19 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
     assert report["home"]["timeMachineExcluded"] is True and report["home"]["spotlightExcluded"] is True
     assert report["home"]["fileVault"] == "on" and report["home"]["private"] is True
     assert {i["id"]: i["signedIn"] for i in report["identities"]} == {"chatgpt:default": False,
-                                                                      "google:default": False}
+                                                                      "google:default": False,
+                                                                      "meta:default": False}
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
-    assert report["sites"] == {"llmcli": ["chatgpt", "gemini"], "webcli": []}
+    assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"], "webcli": []}
 
 
-def test_sites_lists_both_llm_sites_and_no_data_sites():
+def test_sites_lists_every_llm_site_and_no_data_sites():
     result = CliRunner().invoke(webcli_app.build(), ["sites"])
     data = json.loads(result.stdout)
-    assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini"] and data["webcli"] == []
-    assert {s["defaultIdentity"] for s in data["llmcli"]} == {"chatgpt:default", "google:default"}
+    assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"] and data["webcli"] == []
+    assert {s["defaultIdentity"] for s in data["llmcli"]} == {"chatgpt:default", "google:default", "meta:default"}
+    muse = next(s for s in data["llmcli"] if s["name"] == "muse")
+    assert (muse["kind"], muse["provider"], muse["binary"]) == ("llm", "meta", "llmcli")
 
 
 def test_every_dir_the_code_creates_under_the_home_is_0700():

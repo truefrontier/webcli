@@ -10,8 +10,8 @@ from webcli.core import output
 from webcli.sites.llm import env_help
 
 NOTES = [
-    "Sites: `llmcli <site> ...`; each has its own `agent-help`. Phase 1: gemini (identity google:default), chatgpt "
-    "(identity chatgpt:default).",
+    "Sites: `llmcli <site> ...`; each has its own `agent-help`: gemini (identity google:default), chatgpt "
+    "(identity chatgpt:default), muse (Meta's Muse at muse.ai; identity meta:default, a Meta account).",
     "Every command runs Chrome headless: no window, no Dock icon, no focus change. Only `identity login` / `<site> "
     "login` and an explicit --headed show a window, and login needs a person.",
     "Uniform ask JSON on every site: answer, chatId, requestedModel, servedModel, servedModelDisplay, fallback, "
@@ -28,7 +28,7 @@ def build() -> click.Group:
     @click.group(cls=output.AgentGroup, name="llmcli")
     @click.version_option(__version__, prog_name="llmcli")
     def main() -> None:
-        """Chat AIs (Gemini, ChatGPT) from your own signed-in Chrome, hidden. Data home: ~/.webcli/"""
+        """Chat AIs (Gemini, ChatGPT, Muse) from your own signed-in Chrome, hidden. Data home: ~/.webcli/"""
         output.env_format()
 
     for site in sites.of_kind("llm"):

@@ -20,6 +20,7 @@ llmcli = "webcli.apps.llmcli:main"
 [project.entry-points."webcli.sites"]
 gemini = "webcli.sites.gemini:ADAPTER"
 chatgpt = "webcli.sites.chatgpt:ADAPTER"
+muse = "webcli.sites.muse:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
