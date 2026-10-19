@@ -109,9 +109,10 @@ These are deliberate trade-offs. Each one needs a script running in the command'
 
 ## Unverified until the first live run
 
+Checked live on 2026-10-19 (read-only, headless): `meta:default` holds a Muse session but no facebook.com session. `webcli facebook status` exits 4, and `facebook.com/me` lands on Facebook's signed-out home page. A person runs `webcli identity login meta:default` and signs in to facebook.com in that window before the first `sync`.
+
 These come from the source tools and were never checked under webcli's guard:
 
-- whether `meta:default` already holds a facebook.com session;
 - LinkedIn: whether the messaging page renders under a GET-only guard, and whether the post's upload URL needs a CORS preflight (allowed either way);
 - Facebook: whether any page needs a host beyond `facebook.com` and `*.fbcdn.net`;
 - Loom: which host serves the transcript file (assumed `*.loom.com`), and whether the share page fetches it through GraphQL queries only.

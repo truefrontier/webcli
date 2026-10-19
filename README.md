@@ -43,7 +43,7 @@ Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-we
 
 The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, Recorder, Contacts, and Gmail. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, `~/.recorder-cli`, `~/.google-contacts-cli`, or `~/.gmail-cli`.
 
-`webcli facebook` has no sign-in of its own. It shares `meta:default` with Muse, whose sign-in passes through facebook.com, so that profile usually holds a Facebook session. If `webcli facebook status` exits 4, run `webcli identity login meta:default` and sign in to facebook.com in that window too. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
+`webcli facebook` has no sign-in of its own. It shares `meta:default` with Muse, whose sign-in passes through facebook.com, but that doesn't leave a Facebook session behind: as of 2026-10-19 the profile has none. Run `webcli identity login meta:default` and sign in to facebook.com in that window too; `webcli facebook status` exits 0 once it's there. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
