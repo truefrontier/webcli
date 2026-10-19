@@ -60,14 +60,26 @@ def me_as(profile: dict, *others: dict) -> dict:
 class LinkedIn:
     """A scripted www.linkedin.com tab. GETs are answered from `gets` (URL prefix -> body, or a list of bodies used in
     turn; a body may be an int status), writes from `writes` ((method, URL prefix) -> (status, body, x-restli-id)).
-    Every write passes the page's real policy first, with the send permission the command opened its page with."""
+    Every write passes the page's real policy first, with the send permission the command opened its page with.
+    csrf: whether the profile has its JSESSIONID yet. A fresh Chrome has none (fresh=True); loading the messaging page
+    sets it, and without it the page's GETs answer -1, as GET_JS does."""
 
-    def __init__(self, gets: dict, writes: dict | None = None) -> None:
-        self.gets, self.writes = gets, writes or {}
+    def __init__(self, gets: dict, writes: dict | None = None, *, fresh: bool = False,
+                 redirects: dict | None = None) -> None:
+        self.gets, self.writes, self.csrf = gets, writes or {}, not fresh
         self.reads: list[str] = []
         self.sent: list[tuple[str, str, object]] = []
-        self.page = ScriptedPage(answers={"redirect: 'error'": self.write, "redirect: 'manual'": self.get})
+        self.page = ScriptedPage(redirects=redirects, answers={
+            "redirect: 'error'": self.write, "redirect: 'manual'": self.get,
+            "JSESSIONID=/.test": lambda _arg: self.csrf})
         self.page.options = {}
+        goto = self.page.goto
+
+        async def app_page_sets_csrf(url, **options):
+            await goto(url, **options)
+            self.csrf = self.csrf or self.page.url == fetch.MESSAGING_URL
+
+        self.page.goto = app_page_sets_csrf
 
     def _answer(self, table: dict, key):
         for prefix, value in table.items():
@@ -76,6 +88,8 @@ class LinkedIn:
         raise AssertionError(f"unscripted {key}")
 
     def get(self, arg):
+        if not self.csrf:
+            return {"status": -1, "text": ""}
         url = arg[0]
         self.reads.append(url)
         body = self._answer(self.gets, url)
@@ -380,6 +394,49 @@ def test_expect_author_flag_env_and_config_reach_the_site(calls, png, monkeypatc
 def test_an_empty_expected_author_is_a_usage_error_before_any_call(calls, png, args):
     seen, _ = calls
     assert run(*[a.replace("{png}", png) for a in args]).exit_code == 2 and seen == []
+
+
+ROBOTS = "https://www.linkedin.com/robots.txt"
+
+
+def test_status_on_a_fresh_chrome_loads_messaging_once_for_the_csrf_cookie(tab):
+    site = tab(LinkedIn({ME: me_as(KEVNK)}, fresh=True))
+    assert asyncio.run(fetch.status()) == {"signedIn": True, **parse.parse_me(me_as(KEVNK))}
+    assert site.page.gotos == [ROBOTS, fetch.MESSAGING_URL, ROBOTS] and site.reads == [ME]
+    assert site.page.policy is POLICY
+    assert asyncio.run(fetch.status())["signedIn"] is True and site.page.gotos[3:] == [ROBOTS]  # warm: robots only
+
+
+def test_a_post_dry_run_on_a_fresh_chrome_lands_the_same_way_and_writes_nothing(tab, png):
+    site = tab(publishing())
+    site.csrf = False
+    out = asyncio.run(fetch.post("Shipping today.", png, "kevnk"))
+    assert out["authorMatches"] is True and site.sent == [] and site.reads == [ME]
+    assert site.page.gotos == [ROBOTS, fetch.MESSAGING_URL, ROBOTS]
+
+
+def test_status_signed_out_on_a_fresh_chrome_is_signed_out_without_calling_me(tab):
+    site = tab(LinkedIn({ME: me_as(KEVNK)}, fresh=True,
+                        redirects={fetch.MESSAGING_URL: "https://www.linkedin.com/uas/login?session_redirect=x"}))
+    assert asyncio.run(fetch.status()) == {"signedIn": False} and site.reads == []
+
+
+@pytest.mark.parametrize(("site", "code"), [
+    (lambda: LinkedIn({ME: me_as(KEVNK)}, fresh=True), 0),
+    (lambda: LinkedIn({ME: 401}), 4),
+    (lambda: LinkedIn({}, fresh=True, redirects={fetch.MESSAGING_URL: "https://www.linkedin.com/authwall?x=1"}), 4),
+])
+def test_the_status_command_exits_0_signed_in_and_4_signed_out(tab, monkeypatch, site, code):
+    make_profile("linkedin:default")
+    tab(site())
+
+    async def call(_ident, _site, op, *args, **kwargs):  # the daemon, in-process: the real fetch op
+        return await getattr(fetch, op)(*args, **kwargs)
+
+    monkeypatch.setattr(daemon, "call", call)
+    result = run("status", "--format", "json")
+    assert result.exit_code == code and json.loads(result.stdout)["signedIn"] is (code == 0)
+    assert ("Not signed in to LinkedIn." in result.stderr) is (code == 4)
 
 
 def test_status_says_whether_writes_would_be_allowed(calls):

@@ -5,7 +5,9 @@ Every API call is an in-page fetch with the profile's own cookies (COOKIE). The 
 cookie, which LinkedIn's own scripts read too; it is read inside the page, so no cookie reaches Python. Messaging
 reads open the messaging page under the read-only POLICY so its own queries reveal the current queryIds (the latest
 are kept in ~/.webcli/sites/linkedin/query_ids.json). Activity reads the rendered Recent activity cards (UI), scrolling
-the window. Boost and both writes run on https://www.linkedin.com/robots.txt (same origin, no app JS).
+the window. Status, Boost, and both writes run on https://www.linkedin.com/robots.txt (same origin, no app JS).
+JSESSIONID is a session cookie, so a fresh Chrome has none, and robots.txt never sets one: land() loads the messaging
+page first when it's missing, as every messaging read does.
 
 The writes (`send`, `post`) run only with confirm=True, and only then open their page with send on and
 write_policy(scope): the guard lets through just that command's writes. Before the first write, the signed-in author
@@ -36,6 +38,7 @@ from webcli.sites.linkedin.endpoints import (  # APP_URL and POLICY: what `pytho
     CM_HEADERS,
     CREATE_PATH,
     CREATE_URL,
+    CSRF_MS,
     DEFAULT_QUERY_IDS,
     KIND_FEED,
     KIND_PATH,
@@ -76,6 +79,7 @@ async ([url, headers]) => {
   }
 }
 """
+HAS_CSRF_JS = "() => /(?:^|;\\s*)JSESSIONID=/.test(document.cookie)"
 # One write, sent once. status 0: no response, or a redirect (redirect: 'error'): the outcome is unknown.
 WRITE_JS = """
 async ([url, method, headers, json, b64]) => {
@@ -140,6 +144,21 @@ async def open_li(page: "Page", url: str) -> None:
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
     if auth_wall(page.url):
         raise AuthRequired(EXPIRED)
+
+
+async def land(page: "Page") -> None:
+    """Load robots.txt (LANDING_URL) with the JSESSIONID every Voyager call sends as its csrf-token. A fresh Chrome
+    has none until a LinkedIn app page sets it, so when it's missing the messaging page loads first, under the same
+    guard (signed out, it raises AuthRequired)."""
+    await open_li(page, LANDING_URL)
+    if await page.evaluate(HAS_CSRF_JS):
+        return
+    await open_li(page, MESSAGING_URL)
+    try:
+        await page.wait_for_function(HAS_CSRF_JS, timeout=CSRF_MS)
+    except Exception:  # me() then says "no session cookie"
+        pass
+    await open_li(page, LANDING_URL)
 
 
 async def voyager_get(page: "Page", url: str, headers: dict[str, str] = VOYAGER_HEADERS) -> tuple[int, Any]:
@@ -310,7 +329,7 @@ async def send(target: str, text: str, expect: str, *, confirm: bool = False, se
         raise UsageError(str(exc)) from None
     scope = WriteScope("message", text) if confirm else None
     async with browser.site_page(write_policy(scope), send=confirm) as page:
-        await open_li(page, LANDING_URL)
+        await land(page)
         signed = await me(page)
         threads = await _conversations(page, signed["profileUrn"], cached_query_ids(), search_limit)
         found = parse.resolve_thread(threads, target)
@@ -386,7 +405,7 @@ async def post(text: str, image_path: str, expect: str, *, confirm: bool = False
         raise UsageError(str(exc)) from None
     scope = WriteScope("post", text, size=image["bytes"], filename=image["filename"]) if confirm else None
     async with browser.site_page(write_policy(scope), send=confirm) as page:
-        await open_li(page, LANDING_URL)
+        await land(page)
         signed = await me(page)
         out = {"dryRun": not confirm, "loggedIn": True, "author": signed, "expectedAuthor": expect,
                "authorMatches": authors.matches(signed, expect), "text": text, "textLength": parse.utf16_len(text),
@@ -512,7 +531,7 @@ async def boosts(since: str | None = None, until: str | None = None, account: in
     """One record per boosted campaign across your personal Boost ad accounts, newest start first."""
     since_dt, until_dt = parse.parse_since(since), parse.parse_since(until, flag="--until")
     async with browser.site_page(POLICY) as page:
-        await open_li(page, LANDING_URL)
+        await land(page)
         now = datetime.now(timezone.utc)
         accounts = await _accounts(page)
         if account is not None:
@@ -538,7 +557,7 @@ async def boost_stats(target: str, since: str | None = None, until: str | None =
     kind, value = boost.parse_target(target)
     since_dt, until_dt = parse.parse_since(since), parse.parse_since(until, flag="--until")
     async with browser.site_page(POLICY) as page:
-        await open_li(page, LANDING_URL)
+        await land(page)
         now = datetime.now(timezone.utc)
         by_id = {boost._trailing_int(a.get("id")): a for a in await _accounts(page)}
         if kind == "campaign":
@@ -577,10 +596,11 @@ async def boost_stats(target: str, since: str | None = None, until: str | None =
 # --- Session ------------------------------------------------------------------------------------------------------
 
 async def status(*, headed: bool = False) -> dict:
-    """{signedIn, name, publicIdentifier, profileUrn, memberUrn} from GET /voyager/api/me."""
+    """{signedIn, name, publicIdentifier, profileUrn, memberUrn} from GET /voyager/api/me, the call every read
+    makes."""
     async with browser.site_page(POLICY) as page:
-        await open_li(page, LANDING_URL)
         try:
+            await land(page)
             signed = await me(page)
         except AuthRequired:
             return {"signedIn": False}

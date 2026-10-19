@@ -64,3 +64,4 @@ EXPECT_AUTHOR_ENV = "WEBCLI_LINKEDIN_EXPECT_AUTHOR"
 
 # --- Pacing -------------------------------------------------------------------------------------------------------
 SNIFF_MS = 2500  # how long a messaging page gets to fire its own queries (their queryIds are read from the URLs)
+CSRF_MS = 10_000  # how long the messaging page gets to set JSESSIONID in a fresh Chrome (fetch.land)
