@@ -1,5 +1,40 @@
 # Fix spec: ChatGPT fails Cloudflare headless on a freshly-logged-in profile
 
+## Update, 2026-10-19 afternoon: what shipped, and what Kevin does next
+
+**Bottom line:** headless pages now present real Chrome's user agent and client hints. ChatGPT's visible windows now present the same fingerprint as headless. Kevin must run `webcli identity login chatgpt:default` **once** so Cloudflare issues a `cf_clearance` under that fingerprint. Until then, headless ChatGPT still exits 4. Nobody has seen a live headless pass yet: it needs that re-login.
+
+### What the measurements showed
+
+- **The client-hint theory below is wrong for Chrome 155.** Headless Chrome 155's own client hints already say "Google Chrome": the brands, `arm`, and macOS `26.6.2`. Only the UA string says `HeadlessChrome`. The bad hints came from Playwright. Its launch-level `user_agent` adds hints it builds from the UA string: `x86`, platform version `10_15_7`, and no brands. `present_as_chrome` replaces them with a real Chrome's.
+- With that in place, a headless page sends the same UA, `Sec-CH-UA*` headers, and `Accept-Language` (`en-US,en;q=0.9`) as a visible Chrome. Its WebGL renderer is the same too (ANGLE Metal, Apple M4 Pro). So the old login window's UA and hints already matched headless.
+- The `chatgpt:default` profile holds a `.chatgpt.com` `cf_clearance` that the visible login minted (created 16:16 UTC, expires 2027-10-19). Headless sends it (last used 16:53 UTC) and still gets the interactive challenge.
+- A throwaway, signed-out headless profile gets **no** challenge on chatgpt.com, and no `cf_clearance`. So the challenge comes from the signed-in profile's state. The likeliest cause is a clearance that doesn't validate headless.
+- The one difference left between headless and the old login window is window geometry. Headless has screen = viewport = 1280×900, outer size = inner size, and devicePixelRatio 1. The old login window used the real display at devicePixelRatio 2.
+
+### What shipped
+
+- **Every headless page, every site:** `present_as_chrome` sets the UA and full client hints over CDP before the page loads. Auto-attach pauses each cross-site iframe (Cloudflare's Turnstile), at any depth, and each worker until it gets the same override. Each one is released even if the override fails or is cancelled. The launch-level UA override stays, so `HeadlessChrome` never shows anywhere.
+  - Checked in real headless Chrome with two levels of nested cross-site iframes, each with a worker. Every frame and worker reported `Google Chrome`, `arm`, and `26.6.2`, and none said HeadlessChrome. Before recursive auto-attach, the inner iframe reported Playwright's `x86` / `10_15_7`.
+  - Chrome's own `--user-agent` switch isn't a substitute: it blanks the high-entropy hints (`arch` and platform version come back empty).
+- **ChatGPT's visible windows only** (`match_headless`): `webcli identity login chatgpt:default`, `llmcli chatgpt login`, and `llmcli chatgpt ... --headed`. Each one opens with:
+  - the headless viewport: 1280×900, which also makes the screen 1280×900 and devicePixelRatio 1
+  - the same per-page UA and client-hint override as headless
+
+  The UA is set per page, not at launch, because a launch-level UA would put Playwright's derived hints on every other tab.
+- **Gemini and Muse are unchanged.** Their sign-in windows stay plain Chrome: no override and no fixed viewport. Their headless commands passed live after the change: `status` and `-p` for both, 0 windows.
+- **Exit 4 stays.** `hidden_browser_blocked` remains the answer when headless can't clear a check.
+
+### What still can't match
+
+A visible window has a toolbar, so its `outerWidth`/`outerHeight` can't equal headless's. On a wide-gamut display, `screen.colorDepth` may differ too. If Cloudflare ties the clearance to either one, the re-login won't fix headless. Those two are the next things to try.
+
+### Next step for Kevin
+
+Run `webcli identity login chatgpt:default` once, then run the checks in [post-login-verification.md](post-login-verification.md).
+
+## Original spec (morning, 2026-10-19)
+
 ## Symptom (live, 2026-10-19)
 Kevin signed in to `chatgpt:default` today via `webcli identity login chatgpt:default` (a visible window; sign-in completed, chat page shown). But EVERY headless `llmcli chatgpt` command now exits 4 `hidden_browser_blocked` ("Cloudflare needs a visible check"): `llmcli chatgpt status`, `llmcli chatgpt -p "..."`, etc. Gemini and Muse work fine.
 
