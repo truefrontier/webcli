@@ -6,9 +6,11 @@ toVersion, truncated}. webcli keep reads the page's own answers (INTERCEPT) and 
 also UPLOADS edits (nodes) and label changes (userInfo), so the guard lets one through only when it carries
 neither: a read-only sync.
 
-Hosts: keep.google.com, and the API on www.googleapis.com or notes-pa.clients6.google.com (both seen in the old
-keep-cli profile's network state, 2026-10-19; which one carries changes is not verified live with webcli). Run
-`python -m webcli.core.capture keep` after `webcli identity login google:default` to see what the guard blocked.
+Hosts (captured live, 2026-10-19): keep.google.com, and the API on notes-pa.clients6.google.com. Keep's gapi client
+sends the changes POST from its proxy iframe, GET notes-pa.clients6.google.com/static/proxy.html; with that GET
+blocked, no sync ever fires. Everything else the page asks for (getFamilyInfo, people-pa's proxy, drive.google.com/auth_warmup,
+waa-pa, ogads-pa, signaler-pa, telemetry, CSP reports) stays blocked; the sync doesn't need it. Run
+`python -m webcli.core.capture keep` to see what the guard blocked.
 """
 
 from __future__ import annotations
@@ -16,7 +18,8 @@ from __future__ import annotations
 APP_HOST = "keep.google.com"
 APP_URL = "https://keep.google.com/u/0/"
 HOSTS = (APP_HOST,)
-CHANGES_HOSTS = frozenset({"www.googleapis.com", "notes-pa.clients6.google.com"})
-CHANGES_SUFFIX = "/notes/v1/changes"
+API_HOST = "notes-pa.clients6.google.com"
+CHANGES_PATH = "/notes/v1/changes"
+PROXY_PATH = "/static/proxy.html"  # gapi's iframe on API_HOST, which sends the changes POST
 SYNC_SECONDS = 25  # Keep's first sync burst ends with truncated: false
 SETTLE_MS = 3_000  # then trailing pages

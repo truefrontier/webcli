@@ -17,7 +17,8 @@ from webcli.sites.keep.guard import POLICY, request_allowed
 
 from google_fakes import Response, ScriptedPage, install
 
-CHANGES = "https://www.googleapis.com/notes/v1/changes"
+CHANGES = "https://notes-pa.clients6.google.com/notes/v1/changes"
+PROXY = "https://notes-pa.clients6.google.com/static/proxy.html"
 READ = json.dumps({"nodes": [], "clientTimestamp": "2026-10-19T00:00:00Z", "requestHeader": {}})
 
 
@@ -33,8 +34,9 @@ def node(id_, title="", text="", *, type_="NOTE", parent="root", archived=False,
     ("GET", "https://keep.google.com/u/0/", None),
     ("GET", "https://www.gstatic.com/og/_/js/x.js", None),
     ("POST", CHANGES, READ),
-    ("POST", "https://notes-pa.clients6.google.com/notes/v1/changes", READ),
+    ("POST", CHANGES + "?alt=json&key=k", READ),
     ("OPTIONS", CHANGES, None),
+    ("GET", PROXY + "?usegapi=1&jsh=x", None),  # gapi's iframe: the changes POST goes out from it
     ("POST", "https://accounts.google.com/RotateCookies", None),
 ])
 def test_listed_reads_pass(method, url, body):
@@ -48,11 +50,24 @@ def test_listed_reads_pass(method, url, body):
     ("POST", CHANGES, None),
     ("POST", CHANGES, "[]"),
     ("PUT", CHANGES, READ),
-    ("POST", "http://www.googleapis.com/notes/v1/changes", READ),
+    ("POST", "https://www.googleapis.com/notes/v1/changes", READ),  # not where the web app syncs
+    ("POST", CHANGES.replace("https", "http"), READ),
+    ("POST", CHANGES.replace(".com/", ".com:8443/", 1), READ),
+    ("POST", CHANGES.replace("https://", "https://user@"), READ),
     ("POST", "https://evil.example/notes/v1/changes", READ),
-    ("POST", "https://www.googleapis.com/notes/v1/changes/extra", READ),
+    ("POST", "https://notes-pa.clients6.google.com.evil.example/notes/v1/changes", READ),
+    ("POST", CHANGES + "/extra", READ),
+    ("POST", "https://notes-pa.clients6.google.com/x/notes/v1/changes", READ),
     ("POST", "https://keep.google.com/notes/v1/changes", READ),  # not an API host
     ("POST", "https://notes-pa.clients6.google.com/v1/notes:batchDelete", "{}"),
+    ("POST", "https://notes-pa.clients6.google.com/notes/v1/getFamilyInfo", "{}"),
+    ("POST", PROXY, "{}"),
+    ("GET", PROXY.replace("https", "http"), None),
+    ("GET", "https://notes-pa.clients6.google.com/static/other.html", None),
+    ("GET", "https://people-pa.clients6.google.com/static/proxy.html", None),  # another API's proxy
+    ("GET", "https://drive.google.com/auth_warmup", None),
+    ("POST", "https://waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create", "[]"),
+    ("POST", "https://csp.withgoogle.com/csp/frame-ancestors/x", "{}"),
     ("POST", "https://play.google.com/log?format=json", "{}"),
     ("POST", "https://signaler-pa.clients6.google.com/punctual/multi-watch/channel", "{}"),
     ("GET", "https://www.google-analytics.com/collect", None),

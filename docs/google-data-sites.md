@@ -63,7 +63,7 @@ Every guard starts from `webcli/sites/google.py`:
 
 Each site then adds its own API reads:
 
-- **keep:** a POST to `notes/v1/changes` passes only when it uploads nothing (no `nodes`, no `userInfo`). That body format comes from Keep's Android API; the web app's format is unverified.
+- **keep:** a POST to exactly `notes-pa.clients6.google.com/notes/v1/changes` passes only when it uploads nothing (no `nodes`, no `userInfo`). Keep's web app sends it from gapi's proxy iframe, so a GET to exactly `notes-pa.clients6.google.com/static/proxy.html` passes too. Both were captured live on 2026-10-19; the web app's sync body carries `nodes` (empty), `targetVersion`, `clientTimestamp`, and `requestHeader`. Everything else the page calls stays blocked, `drive.google.com/auth_warmup` and `getFamilyInfo` included: the sync doesn't need them.
 - **photos:** a batchexecute POST passes only when every rpcid is in `READ_RPCIDS`. Those ids come from Google Photos Toolkit and are unverified with webcli.
 - **recorder:** a POST (and its OPTIONS preflight) passes only to exactly `GetRecordingList` and `GetTranscription`.
 - **youtube:** POSTs are limited to ytcli's three youtubei reads and My Activity's batchexecute. The My Activity rule allows any rpcid, as ytcli's did, because its read ids aren't mapped.
