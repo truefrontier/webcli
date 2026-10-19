@@ -30,6 +30,7 @@ recorder = "webcli.sites.recorder:ADAPTER"
 contacts = "webcli.sites.contacts:ADAPTER"
 gmail = "webcli.sites.gmail:ADAPTER"
 loom = "webcli.sites.loom:ADAPTER"
+facebook = "webcli.sites.facebook:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
