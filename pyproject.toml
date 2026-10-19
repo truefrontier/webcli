@@ -5,7 +5,21 @@ description = "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidde
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-authors = [{ name = "True Frontier" }]
+authors = [{ name = "Brandname Maker LLC dba True Frontier" }]
+keywords = ["cli", "agent", "chrome", "playwright", "automation", "headless", "llm", "gemini", "chatgpt", "gmail"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "playwright>=1.40",
     "click>=8.1",
@@ -33,8 +47,16 @@ loom = "webcli.sites.loom:ADAPTER"
 facebook = "webcli.sites.facebook:ADAPTER"
 linkedin = "webcli.sites.linkedin:ADAPTER"
 
+[project.urls]
+Homepage = "https://github.com/truefrontier/webcli"
+Repository = "https://github.com/truefrontier/webcli"
+Issues = "https://github.com/truefrontier/webcli/issues"
+
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/webcli", "/README.md", "/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

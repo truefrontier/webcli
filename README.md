@@ -10,10 +10,12 @@ Both binaries come from one Python package and share one core and one data home,
 ## Install
 
 ```sh
-pipx install --force -e .
+pipx install webcli        # or: pip install webcli
 ```
 
-This puts `webcli` and `llmcli` in `~/.local/bin`. It uses your installed Google Chrome (`channel="chrome"`), so `playwright install` is not needed.
+This puts both `webcli` and `llmcli` on your path. (`pip install llmcli` installs the same package — it is a thin alias that depends on `webcli`.) Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
+
+To develop from a checkout instead, see [Develop](#develop).
 
 ## Sign in (a person, once per identity)
 
@@ -35,7 +37,7 @@ webcli identity login google:default     # same as: llmcli gemini login
 webcli identity login chatgpt:default    # same as: llmcli chatgpt login
 webcli identity login meta:default       # same as: llmcli muse login
 webcli identity login facebook:default   # Facebook (its own profile, not Muse's)
-webcli identity login linkedin:default   # LinkedIn: sign in as kevnk (writes refuse any other account)
+webcli identity login linkedin:default   # LinkedIn (writes refuse unless signed in as your configured author)
 webcli identity login loom:default       # Loom
 ```
 
@@ -103,9 +105,9 @@ Only four data-site verbs change anything on a site, and only with `--confirm` (
 - `webcli linkedin messages send THREAD --text T` sends one DM to one existing thread (`--send` works too).
 - `webcli linkedin post create --text T --image P` publishes one post: text plus one image.
 
-Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; or one DM or one post, bound to its thread, sender, text, and image. See [docs/google-data-sites.md](docs/google-data-sites.md).
+Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; or one DM or one post, bound to its thread, sender, text, and image. See [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md).
 
-The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle is the expected author: `kevnk`, unless `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml` says otherwise. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](docs/social-data-sites.md).
+The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle matches the expected author. No author ships as a default: set yours with `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml`. Until one is configured, every LinkedIn write refuses. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md).
 
 ## How it stays hidden and private
 
@@ -122,6 +124,6 @@ python3 -m venv .venv && .venv/bin/pip install -e . pytest
 .venv/bin/python -m pytest -q      # offline: no browser, no network, temp WEBCLI_HOME
 ```
 
-After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](docs/post-login-verification.md).
+After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](https://github.com/truefrontier/webcli/blob/main/docs/post-login-verification.md).
 
-See `BUILD_SPEC.md` (Phase 1) and `docs/consolidation-design.md` for the plan.
+See [`BUILD_SPEC.md`](https://github.com/truefrontier/webcli/blob/main/BUILD_SPEC.md) (Phase 1) and `docs/consolidation-design.md` for the plan.
