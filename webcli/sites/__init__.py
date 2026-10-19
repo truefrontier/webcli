@@ -17,7 +17,8 @@ BUILTIN = {"gemini": "webcli.sites.gemini:ADAPTER", "chatgpt": "webcli.sites.cha
            "photos": "webcli.sites.photos:ADAPTER", "youtube": "webcli.sites.youtube:ADAPTER",
            "recorder": "webcli.sites.recorder:ADAPTER", "contacts": "webcli.sites.contacts:ADAPTER",
            "gmail": "webcli.sites.gmail:ADAPTER", "loom": "webcli.sites.loom:ADAPTER",
-           "facebook": "webcli.sites.facebook:ADAPTER", "linkedin": "webcli.sites.linkedin:ADAPTER"}
+           "facebook": "webcli.sites.facebook:ADAPTER", "linkedin": "webcli.sites.linkedin:ADAPTER",
+           "messages": "webcli.sites.messages:ADAPTER"}
 
 
 def _load(target: str) -> Site:

@@ -46,6 +46,7 @@ gmail = "webcli.sites.gmail:ADAPTER"
 loom = "webcli.sites.loom:ADAPTER"
 facebook = "webcli.sites.facebook:ADAPTER"
 linkedin = "webcli.sites.linkedin:ADAPTER"
+messages = "webcli.sites.messages:ADAPTER"
 
 [project.urls]
 Homepage = "https://github.com/truefrontier/webcli"

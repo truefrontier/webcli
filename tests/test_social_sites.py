@@ -1,5 +1,5 @@
-"""What linkedin, facebook, and loom share: how they register (each on its own identity with its own login, none on
-Muse's meta:default), that no verb ever asks for a visible Chrome, that each verb exists with its
+"""What linkedin, facebook, loom, and messages share: how they register (each on its own identity with its own login,
+none on Muse's meta:default), that no verb ever asks for a visible Chrome, that each verb exists with its
 options, that secrets never reach output, errors, or logs, and that the identity daemon serves them only on their own
 provider.
 
@@ -33,11 +33,12 @@ except ModuleNotFoundError:  # Python 3.10
 from conftest import LaunchStopped, make_profile
 from test_no_visible_window import assert_hidden
 
-SITES = {"linkedin": "linkedin", "facebook": "facebook", "loom": "loom"}
+SITES = {"linkedin": "linkedin", "facebook": "facebook", "loom": "loom", "messages": "messages"}
 VERBS = {
     "linkedin": {"messages", "activity", "boost", "post", "status", "agent-help"},
     "facebook": {"sync", "search", "about", "enrich", "export", "status", "agent-help"},
     "loom": {"list", "info", "transcript", "status", "agent-help"},
+    "messages": {"list", "threads", "read", "search", "send", "status", "agent-help"},
 }
 SUBVERBS = {("linkedin", "messages"): {"list", "history", "read", "send"},
             ("linkedin", "activity"): {"comments", "reactions", "posts", "export"},
@@ -71,6 +72,12 @@ WIRING = [
     ("loom", "list", [], {"--limit", "--id-only"} | ROWS),
     ("loom", "info", ["VIDEO"], ROWS),
     ("loom", "transcript", ["VIDEO"], {"--output"} | ROWS),
+    ("messages", "status", [], RECORD),
+    ("messages", "list", [], {"--limit"} | ROWS),
+    ("messages", "threads", [], {"--limit"} | ROWS),
+    ("messages", "read", ["QUERY"], {"--limit"} | ROWS),
+    ("messages", "search", ["QUERY"], {"--limit"} | ROWS),
+    ("messages", "send", [], {"--to", "--text", "--dry-run", "--confirm", "--yes"} | RECORD),
 ]
 VID = "0123456789abcdef0123456789abcdef"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (2).to_bytes(4, "big") + (3).to_bytes(4, "big") + b"\x08\x06"
@@ -89,6 +96,9 @@ HIDDEN_COMMANDS = [
     # --confirm too: the fake stops at the launch, so nothing is sent or posted, and a write's Chrome is hidden too
     ("linkedin", "messages", "send", "Boardy", "--text", "hi", "--confirm"),
     ("linkedin", "post", "create", "--text", "hi", "--image", "{png}", "--confirm"),
+    ("messages", "status"), ("messages", "list"), ("messages", "threads", "--limit", "3"), ("messages", "read", "Alice"),
+    ("messages", "search", "ali"), ("messages", "send", "--to", "Alice", "--text", "hi"),
+    ("messages", "send", "--to", "Alice", "--text", "hi", "--confirm"),
 ]
 # Synthetic values in the shapes these sites carry. None of these is real.
 LI_AT = "AQEDAR0FAKEliatSessionValue0123456789abcdefXYZ"
@@ -155,7 +165,7 @@ def test_each_brings_its_own_login_and_muse_keeps_meta():
         assert "login" not in sites.get(name).cli().commands  # sign-in is `webcli identity login`, a person's job
 
 
-def test_webcli_sites_lists_all_three_under_webcli():
+def test_webcli_sites_lists_all_four_under_webcli():
     listed = {s["name"]: s for s in json.loads(run("sites").stdout)["webcli"]}
     assert {name: listed[name]["provider"] for name in SITES} == SITES
 
@@ -203,7 +213,7 @@ def test_no_verb_offers_headed_and_headed_true_still_runs_headless(fake_playwrig
     assert_hidden(fake_playwright[0])
 
 
-@pytest.mark.parametrize("ident", ["linkedin:default", "loom:default", "facebook:default"])
+@pytest.mark.parametrize("ident", ["linkedin:default", "loom:default", "facebook:default", "messages:default"])
 def test_identity_login_is_the_only_visible_path(fake_playwright, ident):
     result = run("identity", "login", ident)
     assert result.exit_code == 5
@@ -215,7 +225,9 @@ def test_identity_login_is_the_only_visible_path(fake_playwright, ident):
 @pytest.mark.parametrize("args", [("loom", "list"), ("loom", "info", VID), ("loom", "transcript", VID),
                                   ("facebook", "sync"), ("facebook", "about", "jane.doe"),
                                   ("linkedin", "messages", "list"), ("linkedin", "activity", "export"),
-                                  ("linkedin", "boost", "list"), ("linkedin", "messages", "send", "x", "--text", "hi")])
+                                  ("linkedin", "boost", "list"), ("linkedin", "messages", "send", "x", "--text", "hi"),
+                                  ("messages", "list"), ("messages", "read", "Alice"), ("messages", "search", "ali"),
+                                  ("messages", "send", "--to", "Alice", "--text", "hi", "--confirm")])
 def test_no_profile_exits_4_without_starting_chrome(fake_playwright, args):
     result = run(*args)
     assert result.exit_code == 4 and "webcli identity login" in result.stderr
@@ -254,6 +266,7 @@ def test_notable_defaults():
     assert {p.name: p for p in command("linkedin", "messages list").params}["limit"].default == 20
     assert {p.name: p for p in command("facebook", "search").params}["limit"].default == 50
     assert command("linkedin", "messages read") is command("linkedin", "messages history")  # an alias
+    assert command("messages", "threads") is command("messages", "list")  # an alias
     transcript_format = {p.name: p for p in command("loom", "transcript").params}["fmt"]
     assert list(transcript_format.type.choices) == ["text", "csv", "json"]
 
@@ -263,6 +276,7 @@ def test_notable_defaults():
                                   ("linkedin", "boost", "stats", "nope"),
                                   ("linkedin", "boost", "list", "--since", "2026-10-09", "--until", "2026-10-01"),
                                   ("linkedin", "messages", "send", "x", "--text", "   "),
+                                  ("messages", "send", "--to", "x", "--text", "   "), ("messages", "read", "  "),
                                   ("linkedin", "post", "create", "--text", "hi", "--image", "/nonexistent.png")])
 def test_bad_input_is_a_usage_error_before_any_chrome(fake_playwright, profiles, args):
     assert run(*args).exit_code == 2
@@ -274,7 +288,8 @@ def test_bad_input_is_a_usage_error_before_any_chrome(fake_playwright, profiles,
 @pytest.mark.parametrize("args", [("linkedin", "messages", "list"), ("linkedin", "boost", "list"),
                                   ("linkedin", "post", "create", "--text", "hi", "--image", "{png}", "--confirm"),
                                   ("facebook", "sync"), ("facebook", "about", "jane.doe"),
-                                  ("loom", "transcript", VID), ("loom", "list")])
+                                  ("loom", "transcript", VID), ("loom", "list"), ("messages", "list"),
+                                  ("messages", "send", "--to", "Alice", "--text", "hi", "--confirm")])
 def test_cookies_tokens_and_signed_links_never_reach_output_errors_or_logs(monkeypatch, profiles, png, args):
     async def failing(*_args, **_kwargs):
         raise RuntimeError(f"Fetching failed at {SIGNED}; Cookie: li_at={LI_AT}; JSESSIONID=\"{JSESSION}\"; "
@@ -293,7 +308,7 @@ def test_sign_in_needed_exits_4_with_the_identity_login_hint(monkeypatch, profil
         raise AuthRequired("The session is missing or expired.")
 
     monkeypatch.setattr(daemon, "call", signed_out)
-    args = {"linkedin": ("messages", "list"), "facebook": ("sync",), "loom": ("list",)}[name]
+    args = {"linkedin": ("messages", "list"), "facebook": ("sync",), "loom": ("list",), "messages": ("list",)}[name]
     result = run(name, *args)
     assert result.exit_code == 4 and f"webcli identity login {SITES[name]}:default" in result.stderr
 
