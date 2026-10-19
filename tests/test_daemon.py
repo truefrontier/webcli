@@ -337,3 +337,20 @@ def test_a_home_too_long_for_a_socket_runs_in_process_without_waiting(monkeypatc
     monkeypatch.setattr(fetch, "models", models)
     started = asyncio.run(_timed(daemon.call(IDENT, "chatgpt", "models", headed=False)))
     assert started[0] == ["in-process"] and started[1] < 2  # not START_SECONDS
+
+
+@pytest.mark.parametrize(("op", "hint"), [("ask", daemon.SENT_HINT), ("send", daemon.WRITE_HINT),
+                                          ("label_change", daemon.WRITE_HINT), ("conversations", "Retry.")])
+def test_a_daemon_that_drops_mid_command_never_says_just_retry_for_a_write(monkeypatch, op, hint):
+    async def connected(ident, *, start_daemon):
+        return object()
+
+    async def dropped(conn, payload):
+        raise ConnectionError("gone")
+
+    monkeypatch.setenv("WEBCLI_DAEMON", "1")
+    monkeypatch.setattr(daemon, "connect", connected)
+    monkeypatch.setattr(daemon, "_request", dropped)
+    with pytest.raises(RuntimeError) as failed:
+        asyncio.run(daemon.call(Identity("messages:default"), "messages", op))
+    assert str(failed.value) == f"The webcli daemon stopped in the middle of the command. {hint}"

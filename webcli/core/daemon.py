@@ -59,6 +59,8 @@ START_SECONDS = 20  # how long a command waits for a daemon it started to answer
 HOUSEKEEPING_SECONDS = 300
 SUN_PATH_MAX = 104  # macOS sockaddr_un.sun_path, NUL included: a longer $WEBCLI_HOME can't host a daemon
 SENT_HINT = "The prompt may have been sent: check the chat list before sending it again."
+WRITE_HINT = "The write may have gone out: check the site before running it again."
+WRITE_OPS = frozenset({"send", "post", "label_change", "create_filter", "delete_filter"})  # never just "Retry."
 RESTARTING = "The webcli daemon is stopping or restarting; nothing was run. Retry in a moment."
 
 # The lock wait of the request being served (each request carries its command's --lock-wait).
@@ -553,7 +555,8 @@ async def call(ident: Identity, site: str, op: str, *args, start_daemon: bool = 
             answer = await _request(conn, payload)
         except (ConnectionError, ValueError):
             raise RuntimeError("The webcli daemon stopped in the middle of the command."
-                               + (f" {SENT_HINT}" if op == "ask" else " Retry.")) from None
+                               + (f" {SENT_HINT}" if op == "ask" else f" {WRITE_HINT}" if op in WRITE_OPS
+                                  else " Retry.")) from None
         if answer.get("ok"):
             return decode_result(answer["result"])
         error = rebuild(answer.get("error") or {})
