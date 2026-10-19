@@ -12,7 +12,8 @@ from webcli.sites.base import Site
 
 GROUP = "webcli.sites"
 BUILTIN = {"gemini": "webcli.sites.gemini:ADAPTER", "chatgpt": "webcli.sites.chatgpt:ADAPTER",
-           "muse": "webcli.sites.muse:ADAPTER", "aa": "webcli.sites.aa:ADAPTER"}
+           "muse": "webcli.sites.muse:ADAPTER", "aa": "webcli.sites.aa:ADAPTER",
+           "walkie": "webcli.sites.walkie:ADAPTER"}
 
 
 def _load(target: str) -> Site:
