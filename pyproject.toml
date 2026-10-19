@@ -28,6 +28,7 @@ photos = "webcli.sites.photos:ADAPTER"
 youtube = "webcli.sites.youtube:ADAPTER"
 recorder = "webcli.sites.recorder:ADAPTER"
 contacts = "webcli.sites.contacts:ADAPTER"
+gmail = "webcli.sites.gmail:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
