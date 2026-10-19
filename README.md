@@ -2,7 +2,7 @@
 
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
-- `llmcli`: chat AIs. Phase 1 ships `llmcli gemini` (gweb parity) and `llmcli chatgpt` (cgpt parity).
+- `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
 - `webcli`: data sites. Phase 1 ships no site adapters yet, only `identity`, `doctor`, `sites`, and `serve`.
 
 Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
@@ -17,21 +17,25 @@ This puts `webcli` and `llmcli` in `~/.local/bin`. It uses your installed Google
 
 ## Sign in (a person, once per identity)
 
-Each identity is one Chrome profile. Phase 1 uses two:
+Each identity is one Chrome profile. There are three:
 
 | Identity | Used by | Profile |
 |---|---|---|
 | `google:default` | `llmcli gemini` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
+| `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
 
 Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 
 ```sh
 webcli identity login google:default     # same as: llmcli gemini login
 webcli identity login chatgpt:default    # same as: llmcli chatgpt login
+webcli identity login meta:default       # same as: llmcli muse login
 ```
 
-Profiles start fresh. Nothing is copied from `~/.gemini-web-cli` or `~/.chatgpt-web-cli`.
+Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
+
+Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
 
 ## Use
 
@@ -40,6 +44,7 @@ llmcli gemini -p "What is 2+2?"                 # print mode, like claude -p
 llmcli chatgpt -p -m gpt-6 "Summarize this" --file notes.md
 llmcli gemini ask "Draw a fox" --image-out ~/Downloads/
 llmcli chatgpt chats list --format md
+llmcli muse -p --chat main "What's on my list today?"   # muse: no models, files, or images
 llmcli gemini agent-help --format json          # commands, flags, exit codes, env
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
@@ -65,7 +70,7 @@ The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-fi
 
 - Every command runs Chrome headless. `ignore_default_args` drops `--enable-automation` and `--use-mock-keychain`, so cookies stay under the real macOS Keychain key.
 - One headless Chrome per identity runs in a daemon (`llmcli serve --identity ID`, socket `~/.webcli/run/<identity>.sock`, 0600). Commands start it on demand. `WEBCLI_DAEMON=0` runs Chrome in-process instead.
-- A fail-closed request guard aborts anything a site's endpoint table doesn't list. Prompts go out only from `ask` / `-p`.
+- A fail-closed request guard aborts anything a site's endpoint table doesn't list. Prompts go out only from `ask` / `-p`. WebSockets are closed, except Muse's chat stream to `wss://*.metaaivm.com`, which connects only from the running command's tab. That socket is encrypted, so the guard can't filter inside it; Muse's read commands type and click nothing that writes.
 - Every log line and printed error goes through the redaction module.
 - `~/.webcli` is 0700, excluded from Time Machine, and marked for Spotlight (`.metadata_never_index`) and sync tools (`.nosync`) when first created. `webcli doctor` re-checks it, and `webcli doctor --fix` re-applies it.
 

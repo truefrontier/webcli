@@ -316,7 +316,7 @@ Each phase ends with a concrete verification gate. Effort is rough calendar esti
 ## 7. Open decisions for Kevin
 - **D1 — Identity granularity for Google.** One shared `google:personal` for all Google sites with `--account <n>` for extra accounts (simplest), **or** separate identities per account (`google:personal`, `google:work`) for stronger isolation? (Can support both; need the default.)
 - **D2 — Port Google Messages from Node to Python now, or keep the Node tool behind a `webcli messages` shim** for the first release?
-- **D3 — ChatGPT & Muse identities.** ChatGPT (`chatgpt:default`) and Muse (`meta:default`) are non-Google logins — confirm they're separate identities (they are today). Does Muse really share the Facebook Meta login, or is it its own?
+- **D3 — ChatGPT & Muse identities.** ChatGPT (`chatgpt:default`) and Muse (`meta:default`) are non-Google logins — confirm they're separate identities (they are today). Does Muse really share the Facebook Meta login, or is it its own? *Answered 2026-10-19 (muse port): Muse signs in with a Meta account; signed out, muse.ai cycles through auth.muse.ai, facebook.com, and instagram.com to find a Meta session. `llmcli muse` uses `meta:default`.*
 - **D4 — Relocate caches into `~/.webcli/sites/`?** e.g. Facebook's `~/Projects/TRUE-fb-contacts` and LinkedIn's capture dir. Move (clean) or leave in place (less churn)?
 - **D5 — MCP scope.** Keep MCP only for Recorder (today), or expose the whole fleet over one `webcli-mcp` server too? (OpenCLI has none; our recorder already does.)
 - **D6 — Storage hardening choices** (§5 H1–H6), especially **H1 approval to retire the 3.3 G profile copy**.
