@@ -149,7 +149,7 @@ def identity_group() -> click.Group:
         rows = [identity_report(i, browser_check=not no_browser) for i in targets]
         emit_json(rows[0] if identity_id else rows)
         if identity_id and rows[0]["signedIn"] is False:
-            die(f"{identity_id} is not signed in.", EXIT_AUTH, hint=f"A person runs: webcli identity login {identity_id}")
+            die(f"{identity_id} is not signed in.", EXIT_AUTH, hint=f"A person runs: {output.APP} identity login {identity_id}")
         raise SystemExit(EXIT_OK)
 
     return group
@@ -161,3 +161,45 @@ def identity_report(ident: Identity, *, browser_check: bool) -> dict[str, Any]:
             **signed_in(ident, browser_check=browser_check),
             "daemon": {"running": bool(info.get("running")), "pid": info.get("pid"), "chrome": info.get("chrome"),
                        "launchd": {"label": ident.label, "installed": daemon.plist_path(ident).exists()}}}
+
+
+def chrome_info() -> dict:
+    """Chrome's install, channel, headless default, and the default args dropped (H2)."""
+    import plistlib
+
+    try:
+        version = plistlib.loads(browser.CHROME_PLIST.read_bytes())["CFBundleShortVersionString"]
+    except (OSError, KeyError, ValueError, plistlib.InvalidFileException):
+        version = None
+    return {"installed": version is not None, "version": version, "channel": "chrome",
+            "headlessByDefault": True, "ignoredDefaultArgs": browser.IGNORED_DEFAULT_ARGS}
+
+
+def doctor_command() -> click.Command:
+    """`doctor`: one health report over the shared data home. Registered on both webcli and llmcli."""
+    from webcli.core import config, hardening
+
+    @click.command("doctor")
+    @click.option("--fix", is_flag=True, help="Re-apply the H4 hardening to the data home first.")
+    @click.option("--no-browser", is_flag=True, help="Don't check sign-in with a (headless) Chrome.")
+    def doctor_cmd(fix: bool, no_browser: bool) -> None:
+        """Health report (JSON): data home hardening, FileVault, Chrome, every identity's profile, daemon, and
+        sign-in. Shared by webcli and llmcli (one data home). Never shows a window."""
+        from webcli import __version__, sites
+
+        root = config.ensure_home()
+        home = hardening.apply(root) if fix else hardening.check(root)
+        known = identities.known(list(sites.registry().values()))
+        report = {
+            "version": __version__,
+            "home": home,
+            "chrome": chrome_info(),
+            "identities": [identity_report(i, browser_check=not no_browser) for i in known],
+            "sites": {"llmcli": [s.name for s in sites.of_kind("llm")],
+                      "webcli": [s.name for s in sites.of_kind("data")]},
+        }
+        report["ok"] = bool(home["ok"] and report["chrome"]["installed"])
+        emit_json(report)
+        raise SystemExit(EXIT_OK)
+
+    return doctor_cmd

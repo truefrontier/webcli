@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 
 from webcli import __version__, sites
-from webcli.apps.common import identity_group, serve_command
+from webcli.apps.common import doctor_command, identity_group, serve_command
 from webcli.core import output
 from webcli.sites.llm import env_help
 
@@ -16,6 +16,8 @@ NOTES = [
     "login` and an explicit --headed show a window, and login needs a person.",
     "Uniform ask JSON on every site: answer, chatId, requestedModel, servedModel, servedModelDisplay, fallback, "
     "images, citations, canvas (null/empty when a site lacks one). Same exit codes everywhere (see exitCodes).",
+    "`identity` (list/login/status) and `doctor` are shared with `webcli` over the one data home ~/.webcli; "
+    "either binary manages the same store.",
     "Data home ~/.webcli ($WEBCLI_HOME): identities/<provider>-<account>/chrome-profile, run/ (daemon sockets), "
     "logs/ (redacted), sites/<site>/ (last_chat).",
 ]
@@ -32,6 +34,7 @@ def build() -> click.Group:
     for site in sites.of_kind("llm"):
         main.add_command(site.cli(), site.name)
     main.add_command(identity_group())
+    main.add_command(doctor_command())
     main.add_command(serve_command())
     main.add_command(output.agent_help_command(main, version=__version__, env=env_help, notes=NOTES, writes=WRITES))
     return main
