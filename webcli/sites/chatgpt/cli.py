@@ -27,6 +27,7 @@ from webcli.core.output import (
     truncate,
     warn,
 )
+from webcli.core.redact import redact_text
 from webcli.sites import llm
 from webcli.sites.chatgpt import ADAPTER as SITE
 from webcli.sites.chatgpt import fetch, images
@@ -82,8 +83,8 @@ AGENT_NOTES = [
     ("`--image-out DIR|PATH` (ask, -p) waits for the reply's images and saves each one as ChatGPT stores it (the "
      "file the record's image pointer names, not a preview). DIR (existing, ending in /, or without an image suffix; "
      "created if needed) gets <prompt-slug>-N.<ext> and never overwrites; PATH is written exactly, more images go to "
-     "<stem>-2<suffix>, <stem>-3<suffix>. JSON images: [{path, width, height, bytes, mime, original, sourceWidth, "
-     "sourceHeight, source}], source \"original\" when the saved file's size matches the record's, else "
+     "<stem>-2<suffix>, <stem>-3<suffix>. JSON images: the saved paths; imageFiles: [{path, width, height, bytes, "
+     "mime, original, sourceWidth, sourceHeight, source}], source \"original\" when the saved file's size matches the record's, else "
      "\"resized\". A reply without an image exits 5 (JSON output still prints first)."),
     ("Every ask JSON has the uniform llm fields (answer, chatId, requestedModel, servedModel, servedModelDisplay, "
      "fallback, images, citations, canvas: always null here) plus chatUrl, imageCount, and attachments. An image "
@@ -142,18 +143,20 @@ def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, **k
 
 
 def _save_images(result: dict, out: Path | None, prompt: str) -> None:
-    """Write fetch.ask's imageData under `out` and replace it with result["images"] (always a list)."""
+    """Write fetch.ask's imageData under `out` and replace it with result["images"], the saved paths, and
+    result["imageFiles"], what each saved file is (both always lists)."""
     data = result.pop("imageData", None) or []
-    result["images"] = []
+    result["images"], result["imageFiles"] = [], []
     if out is None or not data:
         return
     try:
-        result["images"] = images.save(out, prompt, data)
+        result["imageFiles"] = images.save(out, prompt, data)
+        result["images"] = [image["path"] for image in result["imageFiles"]]
     except OSError as exc:
         where = f"Open it at {result['chatUrl']}" if result["chatUrl"] else "Open the chat at chatgpt.com."
         die(f"ChatGPT made the image(s), but writing them to {out} failed: {exc}", EXIT_API,
             hint=f"Don't resend the prompt. {where}")
-    for image in result["images"]:
+    for image in result["imageFiles"]:
         suffix = Path(image["path"]).suffix.lower()
         if image["mime"] != f"image/{images.SUFFIX_FORMAT.get(suffix)}":
             note(f"{image['path']} holds {image['mime']} data (what ChatGPT stored).", quiet=False)
@@ -182,7 +185,7 @@ def _timeout(timeout: int | None, image_out: Path | None) -> int:
 def _reply_text(result: dict) -> str:
     """Text output: the answer, then each saved image's path. An image reply that saved nothing says so."""
     lines = [result["answer"]] if result["answer"] else []
-    lines += [image["path"] for image in result["images"]]
+    lines += result["images"]
     if result["imageCount"] and not result["images"]:
         count = result["imageCount"]
         lines.append(f"[ChatGPT made {count} image{'s' if count > 1 else ''}: {result['chatUrl'] or 'see the chat'}. "
@@ -195,12 +198,14 @@ def _error_reply(result: dict, *, want_images: bool = False, strict_model: bool 
     (strict_model) came from another model. If so, the JSON result gets the error fields too: error, code, message,
     resets_at for a cap; error, code, message for a fallback; just error otherwise."""
     if limit_reply(result["answer"]):
-        result.update(error="rate_limited", code=EXIT_RATE_LIMITED, message=result["answer"],
+        result.update(error="rate_limited", code=EXIT_RATE_LIMITED, message=redact_text(result["answer"]),
                       resets_at=resets_at(result["answer"]))
     elif error_reply(result["answer"]):
-        result["error"] = f"ChatGPT replied with an error instead of an answer: {truncate(result['answer'], 200)}"
+        result["error"] = redact_text(f"ChatGPT replied with an error instead of an answer: "
+                                      f"{truncate(result['answer'], 200)}")
     elif want_images and not result["imageCount"]:
-        result["error"] = f"ChatGPT answered without an image: {truncate(result['answer'], 200) or '(empty)'}"
+        result["error"] = redact_text(f"ChatGPT answered without an image: "
+                                      f"{truncate(result['answer'], 200) or '(empty)'}")
     elif strict_model and result.get("fallback"):
         result.update(error="model_fallback", code=EXIT_RATE_LIMITED,
                       message=f"Asked for {result['fallbackFrom']}, but ChatGPT answered with {result['fallbackTo']}.")

@@ -21,6 +21,7 @@ from webcli.sites.base import Site
 
 UNIFORM = {"answer": None, "chatId": None, "requestedModel": None, "servedModel": None, "servedModelDisplay": None,
            "fallback": False, "images": [], "citations": [], "canvas": None}
+# images: the saved files' paths ([] without --image-out); each site's imageFiles says what each one is.
 
 
 def env_help() -> dict[str, str]:

@@ -29,7 +29,7 @@ CHATS = [
 ANSWER = {"chatId": "7e6d5c4b3a291807", "chatUrl": "https://gemini.google.com/app/7e6d5c4b3a291807", "model": "Flash",
           "thinking": None, "prompt": "What is 2+2?", "answer": "Two plus two is **4**.", "imageCount": 0}
 # what ask/-p print: fetch's result plus the saved images and the uniform llm fields
-OUT = {**ANSWER, "images": [], "requestedModel": None, "servedModel": "Flash", "servedModelDisplay": "Flash",
+OUT = {**ANSWER, "images": [], "imageFiles": [], "requestedModel": None, "servedModel": "Flash", "servedModelDisplay": "Flash",
        "fallback": False, "citations": [], "canvas": None}
 ERROR_ANSWER = {**ANSWER, "answer": "I encountered an error doing what you asked. Could you try again?"}
 ERROR_REPLY = "Gemini replied with an error instead of an answer: " + ERROR_ANSWER["answer"]
@@ -513,8 +513,9 @@ def test_image_out_dir_saves_and_reports_each_image(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.stderr
     printed = json.loads(result.stdout)
     path = str((out / "blue-stars-1.png").resolve())
-    assert printed["images"] == [{"path": path, "width": 2752, "height": 1536, "bytes": len(PNG), "mime": "image/png",
-                                  "source_url_kind": "full_size"}]
+    assert printed["images"] == [path]  # the uniform field: saved paths
+    assert printed["imageFiles"] == [{"path": path, "width": 2752, "height": 1536, "bytes": len(PNG),
+                                      "mime": "image/png", "source_url_kind": "full_size"}]
     assert "imageData" not in printed and printed["chatUrl"] == ANSWER["chatUrl"] and printed["imageCount"] == 1
     assert "imageHint" not in printed  # saved, so nothing to hint
     assert (out / "blue-stars-1.png").read_bytes() == PNG
@@ -533,7 +534,7 @@ def test_image_out_path_writes_exactly_it_and_numbers_extra_images(monkeypatch, 
     assert calls[0][1]["image_format"] == "jpeg"
     out = tmp_path / "answer.json"
     assert run("-p", "--image-out", str(target), "--output-format", "json", "--output-file", str(out), "q").exit_code == 0
-    assert [(i["path"], i["width"], i["height"], i["mime"]) for i in json.loads(out.read_text())["images"]] == [
+    assert [(i["path"], i["width"], i["height"], i["mime"]) for i in json.loads(out.read_text())["imageFiles"]] == [
         (str(target.resolve()), 1376, 768, "image/jpeg"), (str((tmp_path / "stars-2.jpg").resolve()), 1376, 768, "image/jpeg")]
 
 

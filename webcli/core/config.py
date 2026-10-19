@@ -82,8 +82,8 @@ def load() -> dict[str, Any]:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except OSError as exc:
-        raise ConfigError(f"Can't read {path}: {exc}") from None
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"Can't read {path}: {exc}", hint=f"Fix or remove {path}.") from None
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:

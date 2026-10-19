@@ -156,3 +156,10 @@ def test_an_unexpected_error_is_redacted_exit_5_with_the_traceback_in_the_log(mo
     assert json.loads(result.stderr)["error"].startswith("Unexpected error: KeyError")
     log = (config.home() / "logs" / "llmcli.log").read_text()
     assert "Traceback" in log and token not in log
+
+
+def test_a_config_toml_that_isnt_utf8_exits_7():
+    config.ensure_home()
+    (config.home() / "config.toml").write_bytes(b"[sites.gemini]\nidentity = \"\xff\xfe\"\n")
+    result = run(llmcli, "gemini", "status")
+    assert result.exit_code == 7 and "Can't read" in json.loads(result.stderr)["error"]

@@ -21,7 +21,7 @@ URL = f"https://chatgpt.com/c/{CHAT}"
 ANSWER = {"chatId": CHAT, "chatUrl": URL, "requestedModel": None, "servedModel": "gpt-6-thinking",
           "servedModelDisplay": "GPT-6 Thinking", "fallback": False, "fallbackFrom": None, "fallbackTo": None,
           "prompt": "Reply with exactly: pong", "answer": "pong", "imageCount": 0, "attachments": [], "citations": []}
-OUT = {**ANSWER, "images": [], "canvas": None}  # what ask/-p print: fetch's result, saved images, uniform fields
+OUT = {**ANSWER, "images": [], "imageFiles": [], "canvas": None}  # what ask/-p print: fetch's result, saved images, uniform fields
 FALLBACK = {**ANSWER, "requestedModel": "gpt-6-thinking", "servedModel": "gpt-6-t-mini", "servedModelDisplay": "GPT-6",
             "fallback": True, "fallbackFrom": "gpt-6-thinking", "fallbackTo": "gpt-6-t-mini"}
 STATUS = {"signedIn": True, "plan": "plus", "email": "o***@example.com"}
@@ -178,9 +178,10 @@ def test_image_out_saves_and_reports_original(monkeypatch, tmp_path):
     result = run("ask", "--format", "json", "--image-out", str(target), "Make stars")
     assert result.exit_code == 0
     out = json.loads(result.stdout)
-    assert out["images"] == [{"path": str(target.resolve()), "width": 1254, "height": 1254, "bytes": len(data),
-                              "mime": "image/png", "original": True, "sourceWidth": 1254, "sourceHeight": 1254,
-                              "source": "original"}]
+    assert out["images"] == [str(target.resolve())]  # the uniform field: saved paths
+    assert out["imageFiles"] == [{"path": str(target.resolve()), "width": 1254, "height": 1254, "bytes": len(data),
+                                  "mime": "image/png", "original": True, "sourceWidth": 1254, "sourceHeight": 1254,
+                                  "source": "original"}]
     assert target.read_bytes() == data and "imageData" not in out
 
 

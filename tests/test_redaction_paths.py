@@ -149,3 +149,25 @@ def test_die_redacts_nested_extras(capsys):
         die("failed", 5, details={"auth": {"header": f"Bearer {JWT}"}, "urls": [SAS]})
     err = capsys.readouterr().err
     assert leaked(err) == [] and json.loads(err)["details"]["auth"]["header"] == "Bearer <redacted>"
+
+
+@pytest.mark.parametrize("site", ["gemini", "chatgpt"])
+def test_a_failed_replys_error_fields_on_stdout_are_redacted(monkeypatch, site):
+    """The JSON result still prints first on an error reply; its error/message fields are error text."""
+    from webcli.sites.chatgpt import fetch as chatgpt_fetch
+    from webcli.sites.gemini import fetch as gemini_fetch
+
+    ident = Identity("google:default" if site == "gemini" else "chatgpt:default")
+    ident.profile.mkdir(parents=True)
+    (ident.profile / "Local State").write_text("{}")
+    notice = f"You've reached your usage limit. Debug: Authorization: Bearer {JWT}"
+
+    async def ask(*args, **kwargs):
+        return {"chatId": None, "chatUrl": None, "answer": notice, "imageCount": 0, "model": None}
+
+    monkeypatch.setattr(gemini_fetch if site == "gemini" else chatgpt_fetch, "ask", ask)
+    result = CliRunner().invoke(llmcli.build(), [site, "ask", "q", "--format", "json"])
+    assert result.exit_code == 6
+    printed = json.loads(result.stdout)
+    assert printed["error"] == "rate_limited" and JWT not in printed["message"] and JWT not in result.stderr
+    assert printed["answer"] == notice  # the answer itself is the site's content, kept as it came

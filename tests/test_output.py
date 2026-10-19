@@ -124,3 +124,24 @@ def test_dry_run_is_the_default_for_writes(capsys):
     assert json.loads(capsys.readouterr().out)["dryRun"] is True
     assert output.confirm_write(True, {}, dry_run=True) is False
     assert output.confirm_write(True, {}) is True
+
+
+@pytest.mark.parametrize("site", ["gemini", "chatgpt"])
+def test_images_is_the_list_of_saved_paths(monkeypatch, site, tmp_path):
+    import struct
+    import zlib
+
+    ihdr = struct.pack(">IIBBBBB", 4, 3, 8, 2, 0, 0, 0)
+    png = (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr
+           + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr)) + b"\x00\x00\x00\x00IEND\xaeB`\x82")
+    module = gemini_fetch if site == "gemini" else chatgpt_fetch
+    image = {"data": png, "source_url_kind": "full_size"} if site == "gemini" else \
+        {"data": png, "sourceWidth": 4, "sourceHeight": 3, "sourceBytes": len(png)}
+
+    async def ask(*args, **kwargs):
+        return {**(GEMINI_ASK if site == "gemini" else CHATGPT_ASK), "imageCount": 1, "imageData": [image]}
+
+    monkeypatch.setattr(module, "ask", ask)
+    data = json.loads(run(site, "ask", "stars", "--image-out", str(tmp_path / "out") + "/").stdout)
+    assert data["images"] == [str((tmp_path / "out" / "stars-1.png").resolve())]
+    assert data["imageFiles"][0]["path"] == data["images"][0] and data["imageFiles"][0]["width"] == 4
