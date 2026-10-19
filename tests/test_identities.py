@@ -123,17 +123,19 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
                                                                       "google:default": False,
                                                                       "meta:default": False}
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
-    assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"], "webcli": ["aa", "walkie"]}
+    assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"],
+                               "webcli": ["aa", "keep", "walkie"]}
 
 
 def test_sites_lists_every_llm_site_and_the_data_sites():
     result = CliRunner().invoke(webcli_app.build(), ["sites"])
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"]
-    assert [s["name"] for s in data["webcli"]] == ["aa", "walkie"]
-    for site in data["webcli"]:  # no sign-in: no identity, and none in `identity list` / `doctor` either
-        assert (site["kind"], site["binary"], site["provider"], site["defaultIdentity"]) == ("data", "webcli", "none",
-                                                                                             None)
+    assert [s["name"] for s in data["webcli"]] == ["aa", "keep", "walkie"]
+    for site in data["webcli"]:  # aa, walkie: no sign-in, so no identity (none in `identity list` / `doctor` either)
+        no_sign_in = site["name"] in ("aa", "walkie")
+        assert (site["kind"], site["binary"], site["provider"], site["defaultIdentity"]) == (
+            ("data", "webcli", "none", None) if no_sign_in else ("data", "webcli", "google", "google:default"))
     assert data["webcli"][0]["verbs"] == {"models": "public", "digest": "public", "tts": "public"}
     assert {s["defaultIdentity"] for s in data["llmcli"]} == {"chatgpt:default", "google:default", "meta:default"}
     muse = next(s for s in data["llmcli"] if s["name"] == "muse")

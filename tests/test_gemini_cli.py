@@ -12,6 +12,7 @@ import zipfile
 import pytest
 from click.testing import CliRunner
 
+from webcli import __version__
 from webcli.apps import llmcli
 from webcli.core import browser, config
 from webcli.core import output as agent_ux
@@ -443,7 +444,7 @@ def test_agent_help_json_lists_every_command_flag_and_exit_code():
     assert sorted(ref["exitCodes"]) == ["0", "129", "130", "143", "2", "3", "4", "5", "6", "7"]
     assert set(ref["env"]) == {"LLMCLI_FORMAT", "WEBCLI_LOCK_WAIT", "WEBCLI_IDENTITY", "WEBCLI_DAEMON",
                                "WEBCLI_SERVE_RECYCLE_HOURS", "WEBCLI_HOME"}
-    assert ref["version"] == "0.1.0" and ref["writes"] == cli.WRITES
+    assert ref["version"] == __version__ and ref["writes"] == cli.WRITES
     assert ["--lock-wait"] in [o["flags"] for o in ref["globalOptions"]]
     assert ["--identity"] in [o["flags"] for o in ref["globalOptions"]]
 
