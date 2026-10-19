@@ -1,0 +1,25 @@
+{
+  "operationName": "GetLoomsForLibrary",
+  "query": "query GetLoomsForLibrary($limit: Int!, $cursor: String, $folderId: String, $sourceValue: String, $source: LoomsSource!, $sortType: LoomsSortType!, $sortOrder: LoomsSortOrder!, $sortGrouping: LoomsSortGrouping, $filters: [[LoomsCollectionFilter!]!], $timeRange: TimeRange) {\n  getLooms {\n    __typename\n    ... on GetLoomsPayload {\n      videos(\n        first: $limit\n        after: $cursor\n        folderId: $folderId\n        sourceValue: $sourceValue\n        source: $source\n        sortType: $sortType\n        sortOrder: $sortOrder\n        sortGrouping: $sortGrouping\n        filters: $filters\n        timeRange: $timeRange\n      ) {\n        edges {\n          cursor\n          node {\n            id\n            name\n            visibility\n            __typename\n          }\n          __typename\n        }\n        pageInfo {\n          endCursor\n          hasNextPage\n          __typename\n        }\n        __typename\n      }\n      __typename\n    }\n  }\n}",
+  "variables": {
+    "source": "MINE",
+    "sortType": "RECENT",
+    "sortOrder": "DESC",
+    "filters": [
+      [
+        {
+          "type": "CREATED_BY_ME"
+        }
+      ],
+      [
+        {
+          "type": "NOT_IN_FOLDER"
+        }
+      ]
+    ],
+    "limit": 12,
+    "cursor": null,
+    "folderId": null,
+    "timeRange": null
+  }
+}
