@@ -49,6 +49,15 @@ class NotFound(LookupError):
         self.hint = hint
 
 
+class UsageError(ValueError):
+    """The request can't be done as asked, found only once the site answered (a label name two labels share, a
+    system group as a write target): exit 2."""
+
+    def __init__(self, message: str, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.hint = hint
+
+
 class ConfigError(RuntimeError):
     """Missing or invalid config.toml, identity, or site name: exit 7."""
 

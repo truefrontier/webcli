@@ -24,7 +24,16 @@ from typing import Any, Callable, Iterable, Sequence
 
 import click
 
-from webcli.core.errors import AuthRequired, Challenged, ConfigError, Interrupted, NotFound, ProfileBusy, RateLimited
+from webcli.core.errors import (
+    AuthRequired,
+    Challenged,
+    ConfigError,
+    Interrupted,
+    NotFound,
+    ProfileBusy,
+    RateLimited,
+    UsageError,
+)
 from webcli.core.redact import redact_text, redact_value
 
 EXIT_OK = 0
@@ -37,7 +46,8 @@ EXIT_CONFIG = 7
 EXIT_CODES = {
     EXIT_OK: "ok (also a fallback to another model without --strict-model: JSON has fallback true; and an image reply "
              "without --image-out: nothing saved, JSON has imageHint)",
-    EXIT_USAGE: "usage error (bad option, argument, id, or format env; --file over the site's upload limits)",
+    EXIT_USAGE: "usage error (bad option, argument, id, or format env; --file over the site's upload limits; a label "
+                "name two labels share; --dry-run with --confirm)",
     EXIT_NOT_FOUND: "not found / no results (chat id, model name)",
     EXIT_AUTH: "sign-in needed, or Cloudflare needs a visible check (error \"hidden_browser_blocked\"): a person runs "
                "`<binary> identity login <identity>`",
@@ -355,6 +365,8 @@ def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: st
         die(str(exc), 128 + exc.signum)
     if isinstance(exc, ConfigError):
         die(str(exc), EXIT_CONFIG, hint=exc.hint)
+    if isinstance(exc, UsageError):
+        die(str(exc), EXIT_USAGE, hint=exc.hint)
     if isinstance(exc, ProfileBusy):
         die(str(exc), EXIT_API)
     die(str(exc) or type(exc).__name__, EXIT_API)

@@ -38,7 +38,15 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from webcli import __version__
 from webcli.core import browser, config, output
-from webcli.core.errors import AuthRequired, Challenged, ConfigError, NotFound, ProfileBusy, RateLimited
+from webcli.core.errors import (
+    AuthRequired,
+    Challenged,
+    ConfigError,
+    NotFound,
+    ProfileBusy,
+    RateLimited,
+    UsageError,
+)
 from webcli.core.identities import Identity
 from webcli.core.redact import redact_text
 
@@ -262,7 +270,7 @@ def error_payload(exc: BaseException) -> dict:
     if isinstance(exc, RateLimited):
         return {"type": "RateLimited", "message": redact_text(exc.message), "sent": exc.sent,
                 "resets_at": exc.resets_at}
-    if isinstance(exc, (NotFound, ConfigError)):
+    if isinstance(exc, (NotFound, ConfigError, UsageError)):
         return {"type": type(exc).__name__, "message": message, "hint": exc.hint}
     for kind in (AuthRequired, ProfileBusy, Restarting, ValueError):
         if isinstance(exc, kind):
@@ -280,6 +288,8 @@ def rebuild(error: dict) -> BaseException:
         return NotFound(message, hint=error.get("hint"))
     if kind == "ConfigError":
         return ConfigError(message, hint=error.get("hint"))
+    if kind == "UsageError":
+        return UsageError(message, hint=error.get("hint"))
     known = {"AuthRequired": AuthRequired, "ProfileBusy": ProfileBusy, "Restarting": Restarting,
              "ValueError": ValueError}
     return known.get(kind, RuntimeError)(message)
