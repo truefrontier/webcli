@@ -1,6 +1,6 @@
 [project]
 name = "webcli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidden Chrome sessions."
 readme = "README.md"
 license = "MIT"
@@ -27,6 +27,7 @@ keep = "webcli.sites.keep:ADAPTER"
 photos = "webcli.sites.photos:ADAPTER"
 youtube = "webcli.sites.youtube:ADAPTER"
 recorder = "webcli.sites.recorder:ADAPTER"
+contacts = "webcli.sites.contacts:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
