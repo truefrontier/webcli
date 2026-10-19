@@ -1,0 +1,14 @@
+[
+  {"id": "user-msg-1", "role": "user", "text": "You:\n\nPlan a weekend in Lisbon under $800.", "links": []},
+  {"id": "assistant-msg-0f8fad5b-d9cb-469f-a165-70867728950e", "role": "assistant",
+   "text": "Here's a plan.\n\n1. Fly in Friday night.\n2. Stay in Alfama.", "links": [
+    {"href": "https://www.visitlisboa.com/en", "text": "Visit Lisboa"},
+    {"href": "https://muse.ai/thread/7c9e6679-7425-40de-944b-e07fc1f90ae7", "text": "this chat"},
+    {"href": "https://www.visitlisboa.com/en", "text": "Visit Lisboa"},
+    {"href": "javascript:void(0)", "text": "copy"},
+    {"href": "https://en.wikipedia.org/wiki/Alfama", "text": " Alfama \n"}
+  ]},
+  {"id": "assistant-msg-empty", "role": "assistant", "text": "   ", "links": []},
+  {"id": "user-msg-2", "role": "user", "text": "Make it $600.", "links": []},
+  {"id": null, "role": "assistant", "text": "Assistant message: Done: swap the hotel for a guesthouse.", "links": []}
+]

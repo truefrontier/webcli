@@ -10,11 +10,14 @@ it closes (browser.page_at), so permissions belong to that page alone:
     lease, so it never inherits a later command's send or download permission;
   - send (the prompt and its uploads) only for `ask` / `-p`; download (gemini's full-size image rpc) only for
     `--image-out`; sign_in only for `identity login`.
+WebSockets: closed, unless the policy names the ones its site needs (`sockets`: muse's VM gateway). Those connect
+only from the command's own page while its lease runs, and are closed when the command ends (close_sockets).
 A policy that raises counts as "no": a guard that raises would leave the request hanging.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Awaitable, Callable
 from urllib.parse import urlsplit
@@ -32,6 +35,8 @@ class Policy:
     site: str
     allowed: Callable[["Request", "Guard"], bool]
     describe: Callable[["Request"], str]
+    # The WebSocket URLs the site's page may open (muse's wss://*.metaaivm.com); None: none, every socket closes.
+    sockets: Callable[[str], bool] | None = None
 
 
 @dataclass
@@ -43,6 +48,7 @@ class Guard:
     expect_models: frozenset[str] | None = None  # chatgpt -m: the model slugs a prompt may name
     blocked: list[str] = field(default_factory=list)  # what was aborted during this command, as describe() lines
     lease: object | None = None  # the running command's; its page's route carries the same object
+    opened: list = field(default_factory=list)  # WebSockets this command's page connected; closed when it ends
 
     def begin(self, policy: Policy, *, send: bool = False, download: bool = False, sign_in: bool = False) -> object:
         """Start a command's permissions; returns its lease for the page's route."""
@@ -111,7 +117,42 @@ async def context_route(route: "Route") -> None:
 
 
 async def websocket(ws: "WebSocketRoute") -> None:
-    """No site needs WebSockets (replies are read from records or the page), and context.route never sees them:
-    close every one."""
+    """Every socket a page_websocket route doesn't take (gemini and chatgpt read replies from records or the page,
+    and context.route never sees sockets): close it."""
     state.blocked.append(describe("WS", ws.url))
     await ws.close()
+
+
+def socket_allowed(url: str, *, own_page: bool) -> bool:
+    """Whether a WebSocket to `url` may connect: only from the command's own page, and only when its policy lists
+    it."""
+    policy = state.policy
+    try:
+        return bool(policy is not None and own_page and policy.sockets is not None and policy.sockets(url))
+    except Exception:
+        return False  # fail closed
+
+
+def page_websocket(lease: object) -> Callable[["WebSocketRoute"], Awaitable[None]]:
+    """The socket route for a command's page whose policy lists sockets (page routes take precedence over the
+    context's `websocket`)."""
+
+    async def handler(ws: "WebSocketRoute") -> None:
+        if socket_allowed(ws.url, own_page=lease is state.lease):
+            ws.connect_to_server()
+            state.opened.append(ws)
+        else:
+            await websocket(ws)
+
+    return handler
+
+
+async def close_sockets() -> None:
+    """Close the sockets the ending command connected (closing the page side closes the server side too), so a
+    tab whose close fails keeps none."""
+    while state.opened:
+        ws = state.opened.pop()
+        try:
+            await asyncio.wait_for(ws.close(), timeout=5)
+        except Exception:
+            pass

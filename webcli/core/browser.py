@@ -236,23 +236,29 @@ async def page_at(context: "BrowserContext", policy: Policy | None, *, mode: str
     long-lived Chrome). The guard's state is this page's for exactly as long as it is yielded: `policy` (None:
     unguarded, chatgpt's sign-in window), send only for `ask` / `-p`, download only for `--image-out`, sign_in only
     for `identity login`. With `url` the page goes there first, then `ready(page, mode)` may refuse it (chatgpt's
-    Cloudflare check raises Challenged) before anything is yielded."""
+    Cloudflare check raises Challenged) before anything is yielded. A policy that lists sockets gets them on this
+    page only, closed when it is done."""
     page = None
     try:
         page = await context.new_page() if new or not context.pages else context.pages[0]
         if policy is not None:
             lease = guard.state.begin(policy, send=send, download=download, sign_in=sign_in)
             await page.route("**/*", guard.page_route(lease))
+            if policy.sockets is not None:
+                await page.route_web_socket(lambda _url: True, guard.page_websocket(lease))
         if url:
             await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             if ready is not None:
                 await ready(page, mode)
         yield page
     finally:
-        guard.state.end()
-        if new and page is not None:
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(page.close(), timeout=5)
+        guard.state.end()  # first: revokes the lease, so no socket connects while the command's own close
+        try:
+            await guard.close_sockets()
+        finally:
+            if new and page is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(page.close(), timeout=5)
 
 
 @asynccontextmanager

@@ -18,10 +18,14 @@ REDACTED = "<redacted>"
 # tokens (openai-sentinel-*), and Azure SAS parameters on signed download links (se, sp, sv, sr, st, skoid, sig...).
 # Google: `at` is the XSRF token (WIZ_global_data.SNlM0e), f.sid the session id (FdrFJe), and SID/HSID/SAPISID/
 # __Secure-1PSID(TS) are the session cookies.
+# Meta (muse): fb_dtsg / lsd (also the X-FB-LSD header) / jazoest are CSRF tokens, abra_sess / hatch_sess / llm_sess session cookies, datr a
+# device cookie, x-fb-atod-token / x-hatch-gateway-token request headers, nonce, and the account VM's vm_id /
+# vmName / vmAddress (the gateway socket's query and /api/hatch/token's body).
 SENSITIVE_NAME = re.compile(
     r"cookie|auth|key|token|secret|pass|session|csrf|xsrf|sig|otp|credential|bearer|sentinel|proof|turnstile"
     r"|clearance|device|did$|^did|puid|^__cf|cfuv|account.?id|^s[eptvr]$|^sk[a-z]{1,4}$|^rsc[a-z]$|^ts$|^p$"
-    r"|sid|snlm0e|fdrfje|^at$",
+    r"|sid|snlm0e|fdrfje|^at$"
+    r"|sess|dtsg|jazoest|lsd|datr|atod|nonce|^vm_?(?:id|name|address)$",
     re.I,
 )
 # Query parameters that make a link a signed grant (Azure SAS, estuary): when one is present, every value goes.
@@ -130,13 +134,15 @@ def shape(node: Any, *, samples: bool = True, key: str = "") -> Any:
 _FIELD = (r"__(?:secure|host)-[\w.-]+|oai-[\w-]+|openai-sentinel-[\w-]+|cf_clearance|__cf[\w-]*|_cfuvid|_puid"
           r"|[\w-]*device[\w-]*|did|chatgpt-account-id|account_?id|sig|se|sp|sv|sr|st|skoid|sktid|skt|ske|sks|skv"
           r"|at|f\.sid|bl|snlm0e|fdrfje|cfb2h|[\w-]*sapisid[\w-]*|[a-z]{0,2}sid(?:ts|cc)?|nid"
+          r"|fb_dtsg|lsd|jazoest|datr|[\w-]*_sess|[\w-]*nonce[\w-]*|[\w-]*atod[\w-]*|vm_?(?:id|name|address)"
           r"|[\w.-]*(?:token|secret|passw(?:or)?d|cookie|auth|session|csrf|xsrf|api[_-]?key|sentinel|proof"
           r"|turnstile|sig)[\w.-]*")
 _PAIR = re.compile(r"(?<![\w.-])(" + _FIELD + r")(\s*=\s*)(?:\"[^\"]*\"|'[^']*'|[^&\s;,\"'<>]+)", re.I)
 _JSON_PAIR = re.compile(r"([\"'])(" + _FIELD + r")\1(\s*:\s*)(?:\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|[^,}\]\s]+)",
                         re.I)
 _HEADER = re.compile(r"\b((?:proxy-)?authorization|set-cookie|cookie|openai-sentinel-[\w-]+|oai-[\w-]+"
-                     r"|chatgpt-account-id|x-openai-[\w-]+|x-goog-[\w-]*auth[\w-]*)(\s*:\s*)[^\r\n]*", re.I)
+                     r"|chatgpt-account-id|x-openai-[\w-]+|x-goog-[\w-]*auth[\w-]*|x-[\w-]*(?:token|lsd|dtsg)[\w-]*)"
+                     r"(\s*:\s*)[^\r\n]*", re.I)
 _SCHEME_TOKEN = re.compile(r"\b(sapisid\w*hash|bearer|basic)\s+[^\s\"']+", re.I)
 _JWT_ANYWHERE = re.compile(r"\beyJ[\w-]{6,}(?:\.[\w-]*)+")
 _API_KEY = re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{16,}")
