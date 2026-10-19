@@ -172,10 +172,11 @@ async def _signed_in(page: "Page") -> None:
 async def with_app(work: Callable[["Page"], Awaitable[Any]], *, headed: bool = False, url: str = APP_URL,
                    send: bool = False) -> Any:
     """Run work(page) on a chatgpt.com page: a tab in the identity daemon's Chrome, else a headless Chrome of this
-    command's own (a visible one with --headed). Never a headed fallback: a Cloudflare challenge headless Chrome
-    can't pass raises Challenged."""
+    command's own (a visible one with --headed, which presents what headless does: a check a person clears there
+    must hold up headless). Never a headed fallback: a Cloudflare challenge headless Chrome can't pass raises
+    Challenged."""
     async with browser.site_page(POLICY, mode="visible" if headed else "headless", url=url, send=send,
-                                 ready=past_challenge) as page:
+                                 ready=past_challenge, match_headless=True) as page:
         return await work(page)
 
 
@@ -197,8 +198,11 @@ async def login(timeout: int, on_state: Callable[[str], None] = lambda _state: N
     and title, plus one session read once a tab is on chatgpt.com past Cloudflare. Cloudflare's challenge is a
     wait, not a failure: the person clicks "Verify you are human" in the window. on_state gets "cloudflare" or
     "signing in" each time that changes. AuthRequired when every tab is closed or time runs out.
+
+    The window presents what headless commands do (match_headless: user agent, client hints, viewport), so the
+    cf_clearance Cloudflare sets here is earned with what headless Chrome presents afterwards.
     """
-    async with browser.open_page(None, mode="visible") as page:
+    async with browser.open_page(None, mode="visible", match_headless=True) as page:
         try:
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
         except Exception:

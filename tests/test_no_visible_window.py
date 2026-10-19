@@ -17,7 +17,11 @@ from click.testing import CliRunner
 
 from webcli.apps import llmcli, webcli as webcli_app
 from webcli.core import browser, daemon
+from webcli.core.errors import AuthRequired
 from webcli.core.identities import Identity
+from webcli.sites.chatgpt import fetch as chatgpt_fetch
+from webcli.sites.gemini import fetch as gemini_fetch
+from webcli.sites.muse import fetch as muse_fetch
 from conftest import make_profile
 
 HIDDEN_COMMANDS = [
@@ -40,6 +44,7 @@ def assert_hidden(options: dict) -> None:
     assert "--use-mock-keychain" in options["ignore_default_args"]
     assert "--enable-automation" in options["ignore_default_args"]
     assert options["service_workers"] == "block"
+    assert options["viewport"] == browser.VIEWPORT
     assert "Headless" not in (options["user_agent"] or "")
 
 
@@ -71,6 +76,8 @@ def test_only_an_explicit_headed_shows_a_window(fake_playwright, profiles, args)
     options = fake_playwright[0]
     assert options["headless"] is False and options["channel"] == "chrome"
     assert {"--use-mock-keychain", "--enable-automation"} <= set(options["ignore_default_args"])
+    # chatgpt's window keeps the headless viewport (a check a person clears there must hold up headless)
+    assert options["viewport"] == (browser.VIEWPORT if args[0] == "chatgpt" else None)
 
 
 @pytest.mark.parametrize(("args", "profile"), [
@@ -87,6 +94,8 @@ def test_identity_login_is_the_other_visible_path(fake_playwright, args, profile
     options = fake_playwright[0]
     assert options["headless"] is False and options["user_data_dir"] == str(Identity(profile).profile)
     assert {"--use-mock-keychain", "--enable-automation"} <= set(options["ignore_default_args"])
+    assert options["viewport"] == (browser.VIEWPORT if profile == "chatgpt:default" else None)
+    assert options["user_agent"] is None  # set per page instead: see test_chatgpt_login_window_presents_...
 
 
 def test_status_and_doctor_without_a_profile_never_launch(fake_playwright):
@@ -130,7 +139,10 @@ def test_launch_options_are_the_only_place_headless_is_decided():
     hidden = browser.launch_options(Path("/p"), "headless")
     assert_hidden({**hidden, "user_agent": hidden["user_agent"]})
     shown = browser.launch_options(Path("/p"), "visible")
-    assert shown["headless"] is False and shown["viewport"] is None
+    assert shown["headless"] is False and shown["viewport"] is None and shown["user_agent"] is None
+    matched = browser.launch_options(Path("/p"), "visible", match_headless=True)
+    assert matched["headless"] is False and matched["viewport"] == hidden["viewport"] == {"width": 1280, "height": 900}
+    assert matched["user_agent"] is None
     assert browser.launch_options(Path("/p"), "visible", guarded=False)["service_workers"] == "allow"
     with pytest.raises(ValueError):
         browser.launch_options(Path("/p"), "offscreen")
@@ -143,3 +155,48 @@ def test_launch_options_are_the_only_place_headless_is_decided():
                 assert function.startswith("login("), (path, marker, function.split("\n", 1)[0])
         if path.name != "browser.py":
             assert "launch_persistent_context(" not in text, path  # nobody launches Chrome but core.browser
+
+
+def user_agent_override(context) -> dict:
+    """What present_as_chrome set on the command's page (Emulation.setUserAgentOverride), exactly once."""
+    [params] = [params for method, params in context.cdp if method == "Emulation.setUserAgentOverride"]
+    return params
+
+
+AUTO_ATTACH = ("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False})
+
+
+def test_chatgpt_login_window_presents_what_headless_commands_do(fake_chrome, monkeypatch):
+    """The cf_clearance a person earns in the login window must hold up headless: both present the same user agent,
+    client hints (no HeadlessChrome brand anywhere), viewport, and frame/worker override."""
+    launches, contexts = fake_chrome
+    monkeypatch.setattr(browser, "identity", Identity("chatgpt:default"))
+    assert browser.run(chatgpt_fetch.status()) == chatgpt_fetch.signed_out()  # a headless command
+    with pytest.raises(AuthRequired, match="Timed out after 0s"):
+        browser.run(chatgpt_fetch.login(0))  # the login window, not waiting for a person
+
+    (hidden, shown), (headless_page, login_window) = launches, contexts
+    assert hidden["headless"] is True and shown["headless"] is False
+    assert shown["viewport"] == hidden["viewport"] == {"width": 1280, "height": 900}
+    override = user_agent_override(login_window)
+    assert override == user_agent_override(headless_page)
+    assert override["userAgent"] == ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                                     "(KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
+    metadata = override["userAgentMetadata"]
+    assert [b["brand"] for b in metadata["brands"]] == ["Google Chrome", "Chromium", "Not(A:Brand"]
+    assert [b["brand"] for b in metadata["fullVersionList"]] == ["Google Chrome", "Chromium", "Not(A:Brand"]
+    assert (metadata["platform"], metadata["mobile"]) == ("macOS", False)
+    assert AUTO_ATTACH in login_window.cdp and AUTO_ATTACH in headless_page.cdp
+
+
+def test_gemini_and_muse_sign_in_windows_stay_native(fake_chrome, monkeypatch):
+    """Only chatgpt's windows match headless: Google's and Meta's sign-in windows keep Chrome's own everything."""
+    launches, contexts = fake_chrome
+    for ident, login in (("google:default", gemini_fetch.login), ("meta:default", muse_fetch.login)):
+        monkeypatch.setattr(browser, "identity", Identity(ident))
+        with pytest.raises(AuthRequired, match="Timed out after 0s"):
+            browser.run(login(0))
+    assert len(launches) == 2
+    for options, context in zip(launches, contexts):
+        assert options["headless"] is False and options["viewport"] is None and options["user_agent"] is None
+        assert context.cdp == []

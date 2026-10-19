@@ -177,7 +177,7 @@ def test_with_app_uses_the_daemons_chrome_when_inside_serve(monkeypatch):
 
     class Shared:
         @asynccontextmanager
-        async def page(self, policy, *, url, send, ready):
+        async def page(self, policy, *, url, send, ready, match_headless):
             seen.append((policy, url, send))
             yield "daemon-page"
 

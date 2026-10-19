@@ -8,7 +8,9 @@ app, CDP window bounds) still put a window on screen or took focus, so a check h
 Challenged instead. Inside the daemon (shared is set) a visible Chrome is refused outright.
 
 Fingerprint: headless Chrome's own user agent says "HeadlessChrome", so every headless page presents as the installed
-Chrome instead (user_agent, ua_metadata, present_as_chrome).
+Chrome instead (user_agent, ua_metadata, present_as_chrome). The cf_clearance a person earns in chatgpt's visible
+window has to hold up for headless commands, so that window presents exactly what headless does (match_headless):
+the same user agent, client hints, viewport, screen and devicePixelRatio.
 
 H2: Playwright starts Chrome with --use-mock-keychain on macOS, which encrypts cookies with a fixed, public key.
 Dropping it (IGNORED_DEFAULT_ARGS) makes Chrome keep cookies under its own "Chrome Safe Storage" Keychain key, like
@@ -45,6 +47,8 @@ MODES = ("headless", "visible")
 STEALTH = ["--disable-blink-features=AutomationControlled"]
 IGNORED_DEFAULT_ARGS = ["--enable-automation", "--use-mock-keychain"]
 CHROME_PLIST = Path("/Applications/Google Chrome.app/Contents/Info.plist")
+# Every headless page's size. Playwright also emulates screen = viewport and devicePixelRatio 1 for it.
+VIEWPORT = {"width": 1280, "height": 900}
 # present_as_chrome: each new cross-site iframe and worker waits, paused, for its override.
 AUTO_ATTACH = {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False}
 LOCK_WAIT_ENV = "WEBCLI_LOCK_WAIT"
@@ -122,8 +126,8 @@ def ua_metadata(version: str) -> dict:
 
 async def present_as_chrome(context: "BrowserContext", page: "Page") -> None:
     """Pin `page`'s user agent and client hints to user_agent() and ua_metadata(), what a real Chrome sends:
-    Cloudflare checks them together, and a fresh profile (no cf_clearance yet) only gets through when they agree
-    with a real Chrome's.
+    Cloudflare checks them together. Every headless page gets this, and so does a match_headless visible window
+    (chatgpt's), so the cf_clearance a person earns there was earned with what headless commands present later.
     Auto-attach pauses each cross-site iframe (Cloudflare's Turnstile), however deeply nested, and each worker until it
     has the same override, so none runs with Playwright's own (x86, macOS "10_15_7"). Non-flat sessions: Playwright's
     CDPSession can't address flat child sessions, so a nested target is reached through each session above it."""
@@ -164,10 +168,15 @@ async def present_as_chrome(context: "BrowserContext", page: "Page") -> None:
     await cdp.send("Target.setAutoAttach", AUTO_ATTACH)
 
 
-def launch_options(profile: Path, mode: str, *, guarded: bool = True) -> dict:
+def launch_options(profile: Path, mode: str, *, guarded: bool = True, match_headless: bool = False) -> dict:
     """launch_persistent_context's arguments. The one place headless is decided: mode "headless" (every command) or
     "visible" (`identity login`, --headed). Unguarded (only chatgpt's sign-in window) allows service workers;
-    guarded blocks them so every request goes through the guard."""
+    guarded blocks them so every request goes through the guard.
+
+    match_headless (chatgpt's visible windows) keeps the headless VIEWPORT, so the page's screen, inner size and
+    devicePixelRatio read as they do headless. Its user agent and client hints are set per page instead
+    (present_as_chrome, from page_at): Playwright's launch-level user agent brings client hints it derives itself
+    (x86, macOS "10_15_7", no brands) to every other tab, where a visible Chrome's own are already right."""
     if mode not in MODES:
         raise ValueError(f"unknown Chrome mode {mode!r}")
     headless = mode == "headless"
@@ -178,7 +187,7 @@ def launch_options(profile: Path, mode: str, *, guarded: bool = True) -> dict:
         "args": list(STEALTH),
         "ignore_default_args": list(IGNORED_DEFAULT_ARGS),
         "service_workers": "block" if guarded else "allow",
-        "viewport": {"width": 1280, "height": 900} if headless else None,
+        "viewport": dict(VIEWPORT) if headless or match_headless else None,
         "accept_downloads": False,
         "user_agent": user_agent() if headless else None,
     }
@@ -277,10 +286,10 @@ def run(coro):
 
 @asynccontextmanager
 async def chrome(ident: Identity | None = None, *, mode: str = "headless", guarded: bool = True,
-                 wait: float | None = None) -> AsyncIterator["BrowserContext"]:
+                 wait: float | None = None, match_headless: bool = False) -> AsyncIterator["BrowserContext"]:
     """Launch system Chrome on the identity's profile, holding the profile lock, and yield its context. Always closes
     Chrome. Guarded (everything but chatgpt's sign-in window): the context route aborts every request that doesn't
-    come from the running command's page (page_at), and every WebSocket."""
+    come from the running command's page (page_at), and every WebSocket. match_headless: see launch_options."""
     from playwright.async_api import async_playwright
 
     ident = ident or current()
@@ -289,7 +298,7 @@ async def chrome(ident: Identity | None = None, *, mode: str = "headless", guard
     # DEBUG=pw:protocol (or pw:*, or *) would make Playwright log protocol traffic, request headers and their bearer
     # token included, to stderr, past redaction. Nothing here needs it.
     os.environ.pop("DEBUG", None)
-    options = launch_options(ident.profile, mode, guarded=guarded)
+    options = launch_options(ident.profile, mode, guarded=guarded, match_headless=match_headless)
     async with profile_lock(ident, wait):
         config.private_dir(ident.profile)
         async with async_playwright() as p:
@@ -315,18 +324,18 @@ Ready = Callable[["Page", str], Awaitable[None]]
 @asynccontextmanager
 async def page_at(context: "BrowserContext", policy: Policy | None, *, mode: str = "headless", url: str | None = None,
                   send: bool = False, download: bool = False, sign_in: bool = False, new: bool = False,
-                  ready: Ready | None = None) -> AsyncIterator["Page"]:
+                  ready: Ready | None = None, match_headless: bool = False) -> AsyncIterator["Page"]:
     """One command's page in `context`: Chrome's first tab, or a fresh one closed afterwards (new=True: the daemon's
     long-lived Chrome). The guard's state is this page's for exactly as long as it is yielded: `policy` (None:
     unguarded, chatgpt's sign-in window), send only for `ask` / `-p`, download only for `--image-out`, sign_in only
     for `identity login`. With `url` the page goes there first, then `ready(page, mode)` may refuse it (chatgpt's
     Cloudflare check raises Challenged) before anything is yielded. A policy that lists sockets gets them on this
-    page only, closed when it is done. A headless page presents as Chrome (present_as_chrome) before it loads
-    anything."""
+    page only, closed when it is done. A headless page, or a match_headless visible one, presents as Chrome
+    (present_as_chrome) before it loads anything."""
     page = None
     try:
         page = await context.new_page() if new or not context.pages else context.pages[0]
-        if mode == "headless":
+        if mode == "headless" or match_headless:
             await present_as_chrome(context, page)
         if policy is not None:
             lease = guard.state.begin(policy, send=send, download=download, sign_in=sign_in)
@@ -350,10 +359,10 @@ async def page_at(context: "BrowserContext", policy: Policy | None, *, mode: str
 
 @asynccontextmanager
 async def open_page(policy: Policy | None, *, mode: str = "headless", ident: Identity | None = None,
-                    **page_options) -> AsyncIterator["Page"]:
+                    match_headless: bool = False, **page_options) -> AsyncIterator["Page"]:
     """chrome() + page_at(): a Chrome of this command's own, closed when the page is done."""
-    async with chrome(ident, mode=mode, guarded=policy is not None) as context:
-        async with page_at(context, policy, mode=mode, **page_options) as page:
+    async with chrome(ident, mode=mode, guarded=policy is not None, match_headless=match_headless) as context:
+        async with page_at(context, policy, mode=mode, match_headless=match_headless, **page_options) as page:
             yield page
 
 
