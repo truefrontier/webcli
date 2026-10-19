@@ -21,11 +21,14 @@ REDACTED = "<redacted>"
 # Meta (muse): fb_dtsg / lsd (also the X-FB-LSD header) / jazoest are CSRF tokens, abra_sess / hatch_sess / llm_sess session cookies, datr a
 # device cookie, x-fb-atod-token / x-hatch-gateway-token request headers, nonce, and the account VM's vm_id /
 # vmName / vmAddress (the gateway socket's query and /api/hatch/token's body).
+# Facebook: c_user (the account id) and xs are its session cookies. LinkedIn: li_at and li_rm are its session cookies,
+# JSESSIONID (the csrf-token header's value) is covered by "session".
 SENSITIVE_NAME = re.compile(
     r"cookie|auth|key|token|secret|pass|session|csrf|xsrf|sig|otp|credential|bearer|sentinel|proof|turnstile"
     r"|clearance|device|did$|^did|puid|^__cf|cfuv|account.?id|^s[eptvr]$|^sk[a-z]{1,4}$|^rsc[a-z]$|^ts$|^p$"
     r"|sid|snlm0e|fdrfje|^at$"
-    r"|sess|dtsg|jazoest|lsd|datr|atod|nonce|^vm_?(?:id|name|address)$",
+    r"|sess|dtsg|jazoest|lsd|datr|atod|nonce|^vm_?(?:id|name|address)$"
+    r"|c_user|^xs$|li_at|li_rm",
     re.I,
 )
 # Query parameters that make a link a signed grant (Azure SAS, estuary): when one is present, every value goes.
@@ -134,7 +137,7 @@ def shape(node: Any, *, samples: bool = True, key: str = "") -> Any:
 _FIELD = (r"__(?:secure|host)-[\w.-]+|oai-[\w-]+|openai-sentinel-[\w-]+|cf_clearance|__cf[\w-]*|_cfuvid|_puid"
           r"|[\w-]*device[\w-]*|did|chatgpt-account-id|account_?id|sig|se|sp|sv|sr|st|skoid|sktid|skt|ske|sks|skv"
           r"|at|f\.sid|bl|snlm0e|fdrfje|cfb2h|[\w-]*sapisid[\w-]*|[a-z]{0,2}sid(?:ts|cc)?|nid"
-          r"|fb_dtsg|lsd|jazoest|datr|[\w-]*_sess|[\w-]*nonce[\w-]*|[\w-]*atod[\w-]*|vm_?(?:id|name|address)"
+          r"|fb_dtsg|lsd|jazoest|datr|[\w-]*_sess|[\w-]*nonce[\w-]*|[\w-]*atod[\w-]*|vm_?(?:id|name|address)|c_user|xs|li_at|li_rm"
           r"|[\w.-]*(?:token|secret|passw(?:or)?d|cookie|auth|session|csrf|xsrf|api[_-]?key|sentinel|proof"
           r"|turnstile|sig)[\w.-]*")
 _PAIR = re.compile(r"(?<![\w.-])(" + _FIELD + r")(\s*=\s*)(?:\"[^\"]*\"|'[^']*'|[^&\s;,\"'<>]+)", re.I)

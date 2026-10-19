@@ -15,7 +15,7 @@ import click
 from webcli import __version__
 from webcli.core import browser, daemon, output
 from webcli.core.identities import Identity, resolve
-from webcli.core.output import EXIT_USAGE, die
+from webcli.core.output import EXIT_AUTH, EXIT_USAGE, die
 from webcli.sites.base import Site
 from webcli.sites.llm import env_help
 
@@ -26,6 +26,12 @@ def identity() -> Identity:
 
 def login_hint() -> str:
     return f"a person runs: webcli identity login {identity().id}"
+
+
+def need_profile() -> None:
+    """Exit 4 before any Chrome starts when the identity has no profile yet (nobody has signed it in)."""
+    if not identity().profile_exists():
+        die(f"{identity().id} has no signed-in profile yet.", EXIT_AUTH, hint=login_hint())
 
 
 def _wait_arg(ctx: click.Context, param: click.Parameter, value: float) -> float:
