@@ -29,8 +29,9 @@ HOSTS = ("loom.com", "*.loom.com")
 SIDE_EFFECT_GETS = (("www.loom.com", "/logout"), ("www.loom.com", "/api/logout"))
 # Sign-in: a landing URL holding one of these means signed out (LOOM-CLI).
 SIGNED_OUT_MARKS = ("login", "signup")
-# Login is done once a tab shows one of these (LOOM-CLI).
-SIGNED_IN_PATHS = ("/looms", "/library", "/share/", "/settings")
+# A tab past sign-in shows one of these (LOOM-CLI, minus /share/: a public share page loads signed out). Login also
+# waits for the library query to answer as signed in: a tab can get here before Loom has finished signing in.
+SIGNED_IN_PATHS = ("/looms", "/library", "/settings")
 
 TRANSCRIPT_MARK = "mediametadata/transcription/"  # LOOM-CLI: the phrase file's URL holds this and the video id
 TRANSCRIPT_SECONDS = 25  # LOOM-CLI

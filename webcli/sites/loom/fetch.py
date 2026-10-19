@@ -1,6 +1,9 @@
 """Browser-side work for webcli loom (loom-cli's on the shared core): login, status, the library, one video, and its
 transcript. READ-ONLY.
 
+Signed in means Loom's API answers the library query as signed in (library()): status, login, and `list` all use it.
+A cookie can't show it: a profile can hold connect.sid and still be sent to /login.
+
 `videos` and `video` run the same GraphQL queries Loom's library runs (GetLoomsForLibrary, GetVideoCardDetails) as
 an in-page fetch from the signed-in library (COOKIE). `transcript` opens the share page and reads the official
 phrase file the page fetches for itself (INTERCEPT). Every command but `login` sits behind guard.POLICY, which lets
@@ -66,20 +69,40 @@ async def graphql(page: "Page", name: str, variables: dict) -> dict:
         raise AuthRequired(f"{name}: HTTP {status}. {EXPIRED}")
     if status != 200 or not isinstance(body, dict):
         raise RuntimeError(f"{name} failed (HTTP {status}).{blocked()} {SNIFF_HINT}")
+    if _unauthenticated(body.get("errors")):
+        raise AuthRequired(f"{name}: Loom answered UNAUTHENTICATED. {EXPIRED}")
     if body.get("errors"):
         raise RuntimeError(f"{name} failed: Loom answered with errors; the session may be expired "
                            f"(a person runs `webcli identity login loom:default`). {SNIFF_HINT}")
     return body
 
 
+def _unauthenticated(errors) -> bool:
+    """GraphQL's (Apollo's) error code for "no signed-in user". GUESS for Loom: if it uses another, the answer stays an
+    exit 5 with the sign-in hint. FORBIDDEN is not here: a signed-in account can lack access to one video."""
+    return isinstance(errors, list) and any(isinstance(e, dict) and isinstance(e.get("extensions"), dict)
+                                            and e["extensions"].get("code") == "UNAUTHENTICATED" for e in errors)
+
+
+async def library(page: "Page") -> None:
+    """AuthRequired unless Loom's API answers the query `list` runs (GetLoomsForLibrary) with a library; an empty one
+    counts."""
+    body = await graphql(page, "GetLoomsForLibrary", dict(parse.query("GetLoomsForLibrary").get("variables") or {}))
+    data = body.get("data")
+    if not (isinstance(data, dict) and isinstance(data.get("getLooms"), dict)):
+        raise AuthRequired(f"GetLoomsForLibrary answered without a library. {EXPIRED}")
+
+
 async def status(*, headed: bool = False) -> dict:
-    """{signedIn}: signed in when the library loads without a trip to Loom's sign-in. headed is accepted for the
-    daemon contract; data sites always run headless."""
+    """{signedIn}, plus {reason} when signed out: signed in when the library loads without a trip to Loom's sign-in
+    and Loom's API answers the library query, as `list` needs. headed is accepted for the daemon contract; data sites
+    always run headless."""
     async with browser.site_page(POLICY) as page:
         try:
             await open_app(page)
-        except AuthRequired:
-            return {"signedIn": False}
+            await library(page)
+        except AuthRequired as exc:
+            return {"signedIn": False, "reason": str(exc)}
         return {"signedIn": True}
 
 
@@ -142,19 +165,39 @@ async def transcript(vid: str, *, headed: bool = False) -> list[dict]:
     return parse.phrases(data)
 
 
+async def _library_tab(page: "Page") -> bool:
+    """True once a tab shows the library or settings and Loom's API answers the library query there."""
+    tabs = [p for p in page.context.pages if not p.is_closed()]
+    if not tabs:
+        raise AuthRequired("The Chrome window closed before sign-in finished.")
+    for tab in tabs:  # sign-in may finish in another tab
+        if not parse.signed_in_url(tab.url):
+            continue
+        try:
+            await library(tab)
+        except Exception:  # Loom hasn't finished signing in, or the tab is mid-navigation
+            continue
+        return True
+    return False
+
+
 async def login(timeout: int, on_state: Callable[[str], None] = lambda _state: None) -> dict:
-    """A visible Chrome on Loom's sign-in page with no guard (sign-in may cross Google, Atlassian, or SSO); wait until
-    a tab shows the library, a video, or settings. Needs a person; only `identity login` calls it."""
+    """A visible Chrome on Loom's sign-in page with no guard (sign-in may cross Google, Atlassian, or SSO). Done only
+    once a tab shows the library AND Loom's API answers the library query as signed in: with Google through
+    Atlassian, a tab can reach /looms before Loom has finished signing in, and closing Chrome then can cut it short.
+    Then, with the window closed, a fresh headless Chrome on the same profile (no daemon runs during sign-in) must be
+    signed in too, as every command will be. Needs a person; only `identity login` calls it."""
     on_state("signing in")
     async with browser.open_page(None, mode="visible") as page:
         await page.goto(LOGIN_URL, wait_until="domcontentloaded")
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
-        while loop.time() < deadline:
+        while not await _library_tab(page):
+            if loop.time() >= deadline:
+                raise AuthRequired(f"Timed out after {timeout}s waiting for Loom sign-in.")
             await asyncio.sleep(2)
-            tabs = [p for p in page.context.pages if not p.is_closed()]
-            if not tabs:
-                raise AuthRequired("The Chrome window closed before sign-in finished.")
-            if any(parse.signed_in_url(tab.url) for tab in tabs):
-                return {"signedIn": True}
-        raise AuthRequired(f"Timed out after {timeout}s waiting for Loom sign-in.")
+    info = await status()
+    if not info["signedIn"]:
+        raise AuthRequired("Loom's library loaded in the sign-in window, but a fresh hidden Chrome on the same profile "
+                           f"is signed out: {info['reason']}")
+    return info

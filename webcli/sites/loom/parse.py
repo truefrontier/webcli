@@ -87,5 +87,5 @@ def signed_out_url(url: str) -> bool:
 
 
 def signed_in_url(url: str) -> bool:
-    """A tab that shows the library, a video, or settings: sign-in is done."""
+    """A tab that shows the library or settings: past Loom's sign-in pages (fetch.login also checks the API)."""
     return on_loom(url) and not signed_out_url(url) and urlsplit(url).path.startswith(SIGNED_IN_PATHS)

@@ -31,6 +31,9 @@ Each login opens a visible Chrome window with no request guard, like Muse's: sig
 
 - **LinkedIn:** `GET /voyager/api/me` returns a profile.
 - **Facebook:** Facebook's session cookies `c_user` and `xs` are set (checked by name only), and a tab off the login, checkpoint, and two-factor pages reads as signed in from `/me`. Then the window closes, and a fresh hidden Chrome on the profile must read as signed in too.
+- **Loom:** a tab shows the library or settings, and Loom's API answers the library query (`GetLoomsForLibrary`, what `list` runs) as signed in. A tab can reach `/looms` before Loom has finished signing in, so the URL alone doesn't count, and neither does a public share page. Then the window closes, and a fresh hidden Chrome on the profile must be signed in too.
+
+If the fresh hidden Chrome disagrees, login exits 4 and says what it saw, instead of reporting a sign-in that every later command would reject.
 
 Facebook used to share Muse's `meta:default`. That profile holds Facebook's device cookies (`datr`, `sb`) from Muse's Meta sign-in, but never `c_user` or `xs`, so `webcli facebook status` stayed signed out. Muse stays on `meta:default`.
 
@@ -116,6 +119,8 @@ These are deliberate trade-offs. Each one needs a script running in the command'
 Checked live on 2026-10-19 (read-only, headless, under `window_check`): `linkedin:default` is signed in. `webcli linkedin status` and `webcli linkedin messages list` both exit 0, with 0 windows and no focus change. Before the fix, `status` exited 4 whenever it was the first command on a fresh Chrome. The cause: LinkedIn's csrf token is the JSESSIONID cookie, a session cookie, so a fresh Chrome has none, and robots.txt (where `status`, `boost`, and both writes run) never sets one. Those commands now load the messaging page first when the cookie is missing, as every messaging read already did.
 
 Checked live on 2026-10-19 (read-only, headless): `meta:default` holds a Muse session but no facebook.com session, which is why facebook moved to `facebook:default`. A person runs `webcli identity login facebook:default` before the first `sync`.
+
+Loom, checked 2026-10-19 (headless, read-only; cookie names only): after a Google sign-in through Atlassian, `loom:default` holds Loom's `connect.sid` and `cloud.session.token`, yet `webcli loom list` is still sent to `/login`. Loom's OAuth state cookies were still there, unused, so the sign-in most likely stopped before Loom's callback finished: the old login closed Chrome as soon as a tab's URL started with `/looms`. `loom status` now runs the same library query `list` does, and Loom's GraphQL `UNAUTHENTICATED` exits 4 like a redirect to `/login`. A person runs `webcli identity login loom:default` again.
 
 These come from the source tools and were never checked under webcli's guard:
 

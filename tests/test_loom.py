@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
-from webcli.core import daemon, guard
+from webcli.core import browser, daemon, guard
 from webcli.core.errors import AuthRequired, NotFound
 from webcli.sites.loom import fetch, parse
 from webcli.sites.loom.guard import POLICY, definitions, read_only_document, request_allowed
@@ -127,7 +128,38 @@ def test_signed_out_is_auth_required_and_status_says_so(monkeypatch):
     install(monkeypatch, ScriptedPage(redirects={LIBRARY: "https://www.loom.com/login?redirect=%2Flooms"}))
     with pytest.raises(AuthRequired):
         asyncio.run(fetch.videos())
-    assert asyncio.run(fetch.status()) == {"signedIn": False}
+    assert asyncio.run(fetch.status()) == {"signedIn": False, "reason": "Loom's session is missing or expired. (Loom "
+                                                                        "sent Chrome to www.loom.com/login.)"}
+
+
+UNAUTHENTICATED = {"status": 200, "body": {"data": {"getLooms": None}, "errors": [
+    {"message": "Not authenticated", "extensions": {"code": "UNAUTHENTICATED"}}]}}
+
+
+def test_status_is_what_list_needs_the_library_page_and_the_library_query(monkeypatch):
+    queries = []
+
+    def answer(arg):
+        queries.append(arg[2]["operationName"])
+        return library_page(([], None))[0]  # an empty library is still signed in
+
+    page = install(monkeypatch, ScriptedPage(answers={"res.json()": answer}))
+    assert asyncio.run(fetch.status()) == {"signedIn": True}
+    assert page.gotos == [LIBRARY] and queries == ["GetLoomsForLibrary"] and page.policy is POLICY
+    install(monkeypatch, ScriptedPage(answers={"res.json()": UNAUTHENTICATED}))  # the page loads, the API refuses
+    out = asyncio.run(fetch.status())
+    assert out["signedIn"] is False and "UNAUTHENTICATED" in out["reason"]
+    with pytest.raises(AuthRequired):  # exit 4 for the reads too, not 5
+        asyncio.run(fetch.videos())
+
+
+@pytest.mark.parametrize("code", ["FORBIDDEN", "INTERNAL_SERVER_ERROR", None])
+def test_other_graphql_errors_stay_site_errors(monkeypatch, code):
+    error = {"message": "x", **({"extensions": {"code": code}} if code else {})}
+    install(monkeypatch, ScriptedPage(answers={"res.json()": {"status": 200, "body": {"errors": [error]}}}))
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(fetch.videos())
+    assert not isinstance(caught.value, AuthRequired)
 
 
 def test_video_card_and_a_missing_video(monkeypatch):
@@ -169,12 +201,94 @@ def test_no_transcript_in_time_is_not_found(monkeypatch):
 
 
 @pytest.mark.parametrize(("url", "signed_in"), [
-    ("https://www.loom.com/looms/videos", True), (f"https://www.loom.com/share/{VID}", True),
+    ("https://www.loom.com/looms/videos", True), (f"https://www.loom.com/share/{VID}", False),  # public: signed out too
     ("https://www.loom.com/login", False), ("https://www.loom.com/signup?x=1", False),
     ("https://accounts.google.com/looms", False), ("https://www.loom.com/", False),
 ])
 def test_login_is_done_once_a_tab_shows_the_library(url, signed_in):
     assert parse.signed_in_url(url) is signed_in
+
+
+class Window:
+    """login's visible Chrome, one tab. Each poll reads `pages` once; `script` gives, per poll, the URL the person is on
+    and what the library query answers there, the last entry repeating."""
+
+    def __init__(self, script: list) -> None:
+        self.script, self.polls, self.queries = script, 0, 0
+        self.tab = ScriptedPage(answers={"res.json()": self.answer})
+        self.tab.context, self.tab.is_closed = self, lambda: False
+        self.now = None
+
+    def answer(self, _arg):
+        self.queries += 1
+        return self.now
+
+    @property
+    def pages(self) -> list:
+        self.tab.url, self.now = self.script[min(self.polls, len(self.script) - 1)]
+        self.polls += 1
+        return [self.tab]
+
+
+@pytest.fixture
+def window(monkeypatch):
+    """window(script, after) -> the Window login opens; `after` is the fresh hidden Chrome status() reads afterwards
+    (its ScriptedPage, as installed)."""
+    async def no_sleep(_seconds):
+        pass
+
+    monkeypatch.setattr(fetch.asyncio, "sleep", no_sleep)
+
+    def use(script: list, after: ScriptedPage) -> Window:
+        win = Window(script)
+
+        @asynccontextmanager
+        async def open_page(policy, **options):
+            win.opened = (policy, options)
+            yield win.tab
+
+        monkeypatch.setattr(browser, "open_page", open_page)
+        win.after = install(monkeypatch, after)
+        return win
+
+    return use
+
+
+SIGNED_IN = library_page(([VID], None))[0]
+
+
+def test_login_waits_for_the_api_to_answer_signed_in_then_checks_a_fresh_hidden_chrome(window):
+    win = window([("https://www.loom.com/login", None), ("https://id.atlassian.com/login?x=1", None),
+                  (LIBRARY, UNAUTHENTICATED), (LIBRARY, {"status": 401, "body": None}), (LIBRARY, SIGNED_IN)],
+                 ScriptedPage(answers={"res.json()": SIGNED_IN}))
+    states = []
+    assert asyncio.run(fetch.login(60, states.append)) == {"signedIn": True}
+    assert win.opened == (None, {"mode": "visible"}) and states == ["signing in"]
+    assert win.polls == 5 and win.queries == 3  # the URL alone was never enough
+    assert win.tab.gotos == ["https://www.loom.com/login"]  # the window is never navigated
+    assert win.after.gotos == [LIBRARY] and win.after.policy is POLICY  # then a hidden, guarded Chrome
+
+
+def test_a_public_share_page_is_not_sign_in(window):
+    win = window([(f"https://www.loom.com/share/{VID}", SIGNED_IN)], ScriptedPage(answers={"res.json()": SIGNED_IN}))
+    with pytest.raises(AuthRequired, match="Timed out after 0.05s waiting for Loom sign-in"):
+        asyncio.run(fetch.login(0.05))
+    assert win.queries == 0 and win.after.gotos == []
+
+
+def test_login_fails_when_a_fresh_hidden_chrome_is_signed_out(window):
+    window([(LIBRARY, SIGNED_IN)],
+           ScriptedPage(redirects={LIBRARY: "https://www.loom.com/login?redirect=%2Flooms"}))
+    with pytest.raises(AuthRequired, match="fresh hidden Chrome on the same profile is signed out: .*www.loom.com/login"):
+        asyncio.run(fetch.login(60))
+
+
+def test_login_stops_when_the_window_closes(window, monkeypatch):
+    win = window([(LIBRARY, SIGNED_IN)], ScriptedPage())
+    monkeypatch.setattr(Window, "pages", property(lambda _self: []))
+    with pytest.raises(AuthRequired, match="closed before sign-in finished"):
+        asyncio.run(fetch.login(60))
+    assert win.after.gotos == []
 
 
 # The commands, over a faked daemon.
