@@ -75,12 +75,13 @@ def test_identity_list_and_login_site():
     (Identity("google:work").profile / "Local State").write_text("{}")
     rows = json.loads(CliRunner().invoke(webcli_app.build(), ["identity", "list"]).stdout)
     assert {r["id"]: r["profileExists"] for r in rows} == {"chatgpt:default": False, "google:default": False,
-                                                           "google:work": True, "loom:default": False,
-                                                           "meta:default": False}
+                                                           "google:work": True, "linkedin:default": False,
+                                                           "loom:default": False, "meta:default": False}
     all_sites = list(sites.registry().values())
     assert identities.login_site(Identity("google:work"), all_sites).name == "gemini"
     assert identities.login_site(Identity("chatgpt:default"), all_sites).name == "chatgpt"
     assert identities.login_site(Identity("meta:default"), all_sites).name == "muse"  # facebook borrows it
+    assert identities.login_site(Identity("linkedin:default"), all_sites).name == "linkedin"
     assert identities.login_site(Identity("loom:default"), all_sites).name == "loom"
     with pytest.raises(ConfigError):
         identities.login_site(Identity("slack:default"), all_sites)
@@ -123,21 +124,22 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
     assert report["home"]["fileVault"] == "on" and report["home"]["private"] is True
     assert {i["id"]: i["signedIn"] for i in report["identities"]} == {"chatgpt:default": False,
                                                                       "google:default": False,
+                                                                      "linkedin:default": False,
                                                                       "loom:default": False,
                                                                       "meta:default": False}
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
     assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"],
-                               "webcli": ["aa", "contacts", "facebook", "gmail", "keep", "loom", "photos", "recorder",
-                                          "walkie", "youtube"]}
+                               "webcli": ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom", "photos",
+                                          "recorder", "walkie", "youtube"]}
 
 
 def test_sites_lists_every_llm_site_and_the_data_sites():
     result = CliRunner().invoke(webcli_app.build(), ["sites"])
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"]
-    assert [s["name"] for s in data["webcli"]] == ["aa", "contacts", "facebook", "gmail", "keep", "loom", "photos",
-                                                   "recorder", "walkie", "youtube"]
-    own = {"facebook": "meta", "loom": "loom"}  # the rest are Google's
+    assert [s["name"] for s in data["webcli"]] == ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom",
+                                                   "photos", "recorder", "walkie", "youtube"]
+    own = {"facebook": "meta", "linkedin": "linkedin", "loom": "loom"}  # the rest are Google's
     for site in data["webcli"]:  # aa, walkie: no sign-in, so no identity (none in `identity list` / `doctor` either)
         no_sign_in = site["name"] in ("aa", "walkie")
         provider = own.get(site["name"], "google")

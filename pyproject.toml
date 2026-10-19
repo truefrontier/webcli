@@ -31,6 +31,7 @@ contacts = "webcli.sites.contacts:ADAPTER"
 gmail = "webcli.sites.gmail:ADAPTER"
 loom = "webcli.sites.loom:ADAPTER"
 facebook = "webcli.sites.facebook:ADAPTER"
+linkedin = "webcli.sites.linkedin:ADAPTER"
 
 [tool.hatch.build.targets.wheel]
 packages = ["webcli"]
