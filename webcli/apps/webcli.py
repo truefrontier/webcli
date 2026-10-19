@@ -1,5 +1,5 @@
-"""`webcli`: data sites over your own signed-in, hidden Chrome. Phase 1 ships no data-site adapters yet: identity,
-doctor, sites, serve, and agent-help."""
+"""`webcli`: data sites over your own signed-in, hidden Chrome (or, for aa and walkie, plain HTTPS and local
+SQLite), plus identity, doctor, sites, serve, and agent-help."""
 
 from __future__ import annotations
 
@@ -12,14 +12,16 @@ from webcli.core.output import EXIT_OK, agent_output_options, emit_json, emit_ro
 from webcli.sites.llm import env_help
 
 NOTES = [
-    "Phase 1 has no data-site adapters yet (`webcli sites` lists them as they land); chat AIs live under `llmcli`.",
-    "Every command runs Chrome headless: no window, no Dock icon, no focus change. Only `identity login` and an "
-    "explicit --headed show a window, and login needs a person.",
+    "Each data site is `webcli <site>` (`webcli sites` lists them; `webcli <site> agent-help` has its reference); chat "
+    "AIs live under `llmcli`. aa (a public API) and walkie (local SQLite) need no browser or identity.",
+    "Every command that opens Chrome runs it headless: no window, no Dock icon, no focus change. Only `identity login` "
+    "and an explicit --headed show a window, and login needs a person.",
     "`identity` and `doctor` are shared with `llmcli` (one data home ~/.webcli); either binary manages the same store.",
     "`doctor` reports the data home's H4 hardening (permissions, Time Machine, Spotlight, .nosync), FileVault, and "
     "each identity's profile, daemon, and sign-in (checked headless; --no-browser skips that).",
 ]
-WRITES = ["Nothing yet: data-site write verbs will be dry-run by default (--dry-run / --confirm)."]
+WRITES = ["No data-site verb writes to a site yet; write verbs will be dry-run by default (--dry-run / --confirm). "
+          "Local files a site keeps are in its `agent-help`."]
 
 
 def build() -> click.Group:
@@ -32,7 +34,7 @@ def build() -> click.Group:
     @main.command("sites")
     @agent_output_options()
     def sites_cmd(fmt, compact, select, as_csv, quiet) -> None:
-        """Installed site adapters: chat AIs under llmcli, data sites under webcli (none yet)."""
+        """Installed site adapters: chat AIs under llmcli, data sites under webcli."""
         rows = [site.describe() for site in sites.registry().values()]
         out = "csv" if as_csv else resolve_format(fmt)
         if out == "json" and not (select or compact):

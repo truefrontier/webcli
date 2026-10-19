@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. Phase 1 ships no site adapters yet, only `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity) and `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), plus `identity`, `doctor`, `sites`, and `serve`.
 
 Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
@@ -37,6 +37,11 @@ Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed
 
 Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
 
+`aa` and `walkie` need no sign-in and never open Chrome:
+
+- `aa` calls the Artificial Analysis Free Data API over HTTPS. It needs a free API key in `ARTIFICIAL_ANALYSIS_API_KEY`, or saved with `webcli aa config set-key`. To reuse aanalysis's key: `webcli aa config set-key --key-file ~/.config/artificial-analysis/api_key`.
+- `walkie` reads Walkie.app's local SQLite, read-only, with no network. It finds the database itself, or takes `--db PATH` / `WALKIE_DB`.
+
 ## Use
 
 ```sh
@@ -46,6 +51,8 @@ llmcli gemini ask "Draw a fox" --image-out ~/Downloads/
 llmcli chatgpt chats list --format md
 llmcli muse -p --chat main "What's on my list today?"   # muse: no models, files, or images
 llmcli gemini agent-help --format json          # commands, flags, exit codes, env
+webcli aa digest smart-fast --limit 5           # Artificial Analysis: smart and fast LLMs
+webcli walkie meetings transcript standup --format md
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
 
