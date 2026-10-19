@@ -103,6 +103,8 @@ If a command comes back empty or times out, its error names what the guard block
 python -m webcli.core.capture <site>
 ```
 
+Capture runs headless and pauses the identity's daemon while it runs, as `identity login` does, so it doesn't wait on the profile.
+
 Add an rpcid, method, or host to that site's `endpoints.py` only once you know it is a read.
 
 The version went from 0.1.0 to 0.2.0 for the first four sites, then to 0.3.0 for contacts and gmail. A daemon running an older version restarts on the first new command, which makes it load the new sites.

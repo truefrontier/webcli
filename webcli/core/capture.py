@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlsplit
 
-from webcli.core import browser, config, guard
+from webcli.core import browser, config, daemon, guard
 from webcli.core.output import write_atomic
 from webcli.core.redact import post_body_keys, redact_text, redact_value
 
@@ -89,7 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--headed", action="store_true", help="Show the window (the guard stays on, send off).")
     args = parser.parse_args(argv)
     browser.identity = resolve(sites.get(args.site), args.identity)
-    data = browser.run(probe(args.site, args.url, args.wait, "visible" if args.headed else "headless"))
+    mode = "visible" if args.headed else "headless"
+    # The identity's daemon holds the profile while its Chrome is open: pause it, as `identity login` does.
+    data = browser.run(daemon.paused(browser.identity, lambda: probe(args.site, args.url, args.wait, mode)))
     path = write(args.site, data)
     print(redact_text(json.dumps(data, indent=1)))
     print(f"capture -> {path}", file=sys.stderr)
