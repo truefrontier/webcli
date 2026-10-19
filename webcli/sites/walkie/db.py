@@ -73,6 +73,8 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
     conn.row_factory = sqlite3.Row
     try:
         yield conn
+    except IndexError as exc:  # a column missing from a SELECT * row
+        raise SchemaChanged(f"Walkie's database changed shape ({exc}).") from None
     except sqlite3.OperationalError as exc:
         if str(exc).startswith("no such column"):
             raise SchemaChanged(f"Walkie's database changed shape ({exc}).") from None

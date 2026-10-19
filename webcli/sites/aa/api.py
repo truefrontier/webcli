@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from webcli import __version__
@@ -40,24 +40,46 @@ class APIError(RuntimeError):
     """The API replied with an error, or the network failed (exit 5)."""
 
 
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to https on the same host: urllib copies every header to the new URL, x-api-key
+    included. Any other redirect surfaces as its 3xx HTTPError (exit 5)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        if new.scheme != "https" or new.hostname != old.hostname:
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_urlopen = urllib.request.build_opener(_SameHostRedirects()).open
+
+
 def key_path() -> Path:
     return config.home() / "sites" / "aa" / "api_key"
 
 
-def api_key() -> str:
-    """The configured key; a ConfigError (exit 7) when there is none."""
-    key = os.environ.get(KEY_ENV, "").strip()
-    if not key and key_path().is_file():
-        key = key_path().read_text(encoding="utf-8").strip()
+def _checked(key: str, source: str) -> str:
+    """`key` stripped; a ConfigError (exit 7, naming `source`, never the key) when it is empty or has whitespace or
+    control characters inside (it goes in a header)."""
+    key = key.strip()
     if not key:
-        raise ConfigError("No Artificial Analysis API key configured.", hint=SET_KEY_HINT)
+        raise ConfigError(f"No Artificial Analysis API key in {source}.", hint=SET_KEY_HINT)
+    if not key.isprintable() or any(c.isspace() for c in key):
+        raise ConfigError(f"The API key in {source} has spaces or control characters inside it.", hint=SET_KEY_HINT)
     return key
 
 
+def api_key() -> str:
+    """The configured key; a ConfigError (exit 7) when there is none or it can't be a header value."""
+    if os.environ.get(KEY_ENV, "").strip():
+        return _checked(os.environ[KEY_ENV], f"${KEY_ENV}")
+    if key_path().is_file():
+        return _checked(key_path().read_text(encoding="utf-8"), str(key_path()))
+    raise ConfigError("No Artificial Analysis API key configured.", hint=SET_KEY_HINT)
+
+
 def save_key(key: str) -> Path:
-    key = key.strip()
-    if not key:
-        raise ConfigError("The API key is empty.", hint=SET_KEY_HINT)
+    key = _checked(key, "the input")
     path = config.site_dir("aa") / "api_key"
     write_atomic(path, key + "\n")  # 0600 via mkstemp, renamed into place
     return path
@@ -92,7 +114,7 @@ def get(endpoint: str, params: dict[str, Any] | None = None, *, refresh: bool = 
     request = urllib.request.Request(url, headers={"x-api-key": api_key(), "Accept": "application/json",
                                                    "User-Agent": f"webcli/{__version__}"})
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _urlopen(request, timeout=TIMEOUT) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):

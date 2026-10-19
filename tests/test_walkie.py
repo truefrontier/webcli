@@ -205,9 +205,12 @@ def test_a_changed_schema_exits_5(tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     conn.executescript("CREATE TABLE meetings (id TEXT, title TEXT, started_at INTEGER);"
-                       "CREATE TABLE meeting_segments (id INTEGER, meeting_id TEXT);")
+                       "CREATE TABLE meeting_segments (id INTEGER, meeting_id TEXT);"
+                       "INSERT INTO meetings VALUES ('m1', 'Old', 1700000000000);")
+    conn.commit()
     conn.close()
     assert run("meetings", "list", "--db", str(path)).exit_code == 5
+    assert "changed shape" in error(run("meetings", "show", "m1", "--db", str(path)), 5)["error"]  # SELECT *
 
 
 def test_read_only_and_no_network(db, monkeypatch):

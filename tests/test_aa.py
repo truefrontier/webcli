@@ -7,6 +7,7 @@ import email.message
 import json
 import stat
 import urllib.error
+import urllib.request
 from datetime import datetime
 
 import pytest
@@ -68,7 +69,7 @@ def http(monkeypatch):
             raise reply
         return Reply(json.dumps(reply).encode())
 
-    monkeypatch.setattr(api.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(api, "_urlopen", urlopen)
     return replies
 
 
@@ -185,6 +186,23 @@ def test_the_key_comes_from_the_env_then_the_saved_file(monkeypatch):
     assert api.api_key() == "from-env"
 
 
+def test_a_key_that_cant_be_a_header_is_a_config_error_that_never_shows_it(monkeypatch, http):
+    monkeypatch.setenv(api.KEY_ENV, "aa_short\nX-Evil: 1")
+    result = run("models")
+    assert result.exit_code == 7 and "aa_short" not in result.stdout + result.stderr and http.requests == []
+    monkeypatch.delenv(api.KEY_ENV)
+    assert run("config", "set-key", input="two words\n").exit_code == 7
+
+
+def test_redirects_keep_the_key_on_the_same_https_host_only():
+    request = urllib.request.Request(LLM_URL, headers={"x-api-key": KEY})
+    follow = api._SameHostRedirects().redirect_request
+    moved = follow(request, None, 301, "Moved", {}, f"{api.BASE_URL}/language/models/free/?page=1")
+    assert moved.get_header("X-api-key") == KEY
+    for elsewhere in ("https://evil.example/collect", "http://artificialanalysis.ai/api/v2/language/models/free"):
+        assert follow(request, None, 302, "Found", {}, elsewhere) is None
+
+
 def test_resets_at_reads_retry_after():
     now = datetime(2026, 10, 19, 12, 0, tzinfo=api.RESET_TZ)
     assert api.resets_at("90", now) == "2026-10-19T12:01:30-05:00"
@@ -273,7 +291,7 @@ def test_429_exits_6_rate_limited(http):
 
 
 def test_non_json_reply_exits_5(monkeypatch):
-    monkeypatch.setattr(api.urllib.request, "urlopen", lambda request, timeout: Reply(b"<html>"))
+    monkeypatch.setattr(api, "_urlopen", lambda request, timeout: Reply(b"<html>"))
     assert run("models").exit_code == 5
 
 
