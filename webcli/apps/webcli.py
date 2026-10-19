@@ -14,15 +14,17 @@ from webcli.sites.llm import env_help
 NOTES = [
     "Each data site is `webcli <site>` (`webcli sites` lists them; `webcli <site> agent-help` has its reference); chat "
     "AIs live under `llmcli`. aa (a public API) and walkie (local SQLite) need no browser or identity.",
-    "keep, photos, youtube, and recorder run as google:default, the identity `webcli identity login google:default` "
-    "signs in (through gemini); they have no login of their own.",
+    "keep, photos, youtube, recorder, contacts, and gmail run as google:default, the identity `webcli identity login "
+    "google:default` signs in (through gemini); they have no login of their own.",
     "Every command that opens Chrome runs it headless: no window, no Dock icon, no focus change. Only `identity login` "
     "and an explicit --headed show a window, and login needs a person.",
     "`identity` and `doctor` are shared with `llmcli` (one data home ~/.webcli); either binary manages the same store.",
     "`doctor` reports the data home's H4 hardening (permissions, Time Machine, Spotlight, .nosync), FileVault, and "
     "each identity's profile, daemon, and sign-in (checked headless; --no-browser skips that).",
 ]
-WRITES = ["No data-site verb writes to a site yet; write verbs will be dry-run by default (--dry-run / --confirm). "
+WRITES = ["Two data sites write, and only with --confirm (alias --yes): `contacts label add|remove` (label membership) "
+          "and `gmail filters create|delete` (one filter). Without it each is a dry run that prints what it would "
+          "change and writes nothing; --dry-run with --confirm exits 2. Every other data-site verb is read-only.",
           "Local files a site keeps are in its `agent-help`."]
 
 

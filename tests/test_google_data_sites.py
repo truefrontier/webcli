@@ -1,4 +1,4 @@
-"""What keep, photos, youtube, and recorder share: how they register, that no verb ever asks for a visible Chrome,
+"""What keep, photos, youtube, recorder, contacts, and gmail share: how they register, that no verb ever asks for a visible Chrome,
 that each verb exists with its options, that secrets never reach output, errors, or logs, that the identity daemon
 serves them only on a google identity, and the shared download and save helpers.
 
@@ -36,15 +36,20 @@ from conftest import LaunchStopped, make_profile
 from google_fakes import APIResponse, ScriptedPage
 from test_no_visible_window import assert_hidden
 
-SITES = ("keep", "photos", "youtube", "recorder")
+SITES = ("keep", "photos", "youtube", "recorder", "contacts", "gmail")
 VERBS = {
     "keep": {"list", "get", "info", "search", "status", "agent-help"},
     "photos": {"list", "search", "info", "albums", "download", "status", "agent-help"},
     "youtube": {"history", "status", "agent-help"},
     "recorder": {"list", "info", "search", "transcript", "download", "sync", "status", "agent-help"},
+    "contacts": {"list", "get", "search", "other", "labels", "export", "status", "label", "agent-help"},
+    "gmail": {"filters", "status", "agent-help"},
 }
+SUBVERBS = {("contacts", "label"): {"add", "remove"}, ("gmail", "filters"): {"list", "create", "delete"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
+WRITE = {"--dry-run", "--confirm", "--yes"} | RECORD
+SELECTORS = {"--from-label", "--query", "--ids"}
 # (site, verb, arguments, options)
 WIRING = [
     ("keep", "list", [], {"--limit", "--archived", "--id-only"} | ROWS),
@@ -67,6 +72,20 @@ WIRING = [
     ("recorder", "download", ["RECORDING_ID"], {"--output"} | RECORD),
     ("recorder", "sync", [], {"--output"} | RECORD),
     ("recorder", "status", [], RECORD),
+    ("contacts", "list", [], {"--limit", "--label"} | ROWS),
+    ("contacts", "other", [], {"--limit"} | ROWS),
+    ("contacts", "search", ["QUERY"], {"--limit"} | ROWS),
+    ("contacts", "get", ["ID|EMAIL|PHONE"], RECORD),
+    ("contacts", "labels", [], ROWS),
+    ("contacts", "export", [], {"--format", "--out", "--label", "--limit", "--quiet"}),
+    ("contacts", "status", [], RECORD),
+    ("contacts", "label add", ["LABEL"], SELECTORS | {"--create-missing"} | WRITE),
+    ("contacts", "label remove", ["LABEL"], SELECTORS | WRITE),
+    ("gmail", "filters list", [], {"--limit"} | ROWS),
+    ("gmail", "filters create", [], {"--from", "--to", "--subject", "--query", "--negated-query", "--has-attachment",
+                                     "--skip-inbox", "--mark-as-read", "--star", "--delete-it", "--never-spam"} | WRITE),
+    ("gmail", "filters delete", ["FILTER_ID"], WRITE),
+    ("gmail", "status", [], RECORD),
 ]
 HIDDEN_COMMANDS = [
     ("keep", "list"), ("keep", "search", "picnic"), ("keep", "info", "abc"), ("keep", "get", "abc"),
@@ -79,6 +98,16 @@ HIDDEN_COMMANDS = [
     ("recorder", "list"), ("recorder", "info", "r1"), ("recorder", "search", "standup"),
     ("recorder", "transcript", "r1", "-o", "{tmp}"), ("recorder", "download", "r1", "-o", "{tmp}"),
     ("recorder", "sync", "-o", "{tmp}"), ("recorder", "status"),
+    ("contacts", "list"), ("contacts", "list", "--label", "Newsletter"), ("contacts", "other"),
+    ("contacts", "search", "ada"), ("contacts", "get", "c123"), ("contacts", "get", "ada@example.com"),
+    ("contacts", "labels"), ("contacts", "export"), ("contacts", "status"),
+    ("contacts", "label", "add", "Newsletter", "--ids", "c123"),
+    ("contacts", "label", "remove", "Newsletter", "--from-label", "Old"),
+    # --confirm too: the fake stops at the launch, so nothing is written, and a write's Chrome is hidden as well
+    ("contacts", "label", "add", "Newsletter", "--query", "ada", "--confirm"),
+    ("gmail", "status"), ("gmail", "filters", "list"), ("gmail", "filters", "delete", "1234567890123"),
+    ("gmail", "filters", "delete", "1234567890123", "--confirm"),
+    ("gmail", "filters", "create", "--from", "a@example.com", "--star", "--confirm"),
 ]
 # Synthetic values in the shapes these sites carry. None of these is real.
 PSID = "g.a000testPSIDvalue0123456789abcdefFAKE0076"
@@ -142,7 +171,10 @@ def test_every_verb_launches_hidden_chrome_only(fake_playwright, tmp_path, comma
 
 @pytest.mark.parametrize("name", SITES)
 def test_no_verb_offers_headed_and_headed_true_still_runs_headless(fake_playwright, monkeypatch, name):
-    for verb in sites.get(name).cli().commands.values():
+    todo = list(sites.get(name).cli().commands.values())
+    while todo:  # subgroups too: contacts label, gmail filters
+        verb = todo.pop()
+        todo += getattr(verb, "commands", {}).values()
         assert not any("--headed" in p.opts for p in verb.params), verb.name
     monkeypatch.setattr(browser, "identity", Identity("google:default"))
     fetch = importlib.import_module(sites.get(name).fetch)
@@ -158,6 +190,16 @@ def test_each_site_has_exactly_its_verbs(name):
     group = sites.get(name).cli()
     assert set(group.commands) == VERBS[name]
     assert {"--identity", "--lock-wait", "--version"} <= {o for p in group.params for o in p.opts}
+    for (site, sub), verbs in SUBVERBS.items():
+        if site == name:
+            assert set(group.commands[sub].commands) == verbs
+
+
+def command(name: str, verb: str):
+    found = sites.get(name).cli()
+    for part in verb.split():
+        found = found.commands[part]
+    return found
 
 
 def test_recorder_ships_no_mcp_and_no_skill():
@@ -171,9 +213,9 @@ def test_recorder_ships_no_mcp_and_no_skill():
 
 @pytest.mark.parametrize(("name", "verb", "args", "options"), WIRING, ids=lambda v: v if isinstance(v, str) else "")
 def test_each_verb_has_its_arguments_and_options(name, verb, args, options):
-    command = sites.get(name).cli().commands[verb]
-    assert [p.human_readable_name for p in command.params if p.param_type_name == "argument"] == args
-    flags = {o for p in command.params if p.param_type_name == "option" for o in p.opts if o.startswith("--")}
+    found = command(name, verb)
+    assert [p.human_readable_name for p in found.params if p.param_type_name == "argument"] == args
+    flags = {o for p in found.params if p.param_type_name == "option" for o in p.opts if o.startswith("--")}
     assert flags == options
 
 
@@ -203,7 +245,9 @@ def test_bad_ids_are_usage_errors_before_any_chrome(fake_playwright):
 # Redaction.
 
 @pytest.mark.parametrize("args", [("photos", "download", "AF1QipX", "-o", "{tmp}"), ("keep", "list"),
-                                  ("youtube", "history"), ("recorder", "sync", "-o", "{tmp}")])
+                                  ("youtube", "history"), ("recorder", "sync", "-o", "{tmp}"), ("contacts", "list"),
+                                  ("contacts", "label", "add", "L", "--ids", "c1", "--confirm"),
+                                  ("gmail", "filters", "list"), ("gmail", "filters", "delete", "123", "--confirm")])
 def test_cookies_tokens_and_signed_links_never_reach_output_errors_or_logs(monkeypatch, tmp_path, args):
     async def failing(*_args, **_kwargs):
         raise RuntimeError(f"Fetching failed at {SIGNED}; Cookie: __Secure-1PSID={PSID}; "

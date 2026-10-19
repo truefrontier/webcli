@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), and four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server). Plus `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Plus `identity`, `doctor`, `sites`, and `serve`.
 
 Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
@@ -21,7 +21,7 @@ Each identity is one Chrome profile. There are three:
 
 | Identity | Used by | Profile |
 |---|---|---|
-| `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder` | `~/.webcli/identities/google-default/chrome-profile` |
+| `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
 | `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
 
@@ -37,7 +37,7 @@ Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed
 
 Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
 
-The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, and Recorder. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, or `~/.recorder-cli`.
+The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, Recorder, Contacts, and Gmail. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, `~/.recorder-cli`, `~/.google-contacts-cli`, or `~/.gmail-cli`.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
@@ -59,6 +59,9 @@ webcli keep search picnic --compact             # Google Keep notes (read-only)
 webcli photos download AF1Qip... -o ~/Downloads # the original photo or video file
 webcli youtube history --since 2026-10-01       # exact times from My Activity, else day precision
 webcli recorder sync -o ~/Backups/recorder      # every transcript and audio file
+webcli contacts search ada --compact            # Google Contacts: My Contacts, then Other contacts
+webcli contacts label add Newsletter --from-label "Conference 2026"   # dry run: shows what would change
+webcli gmail filters create --from alerts@example.com --skip-inbox     # dry run: prints the plan
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
 
@@ -78,6 +81,15 @@ The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-fi
 | 6 | rate limited: JSON `{"error":"rate_limited","code":6,"message",...,"resets_at"}` (or `model_fallback` with `--strict-model`) |
 | 7 | config error (config.toml, identity, site) |
 | 128+N | killed by signal N |
+
+## Writes
+
+Only two data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
+
+- `webcli contacts label add|remove LABEL` adds the selected contacts to one of your labels or removes them from it.
+- `webcli gmail filters create|delete` creates one filter or deletes one filter.
+
+Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. Passing `--dry-run` and `--confirm` together exits 2. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; or one filter write, bound to that filter's id or criteria. See [docs/google-data-sites.md](docs/google-data-sites.md).
 
 ## How it stays hidden and private
 
