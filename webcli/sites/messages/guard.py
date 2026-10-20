@@ -6,9 +6,10 @@ conversation or what text.
 
 POLICY (every read):
   - GET/HEAD over https on messages.google.com, Google's static hosts, and fonts.googleapis.com.
-  - The relay (RELAY_READS): the long poll the phone's answers arrive on, its acks, the session's token refresh; and
-    Messaging/SendMessage only when its body reads as exactly one DataEvent action in READ_ACTIONS (listing,
-    thumbnails, the session's presence and active-session calls). CORS preflights (OPTIONS) to those paths.
+  - The relay (RELAY_READS): the long poll the phone's answers arrive on, its acks, the session's token refresh; the
+    app's sign-in and connection check (SESSION_RPCS, on clients6 only); and Messaging/SendMessage only when its
+    body reads as exactly one DataEvent action in READ_ACTIONS (listing, thumbnails, the session's presence and
+    active-session calls). CORS preflights (OPTIONS) to those paths.
   - Everything else is aborted: every other action (MESSAGE_READ, so reading never marks a conversation read;
     TYPING_UPDATES, SEND_MESSAGE, RESEND_MESSAGE, SEND_REACTION, SEND_REPLY, DELETE_MESSAGE, UPDATE_CONVERSATION,
     GET_OR_CREATE_CONVERSATION, settings, group edits), pairing and unpairing, attachment uploads, a body that doesn't
@@ -47,6 +48,8 @@ from webcli.sites.messages.endpoints import (
     RPC_PREFIX,
     SEND_MESSAGE,
     SEND_RPC,
+    SESSION_HOST,
+    SESSION_RPCS,
 )
 
 if TYPE_CHECKING:
@@ -192,11 +195,12 @@ def read_allowed(method: str, url: str, body: bytes | None = None) -> bool:
     if method in ("GET", "HEAD"):
         return any(host_matches(pattern, urlsplit(url).hostname or "") for pattern in HOSTS)
     name = rpc(url)
+    session = name in SESSION_RPCS and urlsplit(url).hostname == SESSION_HOST
     if method == "OPTIONS":
-        return name in RELAY_READS or name == SEND_RPC
+        return name in RELAY_READS or name == SEND_RPC or session
     if method != "POST":
         return False
-    return name in RELAY_READS or (name == SEND_RPC and outgoing_action(body) in READ_ACTIONS)
+    return name in RELAY_READS or session or (name == SEND_RPC and outgoing_action(body) in READ_ACTIONS)
 
 
 def send_allowed(method: str, url: str, body: bytes | None, scope: SendScope | None) -> bool:

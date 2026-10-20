@@ -12,6 +12,7 @@ Status tags:
   GMSG   - what gmsg (google-messages-cli) used against the live app: its URLs and every DOM selector.
   LIBGM  - the web protocol as mautrix-gmessages' libgm implements it (pkg/libgm/util/paths.go, gmproto/rpc.proto,
            session_handler.go): relay hosts, RPC paths, the ActionType numbers, the PBLite body.
+  LIVE   - seen in a capture of the paired app (python -m webcli.core.capture messages).
   GUESS  - UNVERIFIED. Every guess fails closed: a wrong one is blocked and named in the error.
 """
 
@@ -36,11 +37,22 @@ SEND_RPC = "Messaging/SendMessage"  # LIBGM: every phone action, read or write
 # delivery acks, the auth token refresh, and the web key fetch (GUESS: whether the app calls it once paired).
 RELAY_READS = frozenset({"Messaging/ReceiveMessages", "Messaging/AckMessages", "Registration/RegisterRefresh",
                          "Pairing/GetWebEncryptionKey"})
+# LIVE (2026-10-19): two more calls the paired app can't work without. Captures show them on clients6 only, so they
+# are allowed only there. Registration/SignInGaia is the app's sign-in: blocked, the app never shows the list (it
+# gives up on /web/unableToConnect). LIBGM: it returns the session's auth token and the account's device list, and
+# pairs nothing (pairing is the CREATE_GAIA_PAIRING_* actions, which READ_ACTIONS leaves out). Messaging/Echo is the
+# app's connection check: while it fails (retried after 2s, 4s, 8s...), the app sends the phone nothing new, so an
+# opened conversation never asks for its messages.
+SESSION_HOST = "instantmessaging-pa.clients6.google.com"
+SESSION_RPCS = frozenset({"Registration/SignInGaia", "Messaging/Echo"})
 # LIBGM: everything else the relay serves stays blocked: Pairing/RegisterPhoneRelay and RefreshPhoneRelay (a new QR
-# code: only the unguarded login window pairs), Pairing/RevokeRelayPairing (unpair), Registration/SignInGaia
-# (Google-account pairing), and /upload (attachments).
-RPC_NAMES = frozenset({*RELAY_READS, SEND_RPC, "Pairing/RegisterPhoneRelay", "Pairing/RefreshPhoneRelay",
-                       "Pairing/RevokeRelayPairing", "Registration/SignInGaia"})  # named in describe() lines
+# code: only the unguarded login window pairs), Pairing/RevokeRelayPairing (unpair), and /upload (attachments).
+# LIVE, not needed for the list or a conversation, so blocked too: the regional relay instantmessaging-pa-jms-us
+# (Registration/ListIdentities and SignInSecondary, Messaging/Echo and PullMessages), and past the relay the avatars
+# (lh3.googleusercontent.com), the account bar (ogads-pa), web attestation (waa-pa), cookie rotation
+# (accounts.google.com), www.google.com, link previews, GIFs (api.tenor.com), and the app's jserror and telemetry.
+RPC_NAMES = frozenset({*RELAY_READS, *SESSION_RPCS, SEND_RPC, "Pairing/RegisterPhoneRelay",
+                       "Pairing/RefreshPhoneRelay", "Pairing/RevokeRelayPairing"})  # named in describe() lines
 
 DATA_EVENT = 19  # LIBGM BugleRoute.DataEvent: the route every phone action takes
 # LIBGM rpc.proto ActionType, whole, so a blocked action is named.

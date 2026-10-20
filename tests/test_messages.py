@@ -29,6 +29,8 @@ from google_fakes import ScriptedPage
 RPC = "https://instantmessaging-pa.googleapis.com/$rpc/google.internal.communications.instantmessaging.v1."
 RPC_GOOGLE = "https://instantmessaging-pa.clients6.google.com/$rpc/google.internal.communications.instantmessaging.v1."
 SEND = RPC + "Messaging/SendMessage"
+SEND_GOOGLE = RPC_GOOGLE + "Messaging/SendMessage"
+JMS = "https://instantmessaging-pa-jms-us.clients6.google.com/$rpc/google.internal.communications.instantmessaging.v1."
 A = {name: number for number, name in ACTIONS.items()}
 ROWS = [
     {"href": "/web/conversations/101", "name": "Alice Smith", "preview": "See you at 6", "timestamp": "2:14 PM",
@@ -137,7 +139,7 @@ class MessagesWeb:
         self.bubbles = {k: list(v) for k, v in BUBBLES.items()}
         self.title, self.read_back, self.click_sends, self.queued = title, read_back, click_sends, queued
         self.on_button, self.dies_after_send = on_button, dies_after_send
-        self.path, self.thread, self.composed = "/", None, ""
+        self.path, self.thread, self.composed, self.online = "/", None, "", False
         self.fills: list[str] = []
         self.clicks = self.use_here_clicks = 0
         self.wire: list[tuple[str, bool]] = []
@@ -154,10 +156,15 @@ class MessagesWeb:
         async def load(url, **options):
             await goto(url, **options)
             self.path = AUTH_PATH if not self.paired else "/web/conversations"
-            self.page.url = "https://messages.google.com" + self.path
             if self.paired:
+                # As the live app: it signs in and checks its connection first. Without the sign-in it never shows
+                # the list (it gives up on unableToConnect); without the check it asks the phone for no messages.
+                if not self.relay_raw("POST", RPC_GOOGLE + "Registration/SignInGaia", b"[]"):
+                    self.path = "/web/unableToConnect"
+                self.online = self.relay_raw("POST", RPC_GOOGLE + "Messaging/Echo", b"[]")
                 self.relay("LIST_CONVERSATIONS")
                 self.relay_raw("POST", "https://play.google.com/log?format=json", b"[]")  # telemetry
+            self.page.url = "https://messages.google.com" + self.path
 
         self.page.goto = load
 
@@ -170,15 +177,18 @@ class MessagesWeb:
         return ok
 
     def state(self, _s) -> dict:
-        listing = self.paired and self.loads and not self.use_here
+        listing = self.paired and self.loads and not self.use_here and self.path != "/web/unableToConnect"
         return {"path": self.path, "qr": not self.paired, "list": listing, "items": len(self.rows) if listing else 0,
-                "loading": False, "useHere": self.use_here, "messages": len(self.bubbles.get(self.thread, [])),
+                "loading": False, "useHere": self.use_here, "messages": len(self.shown()),
                 "thread": self.thread is not None, "compose": self.thread is not None}
+
+    def shown(self) -> list[dict]:
+        return self.bubbles.get(self.thread, []) if self.online else []
 
     def thread_bubbles(self, _s) -> list[dict]:
         if self.dies_after_send and self.delivered:
             raise RuntimeError("Target page, context or browser has been closed")
-        return list(self.bubbles.get(self.thread, []))
+        return list(self.shown())
 
     def click_use_here(self, _patterns) -> bool:
         self.use_here_clicks += 1
@@ -192,7 +202,8 @@ class MessagesWeb:
             return False
         self.thread, self.path = wanted, f"/web/conversations/{wanted}"
         self.page.url = "https://messages.google.com" + self.path
-        self.relay("LIST_MESSAGES")
+        if self.online:
+            self.relay("LIST_MESSAGES")
         self.relay("MESSAGE_READ")  # opening an unread conversation marks it read on the phone
         if self.queued:
             self.relay(self.queued)  # a message the app still had queued tries to go out
@@ -276,7 +287,23 @@ def test_a_body_that_isnt_exactly_one_data_action_reads_as_none(body):
     ("POST", RPC + "Pairing/RegisterPhoneRelay", b"[]", False),
     ("POST", RPC + "Pairing/RefreshPhoneRelay", b"[]", False),
     ("POST", RPC + "Pairing/RevokeRelayPairing", b"[]", False),
-    ("POST", RPC_GOOGLE + "Registration/SignInGaia", b"[]", False),
+    ("POST", RPC_GOOGLE + "Registration/SignInGaia", b"[]", True),  # the app's sign-in, on clients6
+    ("POST", RPC_GOOGLE + "Messaging/Echo", b"[]", True),  # its connection check
+    ("OPTIONS", RPC_GOOGLE + "Registration/SignInGaia", None, True),
+    ("POST", RPC + "Registration/SignInGaia", b"[]", False),  # only on the host the app calls them on
+    ("POST", RPC + "Messaging/Echo", b"[]", False),
+    ("GET", RPC_GOOGLE + "Messaging/Echo", None, False),
+    ("POST", RPC_GOOGLE.replace("https:", "http:") + "Registration/SignInGaia", b"[]", False),
+    ("POST", RPC_GOOGLE + "Messaging/Echo/x", b"[]", False),
+    ("POST", JMS + "Messaging/Echo", b"[]", False),  # the regional relay: not needed
+    ("POST", JMS + "Registration/ListIdentities", b"[]", False),
+    ("POST", JMS + "Messaging/SendMessage", pblite(A["LIST_CONVERSATIONS"]), False),
+    ("GET", "https://lh3.googleusercontent.com/a/ACg8ocK=s64", None, False),  # avatars: not needed
+    ("POST", "https://ogads-pa.clients6.google.com/$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataService/"
+             "GetAsyncData", b"[]", False),
+    ("POST", "https://waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create", b"[]", False),
+    ("GET", "https://accounts.google.com/RotateCookiesPage?og_pid=1", None, False),
+    ("GET", "https://www.google.com/", None, False),
     ("POST", "https://instantmessaging-pa.googleapis.com/upload", b"x", False),
     ("OPTIONS", SEND, None, True),
     ("OPTIONS", RPC + "Messaging/ReceiveMessages", None, True),
@@ -306,6 +333,24 @@ def test_a_body_that_isnt_exactly_one_data_action_reads_as_none(body):
 ])
 def test_the_read_policy(method, url, body, ok):
     assert request_allowed(method, url, body) is ok
+
+
+@pytest.mark.parametrize(("url", "body"), [
+    (SEND_GOOGLE, pblite(A["SEND_MESSAGE"])),
+    (SEND_GOOGLE, binary(A["SEND_MESSAGE"])),
+    (SEND_GOOGLE, pblite(A["MESSAGE_READ"])),
+    (SEND_GOOGLE, pblite(A["TYPING_UPDATES"])),
+    (SEND_GOOGLE, pblite(A["SEND_REACTION"])),
+    (SEND_GOOGLE, pblite(A["CREATE_GAIA_PAIRING_CLIENT_INIT"])),
+    (SEND_GOOGLE, pblite(A["CREATE_GAIA_PAIRING_CLIENT_FINISHED"])),
+    (SEND_GOOGLE, pblite(A["UNPAIR_GAIA_PAIRING"])),
+    (RPC_GOOGLE + "Pairing/RegisterPhoneRelay", b"[]"),
+    (RPC_GOOGLE + "Pairing/RevokeRelayPairing", b"[]"),
+    ("https://instantmessaging-pa.clients6.google.com/upload", b"x"),
+])
+def test_writes_stay_blocked_on_the_host_the_app_signs_in_on(url, body):
+    assert not request_allowed("POST", url, body)
+    assert not request_allowed("POST", url, body, scope=SendScope())  # an unarmed scope opens nothing
 
 
 def test_a_send_scope_passes_one_send_message_only_while_armed():
