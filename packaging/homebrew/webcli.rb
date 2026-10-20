@@ -7,7 +7,7 @@ class Webcli < Formula
   include Language::Python::Virtualenv
 
   desc "Agent-native CLIs over your own signed-in, hidden Chrome sessions"
-  homepage "https://pypi.org/project/truefrontier-webcli/"
+  homepage "https://github.com/truefrontier/webcli"
   url "https://files.pythonhosted.org/packages/cf/53/37d4e56538a14df7db8790bf030c501d149f188dc16bbb362ac69c129e4a/truefrontier_webcli-0.4.1.tar.gz"
   sha256 "9c1fd2face1706e10dc39cbac0a5b382d805af4378ed3e22a7d119e640d067bb"
   license "MIT"
