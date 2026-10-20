@@ -10,10 +10,10 @@ Both binaries come from one Python package and share one core and one data home,
 ## Install
 
 ```sh
-pipx install webcli        # or: pip install webcli
+pipx install truefrontier-webcli      # or: pip install truefrontier-webcli
 ```
 
-This puts both `webcli` and `llmcli` on your path. (`pip install llmcli` installs the same package — it is a thin alias that depends on `webcli`.) Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
+This puts both the `webcli` and `llmcli` commands on your path. (`pip install llmcli` also works — it is a thin alias that depends on `truefrontier-webcli`.) The PyPI distribution is named `truefrontier-webcli`; the commands stay `webcli` and `llmcli`. With Homebrew: `brew install truefrontier/tap/webcli`. Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
 
 To develop from a checkout instead, see [Develop](#develop).
 
