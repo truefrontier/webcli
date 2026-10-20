@@ -1,26 +1,15 @@
-# webcli Homebrew formula (scaffold).
-#
-# This file is ready to drop into the tap repo truefrontier/homebrew-tap as Formula/webcli.rb.
-# BEFORE PUBLISHING THE TAP:
-#   1. Publish webcli 0.4.0 to PyPI, then fill `url` + `sha256` below from the published sdist
-#      (https://pypi.org/pypi/webcli/0.4.0/json -> urls[].packagetype == "sdist").
-#   2. Re-verify the resource blocks with:  brew update-python-resources Formula/webcli.rb
-#      (pin to whatever pip resolves for the published webcli; the versions below match webcli 0.3.3's lock).
-#   3. Test:  brew install --build-from-source ./Formula/webcli.rb  &&  webcli --help  &&  llmcli --help
-#             brew audit --strict --new truefrontier/tap/webcli
-#
-# Playwright ships NO sdist (wheel-only, platform-specific), so it is vendored as a macOS wheel
-# resource below. webcli drives your installed Google Chrome (channel="chrome"); Playwright's own
-# browser binaries are NOT downloaded by this formula (see caveats).
+# Homebrew formula for truefrontier-webcli (installs the `webcli` and `llmcli` commands).
+# Tap: truefrontier/homebrew-tap.  Install: brew install truefrontier/tap/webcli
+# Playwright ships no sdist (wheel-only), so it is vendored as a macOS wheel resource below;
+# webcli drives your installed Google Chrome (channel="chrome"), see caveats.
 
 class Webcli < Formula
   include Language::Python::Virtualenv
 
-  desc "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidden Chrome sessions"
+  desc "Agent-native CLIs over your own signed-in, hidden Chrome sessions"
   homepage "https://github.com/truefrontier/webcli"
-  # TODO(publish 0.4.0): fill from the published PyPI sdist.
-  url "https://files.pythonhosted.org/packages/source/w/webcli/webcli-0.4.0.tar.gz"
-  sha256 "TODO_FILL_FROM_PUBLISHED_PYPI_SDIST"
+  url "https://files.pythonhosted.org/packages/cd/52/e4aaa7af14f21bae19bf0b7038e45fa9aa7224e4db9bd15190d9a457e5c9/truefrontier_webcli-0.4.0.tar.gz"
+  sha256 "87dfc13e4ae65ddee8f4715323ffe1d2c1de827de0152d49dc57a3766f54d93b"
   license "MIT"
 
   depends_on "python@3.13"

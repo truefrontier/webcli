@@ -1,5 +1,5 @@
 [project]
-name = "llmcli"
+name = "truefrontier-llmcli"
 version = "0.4.0"
 description = "Installs webcli, which provides the llmcli command (chat AIs over your own signed-in Chrome)."
 readme = "README.md"
