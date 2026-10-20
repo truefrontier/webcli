@@ -536,16 +536,26 @@ _NOISE = re.compile(
 _END = re.compile(r"^(… more|\.\.\. more|load more comments|\d+\s+impressions?)$", re.I)
 
 
-def parse_since(value: str | None, *, flag: str = "--since") -> datetime | None:
+_RELATIVE_SINCE = re.compile(r"^(\d+)\s*(m|min|mins|h|hr|hrs|d|day|days|w|wk|wks)$", re.I)
+_RELATIVE_UNIT = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+
+def parse_since(value: str | None, *, flag: str = "--since", now: datetime | None = None) -> datetime | None:
+    """An ISO-8601 time (UTC unless it says otherwise), or a relative one counted back from now: 30m, 48h, 2d, 1w."""
     if not value:
         return None
     raw = value.strip()
+    rel = _RELATIVE_SINCE.fullmatch(raw)
+    if rel:
+        amount = timedelta(**{_RELATIVE_UNIT[rel.group(2)[0].lower()]: int(rel.group(1))})
+        return (now or datetime.now(timezone.utc)) - amount
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(raw)
     except ValueError as exc:
-        raise ValueError(f"Invalid {flag}. Use ISO-8601, for example 2026-10-01 or 2026-10-01T00:00:00Z.") from exc
+        raise ValueError(f"Invalid {flag}. Use ISO-8601 (2026-10-01, 2026-10-01T00:00:00Z) or a relative time "
+                         "(30m, 48h, 2d, 1w).") from exc
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)

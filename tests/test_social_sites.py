@@ -35,14 +35,15 @@ from test_no_visible_window import assert_hidden
 
 SITES = {"linkedin": "linkedin", "facebook": "facebook", "loom": "loom", "messages": "messages"}
 VERBS = {
-    "linkedin": {"messages", "activity", "boost", "post", "status", "agent-help"},
+    "linkedin": {"messages", "activity", "boost", "post", "feed", "posts", "status", "agent-help"},
     "facebook": {"sync", "search", "about", "enrich", "export", "status", "agent-help"},
     "loom": {"list", "info", "transcript", "status", "agent-help"},
     "messages": {"list", "threads", "read", "search", "send", "status", "agent-help"},
 }
 SUBVERBS = {("linkedin", "messages"): {"list", "history", "read", "send"},
             ("linkedin", "activity"): {"comments", "reactions", "posts", "export"},
-            ("linkedin", "boost"): {"list", "stats"}, ("linkedin", "post"): {"create"}}
+            ("linkedin", "boost"): {"list", "stats"}, ("linkedin", "post"): {"create"},
+            ("linkedin", "posts"): {"search", "from", "read"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
 WINDOW = {"--since", "--until"}
@@ -58,6 +59,10 @@ WIRING = [
     ("linkedin", "activity posts", [], {"--limit", "--since"} | ROWS),
     ("linkedin", "activity export", [], {"--limit", "--since", "--out", "--format", "--compact", "--select", "--quiet",
                                          "--csv"}),
+    ("linkedin", "feed", [], {"--limit", "--since", "--ranked"} | ROWS),
+    ("linkedin", "posts search", ["QUERY"], {"--limit", "--since"} | ROWS),
+    ("linkedin", "posts from", ["HANDLE_OR_URL"], {"--limit", "--since"} | ROWS),
+    ("linkedin", "posts read", ["URL_OR_URN"], ROWS),
     ("linkedin", "boost list", [], WINDOW | {"--account"} | ROWS),
     ("linkedin", "boost stats", ["TARGET"], WINDOW | ROWS),
     ("linkedin", "post create", [], {"--text", "--text-file", "--image", "--expect-author", "--dry-run", "--confirm",
@@ -273,6 +278,8 @@ def test_notable_defaults():
 
 @pytest.mark.parametrize("args", [("loom", "info", "not-a-video"), ("facebook", "about", "not a person!"),
                                   ("linkedin", "activity", "posts", "--since", "last tuesday"),
+                                  ("linkedin", "feed", "--since", "yesterday"), ("linkedin", "posts", "search", "  "),
+                                  ("linkedin", "posts", "read", "not-a-post"), ("linkedin", "posts", "from", "a b"),
                                   ("linkedin", "boost", "stats", "nope"),
                                   ("linkedin", "boost", "list", "--since", "2026-10-09", "--until", "2026-10-01"),
                                   ("linkedin", "messages", "send", "x", "--text", "   "),

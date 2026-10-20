@@ -4,6 +4,10 @@ POLICY (every read): GET/HEAD over https on linkedin.com, its subdomains, and it
 Rest.li ?action= and never to sign-out. Every POST, PUT, PATCH, DELETE, and every other host is aborted, so nothing
 a LinkedIn page's own scripts send (mark-as-read, typing, "seen", reactions, telemetry) gets out.
 
+search_policy() is `posts search`'s: the reads, plus the search page's own "next results" request, a POST to
+/flagship-web/rsc-action/actions/pagination that only reads (search_page_allowed: exactly the content-search pager
+and screen, nothing else in the body). No other command allows it, and it writes nothing.
+
 write_policy(scope) is the policy of `messages send --confirm` and `post create --confirm` alone, and only while
 the command's page holds the core guard's send permission. On top of the reads it passes each of the scope's
 writes once, bound to what that command means to write:
@@ -34,7 +38,11 @@ from webcli.sites.linkedin.endpoints import (
     APP_HOST,
     CREATE_PATH,
     HOSTS,
+    PAGINATION_PATH,
+    PAGINATION_QUERY_KEYS,
     REGISTER_PATH,
+    SEARCH_PAGER,
+    SEARCH_SCREEN,
     SEND_PATH,
     SIDE_EFFECT_PATHS,
 )
@@ -169,6 +177,36 @@ def write_policy(scope: WriteScope | None) -> Policy:
 
     def allowed(request: "Request", state: Guard) -> bool:
         return request_allowed(request.method, request.url, _body(request), scope=scope if state.send else None)
+
+    return Policy("linkedin", allowed, _describe)
+
+
+def search_page_allowed(method: str, url: str, body: str | None) -> bool:
+    """The content-search page's own pagination: POST https://www.linkedin.com<PAGINATION_PATH> (query keys only
+    parentSpanId/sduiid) whose JSON body is exactly {pagerId, clientArguments, paginationRequest} for the
+    content-search pager on the search-results screen. A read: it asks for the next results."""
+    parts = urlsplit(url)
+    if method.upper() != "POST" or not _secure(url) or parts.hostname != APP_HOST or parts.path != PAGINATION_PATH:
+        return False
+    if not {k for k, _ in parse_qsl(parts.query, keep_blank_values=True)} <= PAGINATION_QUERY_KEYS:
+        return False
+    data = _json(body)
+    return (set(data) == {"pagerId", "clientArguments", "paginationRequest"} and data.get("pagerId") == SEARCH_PAGER
+            and _get(data, "paginationRequest", "pagerId") == SEARCH_PAGER
+            and _get(data, "clientArguments", "screenId") == SEARCH_SCREEN)
+
+
+def search_policy(passed: list[str] | None = None) -> Policy:
+    """`posts search`: the reads plus search_page_allowed. Never a write: send stays off, and no scope opens.
+    `passed` collects a line for each pagination request let through (for the guard log)."""
+
+    def allowed(request: "Request", state: Guard) -> bool:
+        if read_allowed(request.method, request.url):
+            return True
+        ok = search_page_allowed(request.method, request.url, _body(request))
+        if ok and passed is not None:
+            passed.append(_describe(request))
+        return ok
 
     return Policy("linkedin", allowed, _describe)
 

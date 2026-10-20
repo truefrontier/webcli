@@ -40,6 +40,31 @@ VOYAGER_HEADERS = {"accept": "application/vnd.linkedin.normalized+json+2.1", "x-
 CM_BASE = ORIGIN + "/campaign-manager-api/"  # Boost: GET only
 CM_HEADERS = {"x-restli-protocol-version": "2.0.0", "x-li-lang": "en_US", "accept": "application/json"}
 
+# --- Posts (READ-ONLY: feed, posts search|from|read) ----------------------------------------------------------------
+# Voyager GETs from robots.txt, as the feed and profile pages' own clients make them. The queryIds are LinkedIn's
+# registered GraphQL queries (checked live 2026-10-20); when LinkedIn rotates one, these reads fail with a pointer
+# here. The feed query takes only sortOrder RELEVANCE or MEMBER_SETTING: LinkedIn offers no "Recent" order for it.
+VOYAGER_GQL = VOYAGER + "/graphql"
+MAIN_FEED_QUERY_ID = "voyagerFeedDashMainFeed.923020905727c01516495a0ac90bb475"
+FEED_SORT_ORDER = "MEMBER_SETTING"  # the member's own feed setting (LinkedIn ranks it)
+PROFILE_UPDATES_QUERY_ID = "voyagerFeedDashProfileUpdates.4af00b28d60ed0f1488018948daad822"  # the member share feed
+PROFILE_LOOKUP = VOYAGER + "/identity/dash/profiles?q=memberIdentity&memberIdentity={handle}"
+PROFILE_UPDATES_REST = (VOYAGER + "/identity/profileUpdatesV2?count={count}&start={start}&q=memberShareFeed"
+                        "&moduleKey=member-shares%3Aphone&includeLongTermHistory=true&profileUrn={urn}")
+UPDATE_URL = VOYAGER + "/feed/updatesV2?commentsCount=0&likesCount=0&q=backendUrnOrNss&urnOrNss={urn}"
+# Content search and company pages render as server-driven cards (no Voyager query serves them): read as rendered.
+COMPANY_POSTS_URL = ORIGIN + "/company/{name}/posts/?feedView=all"
+SEARCH_FEED = "FLAGSHIP_SEARCH"  # the search results' card ids: expanded<key>FeedType_FLAGSHIP_SEARCH
+# The search page's own "next results" request: a POST, but a read. Only `posts search` lets it through, and only
+# with exactly this pager and screen (guard.search_page_allowed).
+PAGINATION_PATH = "/flagship-web/rsc-action/actions/pagination"
+PAGINATION_QUERY_KEYS = frozenset({"parentSpanId", "sduiid"})
+SEARCH_PAGER = "com.linkedin.sdui.search.contentSearchResults"
+SEARCH_SCREEN = "com.linkedin.sdui.flagshipnav.search.SearchResultsContent"
+MAX_POSTS = 50  # the hard cap: no post command reads more than this many posts from LinkedIn
+POSTS_PAGE = 25  # posts per Voyager request
+PAGE_PAUSE_MS = 1500  # between requests and scrolls: a person's pace, not a crawl
+
 ME_ACTIVITY = ORIGIN + "/in/me/recent-activity/comments/"  # only finds the vanity; the lists render on /in/<vanity>/
 ACTIVITY_URL = ORIGIN + "/in/{vanity}/recent-activity/{path}/"
 KIND_PATH = {"comments": "comments", "reactions": "reactions", "posts": "all"}

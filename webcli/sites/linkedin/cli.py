@@ -1,5 +1,5 @@
-"""`webcli linkedin`: LinkedIn messages, activity, and Boost stats from your own signed-in, hidden Chrome (limsg
-parity). Read-only except `messages send` and `post create`: dry runs unless --confirm, and refused (exit 4) unless
+"""`webcli linkedin`: LinkedIn messages, activity, the feed and posts, and Boost stats from your own signed-in, hidden
+Chrome (limsg parity). Read-only except `messages send` and `post create`: dry runs unless --confirm, and refused (exit 4) unless
 the signed-in account is the expected author."""
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from webcli.core.output import (
 from webcli.sites import data
 from webcli.sites.linkedin import ADAPTER as SITE
 from webcli.sites.linkedin import author as authors
-from webcli.sites.linkedin import boost, parse
-from webcli.sites.linkedin.endpoints import DEFAULT_EXPECT_AUTHOR, EXPECT_AUTHOR_ENV, MAX_TEXT
+from webcli.sites.linkedin import boost, parse, posts
+from webcli.sites.linkedin.endpoints import DEFAULT_EXPECT_AUTHOR, EXPECT_AUTHOR_ENV, MAX_POSTS, MAX_TEXT
 
 THREAD_FIELDS = ["id", "entityUrn", "peer", "preview", "time", "unread"]
 THREAD_COMPACT = ("id", "peer", "time", "unread", "preview")
@@ -69,8 +69,28 @@ NOTES = [
     "them; run `messages list` first if send can't find a thread.",
     "Times are ISO 8601 UTC. `history` is oldest first (the last --limit messages).",
     "`activity` reads your Recent activity pages (comments, reactions, all posts) as rendered, scrolling for more; "
-    "--since keeps rows at or after an ISO time. `activity export` is {comments, reactions, posts}, or CSV with a "
+    "--since keeps rows at or after a time (ISO 8601, or relative: 48h, 2d). `activity export` is {comments, reactions, posts}, or CSV with a "
     "kind column (--format is the output format there: json|csv).",
+    "`feed`, `posts search`, `posts from`, and `posts read` are READ-ONLY (the guard allows no write). A post row: "
+    "url, urn, author_name, author_handle (a member's handle, else the page URL), author_headline, posted_at (ISO "
+    "8601 UTC, from the post id; null if unknown), text, reactions, comments, reposts (null when LinkedIn doesn't "
+    "show the count: never invented), kind (post|repost|article: an article is a LinkedIn /pulse/ article), and "
+    "original_url (a repost's original post, else null).",
+    f"--limit defaults to 20; at most {MAX_POSTS} (larger values are clamped), and no command reads more than "
+    f"{MAX_POSTS} posts from LinkedIn. --since takes ISO 8601 or a relative time: 30m, 48h, 2d, 1w.",
+    "`feed`: LinkedIn ranks the home feed and its API offers no Recent order, so the posts read (limit + 10, or "
+    f"{MAX_POSTS} with --since) are sorted newest first here; --ranked keeps LinkedIn's order. Ads, promos, and "
+    "carousels are left out.",
+    "`posts search QUERY`: LinkedIn content search sorted by Latest (date posted), narrowed to past-24h, past-week, or "
+    "past-month when --since fits one, then cut at --since here, newest first. Search has no JSON API, so rows are "
+    "read from the rendered cards: the urn/url (and exact posted_at) from the page's own payload when it can be "
+    "matched to the card (else null, with posted_at from the card's \"3h\" label), and counts only as shown. The "
+    "guard lets through the search page's own \"next results\" read and nothing else that isn't a GET.",
+    "`posts from HANDLE_OR_URL`: a member's posts and reposts (handle, linkedin.com/in/HANDLE) through the profile's "
+    "own Voyager query, newest first; or a company page's (company/NAME or its URL) as rendered (the first cards "
+    "only: the page's own pagination is a POST the guard blocks).",
+    "`posts read URL_OR_URN`: one post as an object: urn:li:activity|share|ugcPost:N, or its /feed/update/ or "
+    "/posts/ URL.",
     "`boost` reads your personal Boost ad accounts from Campaign Manager (GET only). `boost stats TARGET` takes "
     "urn:li:share:..., urn:li:activity:..., a feed URL holding one, or a campaign id; one object, not a list. "
     "--since/--until are UTC dates (--until includes that day). Numbers are never invented: see limsg's null rules.",
@@ -90,12 +110,15 @@ WRITES = [
     "The guard lets through exactly the confirmed write, bound to its thread, sender, and text (a post: its image's "
     "upload, then a post with its text and that image); everything else any page sends is blocked.",
     "Never: reactions, comments, connections, mark-as-read, Campaign Manager changes.",
+    "`feed` and `posts` never write: every POST, PUT, PATCH, and DELETE their pages send is blocked (`posts search` "
+    "passes only the search page's own read of the next results).",
     "Local only: `activity export --out` writes a file; ~/.webcli/sites/linkedin/query_ids.json keeps messaging "
     "queryIds.",
 ]
 
-group = data.site_group(SITE, "LinkedIn: messages, activity, Boost stats; send and post are dry runs unless "
-                              "--confirm, and only as the expected author (unofficial). Identity linkedin:default.")
+group = data.site_group(SITE, "LinkedIn: messages, activity, feed and posts, Boost stats; send and post are dry runs "
+                              "unless --confirm, and only as the expected author (unofficial). Identity "
+                              "linkedin:default.")
 
 
 def _call(op: str, *args, **kwargs) -> Any:
@@ -217,7 +240,7 @@ def activity_group() -> None:
 def _activity_command(kind: str, summary: str) -> None:
     @activity_group.command(kind, help=summary)
     @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max rows.")
-    @click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this ISO-8601 time.")
+    @click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this time: ISO 8601, or relative (48h, 2d).")
     @agent_output_options()
     def command(limit, since, **opts) -> None:
         fields = ACTIVITY_FIELDS[kind]
@@ -233,7 +256,7 @@ _activity_command("posts", "Your recent posts and shares (READ-ONLY).")
 
 @activity_group.command("export")
 @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max rows per kind.")
-@click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this ISO-8601 time.")
+@click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this time: ISO 8601, or relative (48h, 2d).")
 @click.option("--out", "out_path", default=None, type=click.Path(dir_okay=False, path_type=Path),
               help="Write to PATH instead of stdout (mode 0600).")
 @click.option("--format", "fmt", type=click.Choice(["json", "csv"]), default="json", show_default=True)
@@ -266,6 +289,106 @@ def activity_export(limit, since, out_path, fmt, compact, select, quiet, as_csv)
     raise SystemExit(EXIT_OK)
 
 
+# --- feed and posts (READ-ONLY) -----------------------------------------------------------------------------------
+
+LIMIT_HELP = f"Max posts (default 20, at most {MAX_POSTS})."
+SINCE_HELP = "Only posts at or after this time: ISO 8601, or relative (30m, 48h, 2d, 1w)."
+
+
+def _posts_since(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    """--since checked here and passed on as an absolute ISO time, so a relative one means the same to the site."""
+    try:
+        since = parse.parse_since(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+    return since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else None
+
+
+def _post_options(f):
+    f = click.option("--since", default=None, callback=_posts_since, help=SINCE_HELP)(f)
+    return click.option("--limit", default=20, show_default=True, type=click.IntRange(1, MAX_POSTS, clamp=True),
+                        help=LIMIT_HELP)(f)
+
+
+def _emit_posts(rows: list[dict], title: str, opts: dict) -> None:
+    emit_rows(rows, title=title, fields=posts.FIELDS, compact_fields=posts.COMPACT, columns=posts.COLUMNS,
+              noun="posts", **opts)
+
+
+@group.command("feed")
+@_post_options
+@click.option("--ranked", is_flag=True, help="Keep LinkedIn's ranked order (default: newest first).")
+@agent_output_options()
+def feed_cmd(limit, since, ranked, **opts) -> None:
+    """Your home feed's posts, newest first (READ-ONLY). LinkedIn's feed has no Recent order: the posts it ranks
+    are read and sorted newest first here; --ranked keeps its order. Ads and promos are left out."""
+    _emit_posts(_call("feed", limit, since, ranked), "LinkedIn feed", opts)
+    raise SystemExit(EXIT_OK)
+
+
+@group.group("posts")
+def posts_group() -> None:
+    """Read-only posts: search, one profile's or company page's, or one post."""
+
+
+def _query_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    if not (value or "").strip():
+        raise click.BadParameter("The search query is empty.")
+    return value.strip()
+
+
+def _author_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    try:
+        posts.parse_author_target(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+    return value.strip()
+
+
+def _post_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    try:
+        return posts.parse_post_target(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+
+
+@posts_group.command("search")
+@click.argument("query", callback=_query_arg)
+@_post_options
+@agent_output_options()
+def posts_search(query, limit, since, **opts) -> None:
+    """Posts matching QUERY, newest first (LinkedIn's date-posted sort; READ-ONLY). --since narrows LinkedIn's
+    date filter (past-24h/week/month) and is applied here too."""
+    _emit_posts(_call("posts_search", query, limit, since), "LinkedIn posts", opts)
+    raise SystemExit(EXIT_OK)
+
+
+@posts_group.command("from")
+@click.argument("handle_or_url", callback=_author_arg)
+@_post_options
+@agent_output_options()
+def posts_from(handle_or_url, limit, since, **opts) -> None:
+    """One member's (handle or linkedin.com/in/ URL) or company page's (company/NAME or its URL) recent posts and
+    reposts, newest first (READ-ONLY)."""
+    _emit_posts(_call("posts_from", handle_or_url, limit, since), "LinkedIn posts", opts)
+    raise SystemExit(EXIT_OK)
+
+
+@posts_group.command("read")
+@click.argument("url_or_urn", callback=_post_arg)
+@agent_output_options()
+def posts_read(url_or_urn, fmt, compact, select, quiet, as_csv) -> None:
+    """One post as an object (READ-ONLY): urn:li:activity:N (or share/ugcPost), or its /feed/update/ or /posts/
+    URL. Exit 3 if you can't see it."""
+    row = _call("post_read", url_or_urn)
+    payload = select_fields(compact_rows([row], posts.COMPACT)[0] if compact else row, select)
+    if as_csv or resolve_format(fmt) == "csv":
+        emit_csv([payload])
+    else:
+        data.emit_record("LinkedIn post", payload, fmt)
+    raise SystemExit(EXIT_OK)
+
+
 # --- boost --------------------------------------------------------------------------------------------------------
 
 @group.group("boost")
@@ -294,9 +417,9 @@ def _cells(rows: list[dict]) -> list[dict]:
 
 def _window_options(f):
     f = click.option("--until", default=None, callback=_since_arg,
-                     help="Analytics end, ISO date or datetime (inclusive day, UTC).")(f)
+                     help="Analytics end, ISO date or datetime (inclusive day, UTC), or relative (2d).")(f)
     return click.option("--since", default=None, callback=_since_arg,
-                        help="Analytics start, ISO date or datetime (UTC).")(f)
+                        help="Analytics start, ISO date or datetime (UTC), or relative (30d).")(f)
 
 
 @boost_group.command("list")

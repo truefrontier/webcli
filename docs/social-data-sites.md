@@ -8,7 +8,7 @@ Only LinkedIn can write, and only two verbs: `messages send` and `post create`. 
 
 | Site | Verbs | Source | Identity | How it reads |
 |---|---|---|---|---|
-| `webcli linkedin` | `messages list`, `messages history`, `messages read`, `activity comments`, `activity reactions`, `activity posts`, `activity export`, `boost list`, `boost stats`, `status`; writes: `messages send`, `post create` | linkedin-messages-cli (limsg) | `linkedin:default` | In-page Voyager and Campaign Manager GETs; Recent activity read from the rendered cards |
+| `webcli linkedin` | `messages list`, `messages history`, `messages read`, `activity comments`, `activity reactions`, `activity posts`, `activity export`, `feed`, `posts search`, `posts from`, `posts read`, `boost list`, `boost stats`, `status`; writes: `messages send`, `post create` | linkedin-messages-cli (limsg) | `linkedin:default` | In-page Voyager and Campaign Manager GETs; Recent activity, post search, and company pages read from the rendered cards |
 | `webcli facebook` | `sync`, `search`, `about`, `enrich`, `export`, `status` | facebook-contacts-cli (fbc) | `facebook:default` | Full page loads read from the DOM; scrolling the Friends tab |
 | `webcli loom` | `list`, `info`, `transcript`, `status` | loom-cli | `loom:default` | Loom's own GraphQL queries in the page; the transcript file the share page fetches |
 
@@ -87,6 +87,17 @@ Every other request is aborted: friending, reactions, comments, messages, "seen"
 
 **LinkedIn reads** may only GET on `linkedin.com`, its subdomains, and `*.licdn.com`, never with a Rest.li `?action=` and never to sign-out. Opening a thread (`messages history`) is read-only: the page's own mark-as-read is blocked.
 
+**LinkedIn feed and posts** (`feed`, `posts search`, `posts from`, `posts read`) run under the same read-only guard; no write scope ever opens for them. `posts search` adds one exception, and only to its own page: the search page's request for the next results, `POST www.linkedin.com/flagship-web/rsc-action/actions/pagination`, with no query keys but `parentSpanId`/`sduiid` and a JSON body of exactly `{pagerId, clientArguments, paginationRequest}` naming the content-search pager on the search-results screen. Every other POST the page sends (reactions, follows, telemetry, its other server actions) is blocked. Each run logs one redacted line to the daemon log: `guard linkedin.<op>: writes allowed 0; blocked N (M non-GET)`, plus the number of pagination reads let through for search.
+
+| Command | Source | Order | Notes |
+|---|---|---|---|
+| `feed [--since] [--limit] [--ranked]` | Voyager GraphQL main feed (`sortOrder:MEMBER_SETTING`) | Newest first, sorted here | LinkedIn's feed API has no Recent order (only ranked). The posts read (limit + 10, or 50 with `--since`) are sorted by time; `--ranked` keeps LinkedIn's order. Ads, promos, and carousels are left out. |
+| `posts search QUERY` | The search page's rendered cards, plus the urns in the page's own payload | Newest first | LinkedIn's `sortBy=date_posted`, narrowed to past-24h / past-week / past-month when `--since` fits, then cut at `--since` here. Counts only as the card shows them (else null). A card whose urn can't be matched keeps url/urn null and an approximate posted_at from its "3h" label. |
+| `posts from HANDLE_OR_URL` | Members: the profile's Voyager share feed (REST fallback). Companies: the posts page's cards | Newest first | Company pages give only their first rendered cards (2-3): their pagination is a POST the guard blocks. |
+| `posts read URL_OR_URN` | Voyager `feed/updatesV2` | One object | `urn:li:activity|share|ugcPost:N`, or a `/feed/update/` or `/posts/` URL. |
+
+Rows: `url, urn, author_name, author_handle (vanity, or the company page URL), author_headline, posted_at (ISO 8601 UTC from the post id; null if unknown), text, reactions, comments, reposts (null when not shown: never a guess), kind (post|repost|article), original_url (a repost's original)`. `--limit` defaults to 20 and is clamped to 50; no command reads more than 50 posts, and scrolling pauses about 1.5 s between pages. `--since` takes ISO 8601 or a relative time (`30m`, `48h`, `2d`, `1w`); `activity` and `boost` take relative times too.
+
 ## Known limits of the guards
 
 These are deliberate trade-offs. Each one needs a script running in the command's own page, or a second process signing the profile in or out mid-command:
@@ -117,6 +128,8 @@ These are deliberate trade-offs. Each one needs a script running in the command'
 ## Unverified until the first live run
 
 Checked live on 2026-10-19 (read-only, headless, under `window_check`): `linkedin:default` is signed in. `webcli linkedin status` and `webcli linkedin messages list` both exit 0, with 0 windows and no focus change. Before the fix, `status` exited 4 whenever it was the first command on a fresh Chrome. The cause: LinkedIn's csrf token is the JSESSIONID cookie, a session cookie, so a fresh Chrome has none, and robots.txt (where `status`, `boost`, and both writes run) never sets one. Those commands now load the messaging page first when the cookie is missing, as every messaging read already did.
+
+Checked live on 2026-10-20 (read-only, headless, `linkedin:default`): `feed --since 48h --limit 5`, `posts search "AI agents" --since 48h --limit 5`, `posts from <handle> --limit 3`, a company page, and `posts read` on a search result's URL all returned rows with every field; each run's guard line read `writes allowed 0`. LinkedIn's feed, search, and activity pages are server-driven (their own data calls are POSTs the guard blocks), and its Voyager API has no Recent feed order and no content search: hence the client-side feed sort, and search read from its cards and its page payload.
 
 Checked live on 2026-10-19 (read-only, headless): `meta:default` holds a Muse session but no facebook.com session, which is why facebook moved to `facebook:default`. A person runs `webcli identity login facebook:default` before the first `sync`.
 

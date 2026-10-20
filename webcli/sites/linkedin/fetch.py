@@ -13,6 +13,12 @@ The writes (`send`, `post`) run only with confirm=True, and only then open their
 write_policy(scope): the guard lets through just that command's writes. Before the first write, the signed-in author
 must be the expected one (author.py), and is read again right before the last write; a mismatch writes nothing.
 Writes go out once each, never retried, never following a redirect.
+
+The post reads (`feed`, `posts from`, `posts read`) are Voyager GETs on robots.txt, the queries LinkedIn's own feed
+and profile pages make. `posts search` (and `posts from` a company page) read the rendered result cards: LinkedIn
+serves content search only as server-driven cards, and the guard lets through just the search page's own "next
+results" request (guard.search_policy). Each post read logs one guard line: what was blocked, and that no write was
+allowed. At most MAX_POSTS posts per command, with a pause between requests.
 """
 
 from __future__ import annotations
@@ -29,13 +35,26 @@ from webcli.core import browser, config, guard
 from webcli.core.errors import AuthRequired, NotFound, UsageError
 from webcli.core.output import write_atomic
 from webcli.sites.linkedin import author as authors
-from webcli.sites.linkedin import boost, parse
+from webcli.sites.linkedin import boost, parse, posts
 from webcli.sites.linkedin.endpoints import (  # APP_URL and POLICY: what `python -m webcli.core.capture` reads
     ACTIVITY_URL,
     APP_URL,
     AUTH_WALL,
     CM_BASE,
     CM_HEADERS,
+    COMPANY_POSTS_URL,
+    FEED_SORT_ORDER,
+    MAIN_FEED_QUERY_ID,
+    MAX_POSTS,
+    PAGINATION_PATH,
+    PAGE_PAUSE_MS,
+    POSTS_PAGE,
+    PROFILE_LOOKUP,
+    PROFILE_UPDATES_QUERY_ID,
+    PROFILE_UPDATES_REST,
+    SEARCH_FEED,
+    UPDATE_URL,
+    VOYAGER_GQL,
     CREATE_PATH,
     CREATE_URL,
     CSRF_MS,
@@ -57,7 +76,7 @@ from webcli.sites.linkedin.endpoints import (  # APP_URL and POLICY: what `pytho
     THREAD_URL,
     VOYAGER_HEADERS,
 )
-from webcli.sites.linkedin.guard import POLICY, WriteScope, write_policy
+from webcli.sites.linkedin.guard import POLICY, WriteScope, search_policy, write_policy
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -475,6 +494,295 @@ async def export(limit: int = 20, since: str | None = None, *, headed: bool = Fa
         vanity = await _vanity(page)
         return {kind: await _collect(page, vanity, kind, limit=limit, since=parse.parse_since(since))
                 for kind in KIND_PATH}
+
+
+# --- Posts (READ-ONLY: feed, posts search|from|read) ----------------------------------------------------------------
+
+CARDS_READY_JS = r"""(feedType) => [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
+  .some(el => (!feedType || el.id.includes(feedType)) && el.querySelector('[data-view-name="feed-actor"]'))"""
+
+# A rendered post card (search results, company pages): the author block, the commentary, the counts the action bar
+# shows, and any post id its markup carries. Text only; nothing is clicked.
+POST_CARD_JS = r"""(feedType) => {
+  const txt = el => ((el && el.innerText) || '').trim();
+  const lines = el => txt(el).split('\n').map(s => s.trim()).filter(Boolean);
+  const cards = [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
+    .filter(el => !feedType || el.id.includes(feedType));
+  const seen = new Set();
+  const out = [];
+  for (const card of cards) {
+    if (seen.has(card.id)) continue;
+    seen.add(card.id);
+    const actor = [...card.querySelectorAll('a[data-view-name="feed-actor"]')].find(a => txt(a));
+    let block = actor;
+    for (let el = actor && actor.parentElement; el && el !== card
+         && !el.querySelector('[data-view-name="feed-commentary"]'); el = el.parentElement) block = el;
+    const commentary = [...card.querySelectorAll('[data-view-name="feed-commentary"]')]
+      .filter(el => !el.parentElement.closest('[data-view-name="feed-commentary"]'));
+    const actorName = actor ? lines(actor)[0] || '' : '';
+    const all = lines(card);
+    const at = all.indexOf(actorName);
+    const button = name => txt(card.querySelector(`[data-view-name="${name}"]`));
+    out.push({
+      actorName, actorHref: actor ? (actor.getAttribute('href') || '').split('?')[0] : '',
+      actorLines: block ? lines(block) : [],
+      header: (at > 0 ? all.slice(0, at) : []).filter(s => s !== 'Feed post').slice(-3),
+      text: commentary.length ? txt(commentary[0]) : '',
+      reactions: button('reaction-button'), comments: button('feed-comment-button'), reposts: button('feed-share-button'),
+      articleLinks: [...card.querySelectorAll('a[data-view-name="feed-article"]')].map(a => a.getAttribute('href') || ''),
+      links: [...card.querySelectorAll('a')].map(a => (a.getAttribute('href') || '').split('?')[0]).filter(Boolean),
+      ids: (card.outerHTML.match(/urn(?::|%3A)li(?::|%3A)(?:activity|share|ugcPost)(?::|%3A)\d+|(?:shareId|ugcPostId|activityId)=\d+/g) || []).join(' '),
+    });
+  }
+  return out;
+}"""
+QUERY_MOVED = ("LinkedIn's {what} query answered without posts ({detail}); LinkedIn may have rotated its queryId. "
+               "Update {name} in webcli/sites/linkedin/endpoints.py (`python -m webcli.core.capture linkedin` shows "
+               "the page's own queries).")
+
+
+def _guard_log(op: str, passed: list[str] | None = None) -> None:
+    """One redacted daemon-log line per post read: what the guard blocked (the page's own beacons, mostly), and that
+    no write went out. passed: the read-only search pagination requests let through."""
+    from webcli.core.daemon import log
+
+    blocked = list(guard.state.blocked)
+    writes = [line for line in blocked if not line.startswith(("GET ", "HEAD ", "WS "))]
+    shown = ", ".join(list(dict.fromkeys(blocked))[:8])
+    log(f"guard linkedin.{op}: writes allowed 0; blocked {len(blocked)} ({len(writes)} non-GET)"
+        + (f"; search pagination reads allowed {len(passed)}" if passed is not None else "")
+        + (f": {shown}" if shown else ""))
+
+
+def _gql_rows(status: int, data: Any, what: str, name: str) -> list[dict]:
+    if status in (-1, 302, 401, 403):
+        raise AuthRequired(f"{EXPIRED} (Voyager {what}: HTTP {status})")
+    if status != 200 or not isinstance(data, dict) or data.get("errors") or _gql_errors(data):
+        detail = f"HTTP {status}" if status != 200 else "errors"
+        raise RuntimeError(QUERY_MOVED.format(what=what, detail=detail, name=name))
+    return posts.updates(data)
+
+
+def _gql_errors(data: dict) -> bool:
+    inner = data.get("data")
+    return isinstance(inner, dict) and bool(inner.get("errors")) and not inner.get("data")
+
+
+async def _pause(page: "Page") -> None:
+    await page.wait_for_timeout(PAGE_PAUSE_MS)
+
+
+async def feed(limit: int = 20, since: str | None = None, ranked: bool = False, *, headed: bool = False) -> list[dict]:
+    """Your home feed's posts (ads, promos, and carousels left out). LinkedIn ranks the feed and offers no Recent
+    order: without `ranked` the posts read are sorted newest first here. With --since, up to MAX_POSTS are read."""
+    since_dt = parse.parse_since(since)
+    window = MAX_POSTS if since_dt else min(MAX_POSTS, limit + 10)
+    rows: list[dict] = []
+    read, token = 0, None
+    async with browser.site_page(POLICY) as page:
+        await land(page)
+        while read < window:
+            count = min(POSTS_PAGE, window - read)
+            more = f",paginationToken:{quote(token, safe='')}" if token else ""
+            url = (f"{VOYAGER_GQL}?variables=(start:{read},count:{count}{more},sortOrder:{FEED_SORT_ORDER})"
+                   f"&queryId={MAIN_FEED_QUERY_ID}")
+            status, data = await voyager_get(page, url)
+            page_rows = _gql_rows(status, data, "feed", "MAIN_FEED_QUERY_ID")
+            pointers = posts.element_urns(data)
+            read += len(pointers)
+            rows += [r for r in page_rows if r["urn"] not in {x["urn"] for x in rows}]
+            token = posts.pagination_token(data)
+            if len(pointers) < count or (ranked and not since_dt and len(rows) >= limit):
+                break
+            await _pause(page)
+    _guard_log("feed")
+    rows = posts.apply_since(rows, since_dt)
+    return (rows if ranked else posts.newest_first(rows))[:limit]
+
+
+async def _profile_urn(page: "Page", handle: str) -> str:
+    status, data = await voyager_get(page, PROFILE_LOOKUP.format(handle=quote(handle, safe="")))
+    urn = posts.profile_urn(data, handle) if status == 200 else None
+    if status not in (200, 400, 404):
+        _check(status, [], "/identity/dash/profiles", "profile")
+    if urn is None:
+        raise NotFound(f"No LinkedIn member {handle!r}.", hint="Pass the handle from linkedin.com/in/HANDLE/.")
+    return urn
+
+
+async def _member_posts(page: "Page", handle: str, limit: int, since_dt: datetime | None) -> list[dict]:
+    urn = await _profile_urn(page, handle)
+    rows: list[dict] = []
+    read, token, rest = 0, None, False
+    while read < MAX_POSTS:
+        count = min(POSTS_PAGE, MAX_POSTS - read)
+        if not rest:
+            more = f",paginationToken:{quote(token, safe='')}" if token else ""
+            url = (f"{VOYAGER_GQL}?variables=(count:{count},start:{read},profileUrn:{quote(urn, safe='')}{more})"
+                   f"&queryId={PROFILE_UPDATES_QUERY_ID}")
+            status, data = await voyager_get(page, url)
+            if status in (-1, 302, 401, 403):
+                raise AuthRequired(f"{EXPIRED} (Voyager profile updates: HTTP {status})")
+            rest = status != 200 or not isinstance(data, dict) or bool(data.get("errors")) or _gql_errors(data)
+        if rest:  # the GraphQL query moved: the REST list the profile page used to call still answers
+            status, data = await voyager_get(page, PROFILE_UPDATES_REST.format(count=count, start=read,
+                                                                               urn=quote(urn, safe="")))
+            if status != 200:
+                _check(status, rows, "/identity/profileUpdatesV2", "profile updates")
+                break
+        page_rows = posts.updates(data)
+        pointers = posts.element_urns(data)
+        read += len(pointers)
+        rows += [r for r in page_rows if r["urn"] not in {x["urn"] for x in rows}]
+        token = posts.pagination_token(data)
+        recent = posts.apply_since(rows, since_dt)
+        older = since_dt is not None and any(r.get("posted_at") and r not in recent for r in page_rows)
+        if len(pointers) < count or len(recent) >= limit or older:
+            break
+        await _pause(page)
+    return rows
+
+
+async def _await_cards(page: "Page", feed_type: str | None) -> None:
+    """Let the first result cards render (up to ~10s) instead of reading a half-hydrated page."""
+    try:
+        await page.wait_for_function(CARDS_READY_JS, arg=feed_type, timeout=10000)
+    except Exception:  # noqa: BLE001 - no cards in time: read whatever is there
+        pass
+    await page.wait_for_timeout(1000)
+
+
+def _capture_flight(page: "Page", paths: tuple[str, ...]) -> dict[str, Any]:
+    """Keep the bodies of the page's own document and pagination responses (already fetched by the page; nothing
+    extra is requested) so their payload can supply the urns the cards don't show. Bodies stay in memory, unlogged."""
+    pending: list[asyncio.Future] = []
+    capture: dict[str, Any] = {"page": page, "pending": pending, "started": 0}
+
+    def started(request: Any) -> None:
+        if urlsplit(request.url).path in paths:
+            capture["started"] += 1
+
+    def failed(request: Any) -> None:  # blocked or dropped: nothing will finish
+        if urlsplit(request.url).path in paths:
+            capture["started"] -= 1
+
+    async def body(request: Any) -> list[tuple[str, str]]:
+        try:
+            response = await request.response()
+            return posts.flight_posts((await response.body()).decode("utf-8", "replace")) if response else []
+        except Exception:  # noqa: BLE001 - a body we can't read just leaves those urns null
+            return []
+
+    def finished(request: Any) -> None:
+        if urlsplit(request.url).path in paths:
+            pending.append(asyncio.ensure_future(body(request)))
+
+    page.on("request", started)
+    page.on("requestfinished", finished)
+    page.on("requestfailed", failed)
+    return capture
+
+
+async def _flight_pairs(capture: dict[str, Any]) -> list[tuple[str, str]]:
+    """The captured pairs, after letting a still-streaming pagination response finish (up to ~6s)."""
+    pending = capture["pending"]
+    for _ in range(24):
+        if len(pending) >= capture["started"]:
+            break
+        await capture["page"].wait_for_timeout(250)
+    pairs: dict[str, str] = {}
+    for result in await asyncio.gather(*pending, return_exceptions=True) if pending else []:
+        for urn, url in result if isinstance(result, list) else []:
+            pairs.setdefault(urn, url)
+    return list(pairs.items())
+
+
+async def _scroll_cards(page: "Page", feed_type: str | None, want: int) -> list[dict]:
+    """The rendered post cards, scrolling (a person's pace) until `want`, MAX_POSTS, or two scrolls bring nothing."""
+    found = await page.evaluate(POST_CARD_JS, feed_type)
+    stable = 0
+    while len(found) < min(want, MAX_POSTS) and stable < 2:
+        before = len(found)
+        await page.mouse.wheel(0, 3200)
+        await page.evaluate(SCROLL_JS)
+        await _pause(page)
+        found = await page.evaluate(POST_CARD_JS, feed_type)
+        stable = stable + 1 if len(found) <= before else 0
+    return [card for card in found if isinstance(card, dict)][:MAX_POSTS]
+
+
+async def _company_posts(page: "Page", name: str, limit: int, since_dt: datetime | None) -> list[dict]:
+    url = COMPANY_POSTS_URL.format(name=quote(name, safe=""))
+    pending = _capture_flight(page, (urlsplit(url).path,))
+    await open_li(page, url)
+    await _await_cards(page, None)
+    if auth_wall(page.url):
+        raise AuthRequired(EXPIRED)
+    found = await _scroll_cards(page, None, MAX_POSTS if since_dt else limit)
+    if not found and "/company/" not in page.url:
+        raise NotFound(f"No LinkedIn company page {name!r}.")
+    return posts.attach_flight(posts.cards(found, now=datetime.now(timezone.utc)), await _flight_pairs(pending))
+
+
+async def posts_from(target: str, limit: int = 20, since: str | None = None, *, headed: bool = False) -> list[dict]:
+    """One member's (or company page's) recent posts and reposts, newest first."""
+    try:
+        kind, name = posts.parse_author_target(target)
+    except ValueError as exc:
+        raise UsageError(str(exc)) from None
+    since_dt = parse.parse_since(since)
+    async with browser.site_page(POLICY) as page:
+        if kind == "member":
+            await land(page)
+            rows = await _member_posts(page, name, limit, since_dt)
+        else:
+            rows = await _company_posts(page, name, limit, since_dt)
+    _guard_log("posts_from")
+    return posts.newest_first(posts.apply_since(rows, since_dt))[:limit]
+
+
+async def posts_search(query: str, limit: int = 20, since: str | None = None, *, headed: bool = False) -> list[dict]:
+    """Content search, sorted by LinkedIn's "Latest" (date posted), narrowed to past-24h/week/month when --since fits
+    one, then cut at --since here. Read from the rendered result cards (urns from the page's own payload), newest first."""
+    query = (query or "").strip()
+    if not query:
+        raise UsageError("The search query is empty.")
+    since_dt = parse.parse_since(since)
+    now = datetime.now(timezone.utc)
+    passed: list[str] = []
+    async with browser.site_page(search_policy(passed)) as page:
+        pending = _capture_flight(page, ("/search/results/content/", PAGINATION_PATH))
+        await open_li(page, posts.search_url(query, since_dt, now=now))
+        await _await_cards(page, SEARCH_FEED)
+        if auth_wall(page.url):
+            raise AuthRequired(EXPIRED)
+        found = await _scroll_cards(page, SEARCH_FEED, MAX_POSTS if since_dt else limit)
+        pairs = await _flight_pairs(pending)
+    _guard_log("posts_search", passed)
+    rows = posts.attach_flight(posts.cards(found, now=now), pairs)
+    return posts.newest_first(posts.apply_since(rows, since_dt))[:limit]
+
+
+async def post_read(target: str, *, headed: bool = False) -> dict:
+    """One post: URL_OR_URN (urn:li:activity|share|ugcPost:N, or its /feed/update/ or /posts/ URL)."""
+    try:
+        urn = posts.parse_post_target(target)
+    except ValueError as exc:
+        raise UsageError(str(exc)) from None
+    async with browser.site_page(POLICY) as page:
+        await land(page)
+        status, data = await voyager_get(page, UPDATE_URL.format(urn=quote(urn, safe="")))
+    _guard_log("post_read")
+    if status in (-1, 302, 401):
+        raise AuthRequired(f"{EXPIRED} (Voyager update: HTTP {status})")
+    if status in (403, 404, 410):
+        raise NotFound(f"No post {urn} you can see (HTTP {status}).")
+    if status != 200:
+        raise RuntimeError(f"Voyager update failed (HTTP {status}) for {urn}.")
+    rows = posts.updates(data)
+    if not rows:
+        raise NotFound(f"No post {urn} you can see.")
+    return next((r for r in rows if r["urn"] == urn), rows[0])
 
 
 # --- Boost (READ-ONLY: GET only, on robots.txt) -------------------------------------------------------------------
