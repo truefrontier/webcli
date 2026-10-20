@@ -441,7 +441,7 @@ def test_agent_help_json_lists_every_command_flag_and_exit_code():
         thinking = next(o for o in by_name[name]["options"] if o["flags"] == ["--thinking"])
         assert thinking["choices"] == ["low", "medium", "high", "l", "m", "h"]
     assert next(o for o in by_name["chats list"]["options"] if "--limit" in o["flags"])["default"] == 50
-    assert sorted(ref["exitCodes"]) == ["0", "129", "130", "143", "2", "3", "4", "5", "6", "7"]
+    assert sorted(ref["exitCodes"]) == ["0", "129", "130", "143", "2", "3", "4", "5", "6", "7", "8"]
     assert set(ref["env"]) == {"LLMCLI_FORMAT", "WEBCLI_LOCK_WAIT", "WEBCLI_IDENTITY", "WEBCLI_DAEMON",
                                "WEBCLI_SERVE_RECYCLE_HOURS", "WEBCLI_HOME"}
     assert ref["version"] == __version__ and ref["writes"] == cli.WRITES

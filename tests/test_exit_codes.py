@@ -16,7 +16,7 @@ from webcli.sites.chatgpt import fetch as chatgpt_fetch
 from webcli.sites.gemini import fetch as gemini_fetch
 from conftest import make_profile
 
-CODES = {"0", "2", "3", "4", "5", "6", "7", "129", "130", "143"}
+CODES = {"0", "2", "3", "4", "5", "6", "7", "8", "129", "130", "143"}
 RESETS = "2026-10-19T13:53:00-05:00"
 FETCH = {"gemini": gemini_fetch, "chatgpt": chatgpt_fetch}
 ANSWER = {"chatId": None, "chatUrl": None, "prompt": "q", "answer": "4", "imageCount": 0, "model": None,
@@ -54,6 +54,7 @@ def test_every_agent_help_lists_the_whole_table(app, args):
     assert ref["exitCodes"]["7"].startswith("config error")
     assert "hidden_browser_blocked" in ref["exitCodes"]["4"]
     assert ref["errorShapes"]["rate_limited"]["code"] == 6 and "resets_at" in ref["errorShapes"]["rate_limited"]
+    assert "sent_unverified" in ref["exitCodes"]["8"] and ref["errorShapes"]["sent_unverified"]["code"] == 8
 
 
 @pytest.mark.parametrize("site", ["gemini", "chatgpt"])

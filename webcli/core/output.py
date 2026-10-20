@@ -1,7 +1,7 @@
 """Agent-native output for both binaries and every site (ported from gweb/cgpt agent_ux.py).
 
 Exit codes: the unified table in EXIT_CODES (0 ok, 2 usage, 3 not found, 4 sign-in, 5 site/network, 6 rate limited,
-7 config, 128+N killed by signal N).
+7 config, 8 sent but not verified, 128+N killed by signal N).
 Output: an explicit --format wins, then $LLMCLI_FORMAT / $WEBCLI_FORMAT (whichever binary is running), then JSON
 when stdout is not a TTY.
 Errors: JSON on stderr when stderr is not a TTY or the format env is json (tmux panes are TTYs).
@@ -43,6 +43,7 @@ EXIT_AUTH = 4
 EXIT_API = 5
 EXIT_RATE_LIMITED = 6
 EXIT_CONFIG = 7
+EXIT_SENT_UNVERIFIED = 8
 EXIT_CODES = {
     EXIT_OK: "ok (also a fallback to another model without --strict-model: JSON has fallback true; and an image reply "
              "without --image-out: nothing saved, JSON has imageHint)",
@@ -58,6 +59,9 @@ EXIT_CODES = {
                        "and the site answered with another model (error \"model_fallback\", requestedModel, "
                        "servedModel)",
     EXIT_CONFIG: "config error: missing or invalid config.toml, identity, or site (error names what to fix)",
+    EXIT_SENT_UNVERIFIED: "sent but not verified (error \"sent_unverified\"): a confirmed write went out, but the site "
+                          "didn't show it afterwards (`messages send`: the conversation didn't show the text). Check "
+                          "it (`webcli messages read <thread>`); don't send it again",
     128 + 1: "killed by SIGHUP (command cancelled, its Chrome tab closed)",
     128 + 2: "Ctrl-C",
     128 + 15: "killed by SIGTERM (command cancelled, its Chrome tab closed)",
@@ -70,6 +74,8 @@ ERROR_SHAPES = {
                        "requestedModel": "<slug>", "servedModel": "<slug>", "hint": "<what to do>"},
     "hidden_browser_blocked": {"error": "hidden_browser_blocked", "code": EXIT_AUTH, "message": "<what happened>",
                                "hint": "<run identity login>"},
+    "sent_unverified": {"error": "sent_unverified", "code": EXIT_SENT_UNVERIFIED, "message": "<what went out>",
+                        "hint": "<how to check, instead of sending again>"},
 }
 # Which binary is running: set by apps.llmcli / apps.webcli before anything prints.
 APP = "webcli"

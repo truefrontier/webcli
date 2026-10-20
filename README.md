@@ -100,6 +100,7 @@ The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-fi
 | 5 | site or network error |
 | 6 | rate limited: JSON `{"error":"rate_limited","code":6,"message",...,"resets_at"}` (or `model_fallback` with `--strict-model`) |
 | 7 | config error (config.toml, identity, site) |
+| 8 | sent but not verified: a confirmed write went out, but the site didn't show it afterwards (`messages send`; JSON `{"error":"sent_unverified","code":8,...}`). Check it; don't send it again |
 | 128+N | killed by signal N |
 
 ## Writes
