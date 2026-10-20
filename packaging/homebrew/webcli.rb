@@ -7,12 +7,29 @@ class Webcli < Formula
   include Language::Python::Virtualenv
 
   desc "Agent-native CLIs over your own signed-in, hidden Chrome sessions"
-  homepage "https://github.com/truefrontier/webcli"
+  homepage "https://pypi.org/project/truefrontier-webcli/"
   url "https://files.pythonhosted.org/packages/cd/52/e4aaa7af14f21bae19bf0b7038e45fa9aa7224e4db9bd15190d9a457e5c9/truefrontier_webcli-0.4.0.tar.gz"
   sha256 "87dfc13e4ae65ddee8f4715323ffe1d2c1de827de0152d49dc57a3766f54d93b"
   license "MIT"
 
   depends_on "python@3.13"
+
+  # Playwright has no sdist on PyPI; vendor the arch-specific macOS wheel (its node driver is
+  # bundled in the wheel, native per arch so `brew audit` stays happy, and no network is needed).
+  on_macos do
+    on_arm do
+      resource "playwright" do
+        url "https://files.pythonhosted.org/packages/b4/b3/99f6c07a7f59adb3830e42cda2e2093dc1c2cbd1f69fe4393ead30c88257/playwright-1.64.0-py3-none-macosx_11_0_arm64.whl"
+        sha256 "8de42430e9a7c8b04ec963856d484d36ffd452882318ebad2df3e6fb49a8197a"
+      end
+    end
+    on_intel do
+      resource "playwright" do
+        url "https://files.pythonhosted.org/packages/cc/b7/24e5c283694e7a63aa376ddde395031decd7d627c77b34a58953176e8a19/playwright-1.64.0-py3-none-macosx_10_13_x86_64.whl"
+        sha256 "d76a501c9930b5a097b00e2448cda2200122a1e8e4be762ff535c1b076277737"
+      end
+    end
+  end
 
   resource "click" do
     url "https://files.pythonhosted.org/packages/c7/0e/7fa0ef50764b67090eca4114772a2abf8b6148198475e54c660b97caeee6/click-8.5.0.tar.gz"
@@ -54,15 +71,16 @@ class Webcli < Formula
     sha256 "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"
   end
 
-  # Playwright has no sdist on PyPI; vendor the macOS universal2 wheel (covers arm64 + x86_64).
-  # Its driver is bundled in the wheel, so no network is needed at install for the driver itself.
-  resource "playwright" do
-    url "https://files.pythonhosted.org/packages/ed/f4/e0ddecd32342cac462777ef9123de833486743709bd437458c49e004d750/playwright-1.64.0-py3-none-macosx_11_0_universal2.whl"
-    sha256 "61e4e0801bfd76b30e04635aaec45647df707881ccf14382471fcb0eaeb1d16f"
-  end
-
   def install
-    virtualenv_install_with_resources
+    venv = virtualenv_create(libexec, "python3.13")
+    # Playwright ships only platform wheels (no sdist); install everything else from source,
+    # then install the vendored Playwright wheel directly (Homebrew's resource helper forces
+    # --no-binary :all:, which cannot install a wheel).
+    venv.pip_install resources.reject { |r| r.name == "playwright" }
+    resource("playwright").stage do
+      system libexec/"bin/python", "-m", "pip", "install", "--no-deps", "--no-index", Dir["*.whl"].first
+    end
+    venv.pip_install_and_link buildpath
   end
 
   def caveats
