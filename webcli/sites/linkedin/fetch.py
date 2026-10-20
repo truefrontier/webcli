@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import quote, urlsplit
 
 from webcli.core import browser, config, guard
-from webcli.core.errors import AuthRequired, NotFound, UsageError
+from webcli.core.errors import AuthRequired, NotFound, RateLimited, UsageError
 from webcli.core.output import write_atomic
 from webcli.sites.linkedin import author as authors
 from webcli.sites.linkedin import boost, parse, posts
@@ -43,6 +43,9 @@ from webcli.sites.linkedin.endpoints import (  # APP_URL and POLICY: what `pytho
     CM_BASE,
     CM_HEADERS,
     COMPANY_POSTS_URL,
+    DEFAULT_COMMENTS,
+    FEED_READ_BUDGET,
+    MAX_COMMENTS,
     FEED_SORT_ORDER,
     MAIN_FEED_QUERY_ID,
     MAX_POSTS,
@@ -574,15 +577,17 @@ async def _pause(page: "Page") -> None:
 
 async def feed(limit: int = 20, since: str | None = None, ranked: bool = False, *, headed: bool = False) -> list[dict]:
     """Your home feed's posts (ads, promos, and carousels left out). LinkedIn ranks the feed and offers no Recent
-    order: without `ranked` the posts read are sorted newest first here. With --since, up to MAX_POSTS are read."""
+    order: without `ranked` the posts read are sorted newest first here. Pages (read-only GETs, paced) until `limit`
+    posts are in hand (inside --since when given), the feed runs out, or FEED_READ_BUDGET updates have been read."""
     since_dt = parse.parse_since(since)
-    window = MAX_POSTS if since_dt else min(MAX_POSTS, limit + 10)
+    first = FEED_READ_BUDGET if since_dt else min(FEED_READ_BUDGET, limit + 10)  # reads before it may stop
     rows: list[dict] = []
     read, token = 0, None
     async with browser.site_page(POLICY) as page:
         await land(page)
-        while read < window:
-            count = min(POSTS_PAGE, window - read)
+        while read < FEED_READ_BUDGET:
+            count = min(POSTS_PAGE, first - read) if read < first else POSTS_PAGE
+            count = min(count, FEED_READ_BUDGET - read)
             more = f",paginationToken:{quote(token, safe='')}" if token else ""
             url = (f"{VOYAGER_GQL}?variables=(start:{read},count:{count}{more},sortOrder:{FEED_SORT_ORDER})"
                    f"&queryId={MAIN_FEED_QUERY_ID}")
@@ -592,7 +597,12 @@ async def feed(limit: int = 20, since: str | None = None, ranked: bool = False, 
             read += len(pointers)
             rows += [r for r in page_rows if r["urn"] not in {x["urn"] for x in rows}]
             token = posts.pagination_token(data)
-            if len(pointers) < count or (ranked and not since_dt and len(rows) >= limit):
+            # LinkedIn often answers a page one short (it drops a duplicate server-side): only an empty page, or a
+            # short one with no token to go on, is the end of the feed.
+            if not pointers or (token is None and len(pointers) < count):
+                break
+            have = len(posts.apply_since(rows, since_dt)) if since_dt else len(rows)
+            if have >= limit and (since_dt or ranked or read >= first):
                 break
             await _pause(page)
     _guard_log("feed")
@@ -697,16 +707,44 @@ async def _flight_pairs(capture: dict[str, Any]) -> list[tuple[str, str]]:
     return list(pairs.items())
 
 
+# The search and company pages scroll inside their own container (main#workspace), not the window: scrolling the
+# window (or wheeling over the nav) never reaches the "load more" sentinel, so only the first ~6 results ever showed.
+# Bring the last card into view and scroll its scrolling ancestor to the bottom, as a person scrolling the list does.
+SCROLL_LAST_JS = r"""(feedType) => {
+  const cards = [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
+    .filter(el => !feedType || el.id.includes(feedType));
+  const last = cards[cards.length - 1];
+  if (last) last.scrollIntoView({block: 'end'});
+  for (let el = last && last.parentElement; el; el = el.parentElement) {
+    if (el.scrollHeight > el.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+      el.scrollTop = el.scrollHeight;
+      break;
+    }
+  }
+  const doc = document.scrollingElement || document.body;
+  window.scrollTo(0, doc.scrollHeight);
+  return cards.length;
+}"""
+
+
+async def _scroll_more(page: "Page", feed_type: str | None) -> None:
+    await page.evaluate(SCROLL_LAST_JS, feed_type)
+    viewport = getattr(page, "viewport_size", None) or {"width": 1280, "height": 900}
+    move = getattr(page.mouse, "move", None)
+    if move is not None:  # over the results, so the wheel scrolls their container
+        await move(viewport["width"] // 2, viewport["height"] // 2)
+    await page.mouse.wheel(0, 3200)
+
+
 async def _scroll_cards(page: "Page", feed_type: str | None, want: int) -> list[dict]:
-    """The rendered post cards, scrolling (a person's pace) until `want`, MAX_POSTS, or two scrolls bring nothing."""
-    found = await page.evaluate(POST_CARD_JS, feed_type)
+    """The rendered post cards, scrolling (a person's pace) until `want`, MAX_POSTS, or three scrolls bring nothing."""
+    found = await page.evaluate(POST_CARD_JS, feed_type) or []
     stable = 0
-    while len(found) < min(want, MAX_POSTS) and stable < 2:
+    while len(found) < min(want, MAX_POSTS) and stable < 3:
         before = len(found)
-        await page.mouse.wheel(0, 3200)
-        await page.evaluate(SCROLL_JS)
+        await _scroll_more(page, feed_type)
         await _pause(page)
-        found = await page.evaluate(POST_CARD_JS, feed_type)
+        found = await page.evaluate(POST_CARD_JS, feed_type) or []
         stable = stable + 1 if len(found) <= before else 0
     return [card for card in found if isinstance(card, dict)][:MAX_POSTS]
 
@@ -741,37 +779,70 @@ async def posts_from(target: str, limit: int = 20, since: str | None = None, *, 
     return posts.newest_first(posts.apply_since(rows, since_dt))[:limit]
 
 
-async def posts_search(query: str, limit: int = 20, since: str | None = None, *, headed: bool = False) -> list[dict]:
-    """Content search, sorted by LinkedIn's "Latest" (date posted), narrowed to past-24h/week/month when --since fits
-    one, then cut at --since here. Read from the rendered result cards (urns from the page's own payload), newest first."""
+# What the search page shows besides cards: LinkedIn's own "no results", a security check, or a usage limit.
+SEARCH_STATE_JS = r"""() => {
+  const text = ((document.body && document.body.innerText) || '').slice(0, 20000);
+  return {
+    noResults: /\bNo results found\b|\bNo matching results\b/i.test(text),
+    challenge: /security (check|verification)|verify (that )?you('|’)?re (a )?human|let's do a quick|unusual activity/i.test(text)
+      || !!document.querySelector('#captcha-internal, iframe[src*="captcha"], iframe[src*="checkpoint/challenge"]'),
+    limited: /(reached|hit) the (weekly|monthly|daily|commercial use) (search )?limit|unusual search traffic|search activity on your account has been paused/i.test(text),
+  };
+}"""
+SEARCH_PAUSED = ("LinkedIn paused search on this account (it shows \"unusual search traffic ... search activity on "
+                 "your account has been paused. Try again later\" or a search limit) instead of results. Stopped: "
+                 "nothing was worked around. Wait (hours) before searching again, and search less often.")
+CHALLENGED = ("LinkedIn is showing a security check on the search page. Stopped: nothing was clicked or worked around. "
+              "A person opens LinkedIn in the identity's window (webcli identity login linkedin:default) and clears it.")
+
+
+async def posts_search(query: str, limit: int = 20, since: str | None = None, sort: str = posts.DEFAULT_SORT, *,
+                       headed: bool = False) -> list[dict]:
+    """Content search in LinkedIn's own order: relevance ("Top", the default) or --sort latest (date posted, newest
+    first). --since narrows LinkedIn's date filter (past-24h/week/month) and is cut here too. Read from the rendered
+    result cards (urns from the page's own payload), scrolling the results list (its read-only "load more").
+    Never silently empty: no rows raises NotFound (exit 3) saying why; a security check raises AuthRequired (exit 4)."""
     query = (query or "").strip()
     if not query:
         raise UsageError("The search query is empty.")
+    if sort not in posts.SEARCH_SORTS:
+        raise UsageError(f"Unknown --sort {sort!r}: use {', '.join(posts.SEARCH_SORTS)}.")
     since_dt = parse.parse_since(since)
     now = datetime.now(timezone.utc)
     passed: list[str] = []
     async with browser.site_page(search_policy(passed)) as page:
         pending = _capture_flight(page, ("/search/results/content/", PAGINATION_PATH))
-        await open_li(page, posts.search_url(query, since_dt, now=now))
+        await open_li(page, posts.search_url(query, since_dt, sort=sort, now=now))
         await _await_cards(page, SEARCH_FEED)
         if auth_wall(page.url):
             raise AuthRequired(EXPIRED)
         found = await _scroll_cards(page, SEARCH_FEED, MAX_POSTS if since_dt else limit)
         pairs = await _flight_pairs(pending)
+        state = None if found else (await page.evaluate(SEARCH_STATE_JS) or {})
     _guard_log("posts_search", passed)
+    if state and state.get("challenge"):
+        raise AuthRequired(CHALLENGED)
+    if state and state.get("limited"):
+        raise RateLimited(SEARCH_PAUSED, sent=False)
     rows = posts.attach_flight(posts.cards(found, now=now), pairs)
-    return posts.newest_first(posts.apply_since(rows, since_dt))[:limit]
+    kept = posts.search_order(posts.apply_since(rows, since_dt), sort)[:limit]
+    if not kept:
+        raise NotFound(posts.empty_search_reason(query, cards=len(rows), kept=0, since=since_dt, page=state),
+                       hint="Nothing was cut silently: exit 3 means no rows for this query and window.")
+    return kept
 
 
-async def post_read(target: str, *, headed: bool = False) -> dict:
-    """One post: URL_OR_URN (urn:li:activity|share|ugcPost:N, or its /feed/update/ or /posts/ URL)."""
+async def post_read(target: str, comments: int = DEFAULT_COMMENTS, *, headed: bool = False) -> dict:
+    """One post: URL_OR_URN (urn:li:activity|share|ugcPost:N, or its /feed/update/ or /posts/ URL), with its top
+    `comments` top-level comments (LinkedIn's "Most relevant" order) as top_comments, from the same read-only GET."""
+    comments = max(0, min(int(comments), MAX_COMMENTS))
     try:
         urn = posts.parse_post_target(target)
     except ValueError as exc:
         raise UsageError(str(exc)) from None
     async with browser.site_page(POLICY) as page:
         await land(page)
-        status, data = await voyager_get(page, UPDATE_URL.format(urn=quote(urn, safe="")))
+        status, data = await voyager_get(page, UPDATE_URL.format(comments=comments, urn=quote(urn, safe="")))
     _guard_log("post_read")
     if status in (-1, 302, 401):
         raise AuthRequired(f"{EXPIRED} (Voyager update: HTTP {status})")
@@ -782,7 +853,8 @@ async def post_read(target: str, *, headed: bool = False) -> dict:
     rows = posts.updates(data)
     if not rows:
         raise NotFound(f"No post {urn} you can see.")
-    return next((r for r in rows if r["urn"] == urn), rows[0])
+    row = next((r for r in rows if r["urn"] == urn), rows[0])
+    return {**row, "top_comments": posts.top_comments(data, row["urn"], comments)}
 
 
 # --- Boost (READ-ONLY: GET only, on robots.txt) -------------------------------------------------------------------

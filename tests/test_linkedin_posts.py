@@ -14,7 +14,7 @@ from urllib.parse import unquote
 import pytest
 
 from webcli.core import guard
-from webcli.core.errors import NotFound
+from webcli.core.errors import AuthRequired, NotFound
 from webcli.sites.linkedin import fetch, parse, posts
 from webcli.sites.linkedin.endpoints import PAGINATION_PATH, VOYAGER, SEARCH_PAGER, SEARCH_SCREEN
 from webcli.sites.linkedin.guard import POLICY, search_page_allowed, search_policy
@@ -225,9 +225,13 @@ def test_flight_pairs_out_of_step_only_fill_unambiguous_handle_matches():
     assert [r["urn"] for r in rows] == [None, A1]
 
 
-def test_search_url_sorts_by_date_and_narrows_when_since_fits():
+def test_search_url_defaults_to_relevance_sorts_latest_on_request_and_narrows_when_since_fits():
     base = posts.search_url("AI agents", None, now=NOW)
-    assert "keywords=AI%20agents" in base and "sortBy=%22date_posted%22" in base and "datePosted" not in base
+    assert "keywords=AI%20agents" in base and "sortBy=%22relevance%22" in base and "datePosted" not in base
+    assert "sortBy=%22date_posted%22" in posts.search_url("AI agents", None, sort="latest", now=NOW)
+    assert posts.search_url("x", None, sort="top", now=NOW) == posts.search_url("x", None, now=NOW)
+    with pytest.raises(ValueError):
+        posts.search_url("x", None, sort="oldest", now=NOW)
     assert posts.search_url("x", NOW - timedelta(hours=20), now=NOW).endswith("datePosted=%22past-24h%22")
     assert posts.search_url("x", NOW - timedelta(hours=48), now=NOW).endswith("datePosted=%22past-week%22")
     assert posts.search_url("x", NOW - timedelta(days=20), now=NOW).endswith("datePosted=%22past-month%22")
@@ -341,8 +345,10 @@ class SearchPage:
     """A scripted search tab: goto fires the document request (and its finished body), the cards are scripted, and
     the first scroll fires one pagination request through the page's policy, as the page itself would."""
 
-    def __init__(self, cards: list[list[dict]], bodies: list[str]) -> None:
+    def __init__(self, cards: list[list[dict]], bodies: list[str], state: dict | None = None) -> None:
         self.cards, self.bodies, self.url, self.policy = cards, bodies, "about:blank", None
+        self.state = state or {}
+        self.scrolled_list = 0
         self.handlers: dict[str, list] = {}
         self.gotos: list[str] = []
         self.mouse = SimpleNamespace(wheel=self._wheel)
@@ -374,6 +380,11 @@ class SearchPage:
     async def evaluate(self, script, arg=None):
         if script is fetch.POST_CARD_JS:
             return [card for batch in self.cards[: self.shown + 1] for card in batch]
+        if script is fetch.SCROLL_LAST_JS:  # the results list's own scroller, not the window
+            self.scrolled_list += 1
+            return None
+        if script is fetch.SEARCH_STATE_JS:
+            return self.state
         return None
 
     async def wait_for_function(self, *_args, **_options):
@@ -383,16 +394,9 @@ class SearchPage:
         await asyncio.sleep(0)
 
 
-def test_posts_search_reads_cards_takes_urns_from_the_payload_and_sorts_newest_first(monkeypatch):
+def install_search(monkeypatch, page: SearchPage) -> SearchPage:
     from contextlib import asynccontextmanager
     from webcli.core import browser
-
-    john = {**CARD, "actorName": "John Roe", "actorHref": "https://www.linkedin.com/in/john-roe/", "text": "other"}
-    company = {**CARD, "actorName": "Example Co", "actorHref": "https://www.linkedin.com/company/example-co/",
-               "text": "third"}
-    page = SearchPage([[CARD, john], [company]],
-                      [flight((A2, "jane-doe_a-activity-1-a"), (A1, "john-roe_b-activity-2-b")),
-                       flight((A3, "widgets-share-3-c"))])
 
     @asynccontextmanager
     async def site_page(policy, **_options):
@@ -400,12 +404,165 @@ def test_posts_search_reads_cards_takes_urns_from_the_payload_and_sorts_newest_f
         yield page
 
     monkeypatch.setattr(browser, "site_page", site_page)
+    return page
+
+
+JOHN = {**CARD, "actorName": "John Roe", "actorHref": "https://www.linkedin.com/in/john-roe/", "text": "other"}
+COMPANY = {**CARD, "actorName": "Example Co", "actorHref": "https://www.linkedin.com/company/example-co/",
+           "text": "third"}
+
+
+def search_page(state: dict | None = None) -> SearchPage:
+    return SearchPage([[CARD, JOHN], [COMPANY]],
+                      [flight((A2, "jane-doe_a-activity-1-a"), (A1, "john-roe_b-activity-2-b")),
+                       flight((A3, "widgets-share-3-c"))], state)
+
+
+def test_posts_search_keeps_linkedins_relevance_order_and_scrolls_the_results_list(monkeypatch):
+    page = install_search(monkeypatch, search_page())
     rows = asyncio.run(fetch.posts_search("AI agents", limit=3))
+    assert [(r["author_name"], r["urn"]) for r in rows] == [("Jane Doe", A2), ("John Roe", A1), ("Example Co", A3)]
+    assert "sortBy=%22relevance%22" in page.gotos[0]
+    assert page.scrolled_list >= 1  # the list's scroller was moved (the window alone never loads more)
+
+
+def test_posts_search_latest_sorts_newest_first_and_since_is_cut_here(monkeypatch):
+    page = install_search(monkeypatch, search_page())
+    rows = asyncio.run(fetch.posts_search("AI agents", limit=3, sort="latest"))
     assert [(r["author_name"], r["urn"]) for r in rows] == [("John Roe", A1), ("Jane Doe", A2), ("Example Co", A3)]
     assert "sortBy=%22date_posted%22" in page.gotos[0]
+    page = install_search(monkeypatch, search_page())
     since = iso(datetime.now(timezone.utc) - timedelta(days=36500))
-    page.shown = 0
     assert len(asyncio.run(fetch.posts_search("AI agents", limit=2, since=since))) == 2
+
+
+def test_posts_search_with_nothing_inside_since_says_so(monkeypatch):
+    install_search(monkeypatch, search_page())
+    with pytest.raises(NotFound, match=r"returned 3 result\(s\).*--since"):
+        asyncio.run(fetch.posts_search("AI agents", limit=5, since=iso(datetime.now(timezone.utc))))
+
+
+@pytest.mark.parametrize(("state", "reason"), [
+    ({"noResults": True}, "LinkedIn found no posts for 'nothing here'"),
+    ({}, "showed no result cards"),
+])
+def test_posts_search_with_no_cards_is_never_silent(monkeypatch, state, reason):
+    install_search(monkeypatch, SearchPage([[]], [""], state))
+    with pytest.raises(NotFound, match=reason):
+        asyncio.run(fetch.posts_search("nothing here", limit=5))
+
+
+def test_posts_search_stops_at_a_security_check(monkeypatch):
+    install_search(monkeypatch, SearchPage([[]], [""], {"challenge": True}))
+    with pytest.raises(AuthRequired, match="security check"):
+        asyncio.run(fetch.posts_search("AI agents", limit=5))
+
+
+def test_posts_search_stops_when_linkedin_pauses_search(monkeypatch):
+    from webcli.core.errors import RateLimited
+    install_search(monkeypatch, SearchPage([[]], [""], {"limited": True}))
+    with pytest.raises(RateLimited, match="paused search"):
+        asyncio.run(fetch.posts_search("AI agents", limit=5))
+
+
+def test_posts_search_refuses_an_unknown_sort():
+    from webcli.core.errors import UsageError
+    with pytest.raises(UsageError):
+        asyncio.run(fetch.posts_search("AI agents", sort="oldest"))
+
+
+# --- Feed depth -----------------------------------------------------------------------------------------------------
+
+def feed_page(start: int, n: int, *, token: str | None = "t", age: timedelta = timedelta(hours=1)) -> dict:
+    """n posts, each `age` apart from the one before, starting `start` steps back from now."""
+    now = datetime.now(timezone.utc)
+    items = [update(f"urn:li:activity:{sid(now - age * (start + i), 5)}", "Jane Doe", "jane-doe", f"post {start + i}")
+             for i in range(n)]
+    return gql(*items, token=token)
+
+
+def test_feed_keeps_paging_past_a_short_page_until_since_has_enough(tab):
+    pages = [feed_page(0, 24), feed_page(24, 25), feed_page(49, 25), feed_page(74, 25)]
+    site = tab(LinkedIn({fetch.VOYAGER_GQL: pages}))
+    rows = asyncio.run(fetch.feed(limit=50, since=iso(datetime.now(timezone.utc) - timedelta(hours=200))))
+    assert len(rows) == 50 and len(site.reads) == 3  # 24 + 25 + 25 read: the 24-row page was not the end
+    assert "paginationToken:t" in site.reads[1] and site.sent == []
+
+
+def test_feed_stops_at_the_read_budget_and_at_the_end_of_the_feed(tab):
+    old = timedelta(days=30)  # nothing inside --since: it pages until the budget, never past it
+    pages = [feed_page(25 * i + 1, 25, age=old) for i in range(20)]
+    site = tab(LinkedIn({fetch.VOYAGER_GQL: pages}))
+    assert asyncio.run(fetch.feed(limit=50, since=iso(datetime.now(timezone.utc) - timedelta(hours=1)))) == []
+    assert len(site.reads) == fetch.FEED_READ_BUDGET // fetch.POSTS_PAGE
+    site = tab(LinkedIn({fetch.VOYAGER_GQL: [feed_page(0, 25), feed_page(25, 0, token=None)]}))
+    assert len(asyncio.run(fetch.feed(limit=50))) == 25 and len(site.reads) == 2
+
+
+def test_feed_without_since_reads_until_the_limit(tab):
+    site = tab(LinkedIn({fetch.VOYAGER_GQL: [feed_page(0, 25), feed_page(25, 25), feed_page(50, 10)]}))
+    assert len(asyncio.run(fetch.feed(limit=50))) == 50 and len(site.reads) == 3  # limit + 10 read, then sorted
+    assert "count:10," in site.reads[2]
+
+
+# --- posts read --comments ------------------------------------------------------------------------------------------
+
+LEGACY = "com.linkedin.voyager"
+
+
+def legacy_update(urn: str, comment_ids: list[int], replies: dict[int, int] | None = None) -> dict:
+    """updatesV2?commentsCount=N: the UpdateV2, its socialDetail listing the top-level comments, each comment with
+    its commenter's miniProfile and its own counts; plus one reply (left out of top_comments)."""
+    activity = urn.split(":")[-1]
+    detail = f"urn:li:fs_socialDetail:{urn}"
+    included = [
+        {"$type": f"{LEGACY}.feed.render.UpdateV2", "entityUrn": f"urn:li:fs_updateV2:({urn},FEED_DETAIL,EMPTY,DEFAULT,false)",
+         "updateMetadata": {"urn": urn}, "actor": {"name": {"text": "Jane Doe"}, "description": {"text": "Widgets"}},
+         "commentary": {"text": {"text": "The post."}}, "*socialDetail": detail},
+        {"$type": f"{LEGACY}.feed.SocialDetail", "entityUrn": detail,
+         "comments": {"*elements": [f"urn:li:fs_objectComment:({c},activity:{activity})" for c in comment_ids],
+                      "paging": {"total": 91}}},
+    ]
+    for n, cid in enumerate([*comment_ids, 999]):
+        urn_c = f"urn:li:comment:(activity:{activity},{cid})"
+        mini = f"urn:li:fs_miniProfile:P{cid}"
+        counts = f"urn:li:fs_socialActivityCounts:{urn_c}"
+        included += [
+            {"$type": f"{LEGACY}.feed.Comment", "entityUrn": f"urn:li:fs_objectComment:({cid},activity:{activity})",
+             "urn": urn_c, "commenter": {"*miniProfile": mini}, "commentV2": {"text": f"Comment {cid}"},
+             "createdTime": int((NOW - timedelta(minutes=n)).timestamp() * 1000), "pinned": n == 0,
+             "permalink": f"https://www.linkedin.com/feed/update/{urn}?commentUrn=x{cid}",
+             "*socialDetail": f"urn:li:fs_socialDetail:{urn_c}",
+             **({"parentCommentUrn": f"urn:li:comment:(activity:{activity},{comment_ids[0]})"} if cid == 999 else {})},
+            {"$type": f"{LEGACY}.identity.shared.MiniProfile", "entityUrn": mini, "firstName": "Pat",
+             "lastName": f"Q{cid}", "occupation": "Builder", "publicIdentifier": f"pat-q{cid}"},
+            {"$type": f"{LEGACY}.feed.SocialDetail", "entityUrn": f"urn:li:fs_socialDetail:{urn_c}",
+             "*totalSocialActivityCounts": counts},
+            {"$type": f"{LEGACY}.feed.shared.SocialActivityCounts", "entityUrn": counts, "urn": urn_c,
+             "numLikes": 4 if cid != 3 else None, "numComments": (replies or {}).get(cid, 0)},
+        ]
+    return {"included": included}
+
+
+def test_top_comments_follow_linkedins_order_skip_replies_and_never_invent_counts():
+    data = legacy_update(A1, [3, 1, 2], replies={1: 2})
+    rows = posts.top_comments(data, A1, 10)
+    assert [r["text"] for r in rows] == ["Comment 3", "Comment 1", "Comment 2"]  # 999 is a reply: left out
+    first = rows[0]
+    assert set(first) == set(posts.COMMENT_FIELDS)
+    assert first["author_name"] == "Pat Q3" and first["author_handle"] == "pat-q3" and first["pinned"] is True
+    assert first["reactions"] is None and rows[1]["reactions"] == 4 and rows[1]["replies"] == 2
+    assert first["posted_at"] == iso(NOW) and first["url"].startswith("https://www.linkedin.com/feed/update/")
+    assert len(posts.top_comments(data, A1, 2)) == 2 and posts.top_comments(data, A1, 0) == []
+
+
+def test_post_read_asks_for_its_top_comments_in_the_same_get(tab):
+    site = tab(LinkedIn({VOYAGER + "/feed/updatesV2": legacy_update(A1, [3, 1, 2])}))
+    row = asyncio.run(fetch.post_read(A1, comments=2))
+    assert row["urn"] == A1 and [c["text"] for c in row["top_comments"]] == ["Comment 3", "Comment 1"]
+    assert "commentsCount=2&" in site.reads[0] and len(site.reads) == 1 and site.sent == []
+    tab(LinkedIn({VOYAGER + "/feed/updatesV2": legacy_update(A1, [3])}))
+    assert asyncio.run(fetch.post_read(A1, comments=0))["top_comments"] == []
 
 
 # --- The CLI --------------------------------------------------------------------------------------------------------
@@ -429,7 +586,7 @@ def test_limit_is_capped_at_50(calls):
     seen, answers = calls
     answers["posts_search"] = []
     assert run("posts", "search", "widgets", "--limit", "500", "--format", "json").exit_code == 0
-    assert seen[0][0] == "posts_search" and seen[0][1] == ("widgets", 50, None)
+    assert seen[0][0] == "posts_search" and seen[0][1] == ("widgets", 50, None, "relevance")
 
 
 def test_posts_from_and_read_cli(calls):
@@ -441,4 +598,34 @@ def test_posts_from_and_read_cli(calls):
     result = run("posts", "read", A2, "--format", "json")
     assert result.exit_code == 0 and json.loads(result.output)["urn"] == A2
     assert [s[0] for s in seen] == ["posts_from", "post_read"]
-    assert seen[0][1] == ("jane-doe", 3, None) and seen[1][1] == (A2,)
+    assert seen[0][1] == ("jane-doe", 3, None) and seen[1][1] == (A2, 10)
+
+
+def test_posts_search_cli_sort_and_empty_exit_3_with_the_reason(calls):
+    seen, answers = calls
+    answers["posts_search"] = [ROW]
+    assert run("posts", "search", "widgets", "--sort", "latest", "--format", "json").exit_code == 0
+    assert seen[-1][1] == ("widgets", 20, None, "latest")
+    assert run("posts", "search", "widgets", "--sort", "oldest").exit_code == 2
+
+    def empty(*_args, **_kwargs):
+        raise NotFound("LinkedIn found no posts for 'widgets'.")
+
+    answers["posts_search"] = empty
+    result = run("posts", "search", "widgets", "--format", "json")
+    assert result.exit_code == 3 and "found no posts" in result.output
+
+
+def test_posts_read_cli_comments(calls):
+    seen, answers = calls
+    comment = {"author_name": "Pat Q", "author_handle": "pat-q", "author_headline": "Builder",
+               "posted_at": iso(NOW), "text": "Nice.", "reactions": 4, "replies": 0, "pinned": False, "url": None}
+    answers["post_read"] = {**ROW, "top_comments": [comment]}
+    result = run("posts", "read", A2, "--comments", "3", "--format", "json")
+    assert result.exit_code == 0 and json.loads(result.output)["top_comments"][0]["text"] == "Nice."
+    assert seen[-1][1] == (A2, 3)
+    assert run("posts", "read", A2, "--comments", "500", "--format", "json").exit_code == 0
+    assert seen[-1][1] == (A2, 50)
+    result = run("posts", "read", A2, "--format", "csv")
+    assert result.exit_code == 0 and "top_comments" in result.output.splitlines()[0]
+    assert run("posts", "read", A2, "--format", "md").exit_code == 0

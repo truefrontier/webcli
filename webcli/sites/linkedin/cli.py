@@ -32,7 +32,15 @@ from webcli.sites import data
 from webcli.sites.linkedin import ADAPTER as SITE
 from webcli.sites.linkedin import author as authors
 from webcli.sites.linkedin import boost, parse, posts
-from webcli.sites.linkedin.endpoints import DEFAULT_EXPECT_AUTHOR, EXPECT_AUTHOR_ENV, MAX_POSTS, MAX_TEXT
+from webcli.sites.linkedin.endpoints import (
+    DEFAULT_COMMENTS,
+    DEFAULT_EXPECT_AUTHOR,
+    EXPECT_AUTHOR_ENV,
+    FEED_READ_BUDGET,
+    MAX_COMMENTS,
+    MAX_POSTS,
+    MAX_TEXT,
+)
 
 THREAD_FIELDS = ["id", "entityUrn", "peer", "preview", "time", "unread"]
 THREAD_COMPACT = ("id", "peer", "time", "unread", "preview")
@@ -76,21 +84,28 @@ NOTES = [
     "8601 UTC, from the post id; null if unknown), text, reactions, comments, reposts (null when LinkedIn doesn't "
     "show the count: never invented), kind (post|repost|article: an article is a LinkedIn /pulse/ article), and "
     "original_url (a repost's original post, else null).",
-    f"--limit defaults to 20; at most {MAX_POSTS} (larger values are clamped), and no command reads more than "
-    f"{MAX_POSTS} posts from LinkedIn. --since takes ISO 8601 or a relative time: 30m, 48h, 2d, 1w.",
-    "`feed`: LinkedIn ranks the home feed and its API offers no Recent order, so the posts read (limit + 10, or "
-    f"{MAX_POSTS} with --since) are sorted newest first here; --ranked keeps LinkedIn's order. Ads, promos, and "
-    "carousels are left out.",
-    "`posts search QUERY`: LinkedIn content search sorted by Latest (date posted), narrowed to past-24h, past-week, or "
-    "past-month when --since fits one, then cut at --since here, newest first. Search has no JSON API, so rows are "
-    "read from the rendered cards: the urn/url (and exact posted_at) from the page's own payload when it can be "
-    "matched to the card (else null, with posted_at from the card's \"3h\" label), and counts only as shown. The "
-    "guard lets through the search page's own \"next results\" read and nothing else that isn't a GET.",
+    f"--limit defaults to 20; at most {MAX_POSTS} (larger values are clamped): no command returns more than "
+    f"{MAX_POSTS} posts. --since takes ISO 8601 or a relative time: 30m, 48h, 2d, 1w.",
+    "`feed`: LinkedIn ranks the home feed and its API offers no Recent order, so the posts read are sorted newest "
+    "first here; --ranked keeps LinkedIn's order. It pages (read-only GETs, paced) until --limit posts are in hand "
+    f"(inside --since when given) or {FEED_READ_BUDGET} feed updates were read. Ads, promos, and carousels are left "
+    "out.",
+    "`posts search QUERY`: LinkedIn content search in its own relevance order (\"Top\", the default) or --sort "
+    "latest (date posted, newest first). --since narrows LinkedIn's date filter (past-24h, past-week, past-month) and "
+    "is cut here too. Search has no JSON API, so rows are read from the rendered cards, scrolling the results list: "
+    "the urn/url (and exact posted_at) from the page's own payload when it can be matched to the card (else null, "
+    "with posted_at from the card's \"3h\" label), and counts only as shown. The guard lets through the search "
+    "page's own \"next results\" read and nothing else that isn't a GET. No rows is never silent: exit 3 with the "
+    "reason on stderr (LinkedIn found nothing, everything was older than --since, or no results rendered); a "
+    "LinkedIn security check exits 4 and nothing is worked around.",
     "`posts from HANDLE_OR_URL`: a member's posts and reposts (handle, linkedin.com/in/HANDLE) through the profile's "
     "own Voyager query, newest first; or a company page's (company/NAME or its URL) as rendered (the first cards "
     "only: the page's own pagination is a POST the guard blocks).",
     "`posts read URL_OR_URN`: one post as an object: urn:li:activity|share|ugcPost:N, or its /feed/update/ or "
-    "/posts/ URL.",
+    f"/posts/ URL, with top_comments: its top --comments N (default {DEFAULT_COMMENTS}, 0 for none, at most "
+    f"{MAX_COMMENTS}) top-level comments in LinkedIn's \"Most relevant\" order, each {{author_name, author_handle, "
+    "author_headline, posted_at, text, reactions, replies, pinned, url}} (replies not included; counts null when not "
+    "shown). Same single read-only GET.",
     "`boost` reads your personal Boost ad accounts from Campaign Manager (GET only). `boost stats TARGET` takes "
     "urn:li:share:..., urn:li:activity:..., a feed URL holding one, or a campaign id; one object, not a list. "
     "--since/--until are UTC dates (--until includes that day). Numbers are never invented: see limsg's null rules.",
@@ -355,11 +370,13 @@ def _post_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
 @posts_group.command("search")
 @click.argument("query", callback=_query_arg)
 @_post_options
+@click.option("--sort", "sort", type=click.Choice(sorted(posts.SEARCH_SORTS)), default=posts.DEFAULT_SORT,
+              show_default=True, help="relevance (= top, LinkedIn's default) or latest (date posted, newest first).")
 @agent_output_options()
-def posts_search(query, limit, since, **opts) -> None:
-    """Posts matching QUERY, newest first (LinkedIn's date-posted sort; READ-ONLY). --since narrows LinkedIn's
-    date filter (past-24h/week/month) and is applied here too."""
-    _emit_posts(_call("posts_search", query, limit, since), "LinkedIn posts", opts)
+def posts_search(query, limit, since, sort, **opts) -> None:
+    """Posts matching QUERY, in LinkedIn's relevance order (or --sort latest; READ-ONLY). --since narrows LinkedIn's
+    date filter (past-24h/week/month) and is applied here too. No results: exit 3, with why on stderr."""
+    _emit_posts(_call("posts_search", query, limit, since, sort), "LinkedIn posts", opts)
     raise SystemExit(EXIT_OK)
 
 
@@ -376,16 +393,34 @@ def posts_from(handle_or_url, limit, since, **opts) -> None:
 
 @posts_group.command("read")
 @click.argument("url_or_urn", callback=_post_arg)
+@click.option("--comments", "comments", default=DEFAULT_COMMENTS, show_default=True,
+              type=click.IntRange(0, MAX_COMMENTS, clamp=True),
+              help=f"Top-level comments to include as top_comments (LinkedIn's most relevant first; 0 for none, at "
+                   f"most {MAX_COMMENTS}).")
 @agent_output_options()
-def posts_read(url_or_urn, fmt, compact, select, quiet, as_csv) -> None:
-    """One post as an object (READ-ONLY): urn:li:activity:N (or share/ugcPost), or its /feed/update/ or /posts/
-    URL. Exit 3 if you can't see it."""
-    row = _call("post_read", url_or_urn)
-    payload = select_fields(compact_rows([row], posts.COMPACT)[0] if compact else row, select)
-    if as_csv or resolve_format(fmt) == "csv":
-        emit_csv([payload])
-    else:
+def posts_read(url_or_urn, comments, fmt, compact, select, quiet, as_csv) -> None:
+    """One post as an object, with its top comments (READ-ONLY): urn:li:activity:N (or share/ugcPost), or its
+    /feed/update/ or /posts/ URL. Exit 3 if you can't see it."""
+    row = _call("post_read", url_or_urn, comments)
+    top = row.get("top_comments") or []
+    payload = compact_rows([row], posts.COMPACT)[0] if compact else dict(row)
+    if compact:
+        payload["top_comments"] = [{k: c.get(k) for k in ("author_name", "posted_at", "reactions", "text")}
+                                   for c in top]
+    payload = select_fields(payload, select)
+    fmt_name = "csv" if as_csv else resolve_format(fmt)
+    if fmt_name == "csv":
+        emit_csv([{**payload, **({"top_comments": json.dumps(payload["top_comments"], ensure_ascii=False)}
+                                 if "top_comments" in payload else {})}])
+    elif fmt_name == "json":
         data.emit_record("LinkedIn post", payload, fmt)
+    else:
+        data.emit_record("LinkedIn post", {k: v for k, v in payload.items() if k != "top_comments"}, fmt)
+        if payload.get("top_comments"):
+            emit_rows(payload["top_comments"], title="Top comments", fields=posts.COMMENT_FIELDS,
+                      compact_fields=("author_name", "posted_at", "reactions", "text"),
+                      columns=["posted_at", "author_name", "reactions", "replies", "text"], noun="comments",
+                      fmt=fmt, compact=False, select=None, quiet=quiet, as_csv=False)
     raise SystemExit(EXIT_OK)
 
 

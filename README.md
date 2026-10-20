@@ -78,9 +78,9 @@ webcli contacts label add Newsletter --from-label "Conference 2026"   # dry run:
 webcli gmail filters create --from alerts@example.com --skip-inbox     # dry run: prints the plan
 webcli linkedin messages history Boardy --limit 5 # read-only; the guard blocks mark-as-read
 webcli linkedin feed --since 48h --limit 5   # read-only: your feed, newest first
-webcli linkedin posts search "AI agents" --since 2d --compact          # read-only: latest posts matching a query
+webcli linkedin posts search "AI agents" --since 2d --compact          # read-only: top posts matching a query (--sort latest)
 webcli linkedin posts from jane-doe --limit 3 # read-only: one profile's (or company/NAME page's) recent posts
-webcli linkedin posts read https://www.linkedin.com/feed/update/urn:li:activity:7380000000000000000/
+webcli linkedin posts read https://www.linkedin.com/feed/update/urn:li:activity:7380000000000000000/ --comments 10
 webcli linkedin post create --text-file post.txt --image card.png      # dry run: checks the author, posts nothing
 webcli facebook sync && webcli facebook search --city springfield      # read-only on Facebook; cache is local
 webcli loom transcript https://www.loom.com/share/<id>                 # Loom's official transcript, as text

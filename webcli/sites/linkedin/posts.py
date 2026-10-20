@@ -407,17 +407,121 @@ def cards(raw: list[Any], *, now: datetime | None = None) -> list[dict[str, Any]
     return rows
 
 
-def search_url(query: str, since: datetime | None, *, now: datetime | None = None) -> str:
-    """The content search page, newest first, narrowed to LinkedIn's past-24h / past-week / past-month when --since
-    fits inside one (the --since cut itself is applied client-side too)."""
+SEARCH_SORTS = {"relevance": "relevance", "top": "relevance", "latest": "date_posted"}  # --sort -> LinkedIn's sortBy
+DEFAULT_SORT = "relevance"
+
+
+def search_url(query: str, since: datetime | None, *, sort: str = DEFAULT_SORT, now: datetime | None = None) -> str:
+    """The content search page in LinkedIn's own order: relevance ("Top", the default) or latest (date posted).
+    Narrowed to LinkedIn's past-24h / past-week / past-month when --since fits inside one (the --since cut itself is
+    applied client-side too)."""
+    if sort not in SEARCH_SORTS:
+        raise ValueError(f"Unknown sort {sort!r}: use {', '.join(SEARCH_SORTS)}.")
     now = now or datetime.now(timezone.utc)
-    url = f"{ORIGIN}/search/results/content/?keywords={quote(query, safe='')}&origin=FACETED_SEARCH&sortBy=%22date_posted%22"
+    url = (f"{ORIGIN}/search/results/content/?keywords={quote(query, safe='')}&origin=FACETED_SEARCH"
+           f"&sortBy=%22{SEARCH_SORTS[sort]}%22")
     if since is not None:
         age = now - since
         for limit_days, token in ((1, "past-24h"), (7, "past-week"), (31, "past-month")):
             if age.total_seconds() <= limit_days * 86400:
                 return f"{url}&datePosted=%22{token}%22"
     return url
+
+
+def search_order(rows: list[dict], sort: str) -> list[dict]:
+    """Latest: newest first. Relevance/top: LinkedIn's own order, untouched."""
+    return newest_first(rows) if SEARCH_SORTS.get(sort) == "date_posted" else rows
+
+
+def empty_search_reason(query: str, *, cards: int, kept: int, since: datetime | None, page: dict | None) -> str:
+    """Why a search that answered gave no rows, for stderr: LinkedIn said no results, every result read was older than
+    --since, or no result cards rendered at all."""
+    page = page or {}
+    if cards and since is not None and not kept:
+        return (f"LinkedIn returned {cards} result(s) for {query!r}, but none posted at or after "
+                f"{since.strftime('%Y-%m-%dT%H:%M:%SZ')} (--since). Widen --since, or try --sort latest.")
+    if page.get("noResults"):
+        return f"LinkedIn found no posts for {query!r}" + (" in that --since window." if since else ".")
+    return (f"LinkedIn's search page showed no result cards for {query!r} (nothing rendered; the page may have "
+            "changed or loaded slowly). Retry once; if it persists, the search page has moved.")
+
+
+# --- Comments (posts read --comments) ------------------------------------------------------------------------------
+
+COMMENT_FIELDS = ["author_name", "author_handle", "author_headline", "posted_at", "text", "reactions", "replies",
+                  "pinned", "url"]
+
+
+def _ms_time(value: Any) -> str | None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    try:
+        when = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _commenter(comment: dict, index: dict[str, dict]) -> tuple[str | None, str | None, str | None]:
+    """(name, handle, headline) of a comment's author: a member's miniProfile, or a company's miniCompany."""
+    who = comment.get("commenter") if isinstance(comment.get("commenter"), dict) else {}
+    profile = _ref(who, "miniProfile", index)
+    if profile:
+        name = " ".join(p for p in (profile.get("firstName"), profile.get("lastName")) if isinstance(p, str) and p)
+        handle = profile.get("publicIdentifier") if isinstance(profile.get("publicIdentifier"), str) else None
+        return name or None, handle, profile.get("occupation") if isinstance(profile.get("occupation"), str) else None
+    company = _ref(who, "miniCompany", index) or _ref(_get(who, "company") or {}, "miniCompany", index)
+    if company:
+        universal = company.get("universalName")
+        handle = f"{ORIGIN}/company/{quote(universal, safe='')}/" if isinstance(universal, str) and universal else None
+        return company.get("name") if isinstance(company.get("name"), str) else None, handle, None
+    return None, None, None
+
+
+def comment_row(comment: dict, index: dict[str, dict]) -> dict[str, Any]:
+    name, handle, headline = _commenter(comment, index)
+    detail = _ref(comment, "socialDetail", index) or {}
+    counts = _ref(detail, "totalSocialActivityCounts", index) or {}
+    text = _text(comment.get("commentV2"))
+    if text is None:
+        values = _get(comment, "comment", "values")
+        text = "".join(v.get("value", "") for v in values if isinstance(v, dict)) if isinstance(values, list) else ""
+    permalink = comment.get("permalink")
+    return {
+        "author_name": name,
+        "author_handle": handle,
+        "author_headline": headline,
+        "posted_at": _ms_time(comment.get("createdTime")),
+        "text": text or "",
+        "reactions": _count(counts.get("numLikes")),
+        "replies": _count(counts.get("numComments")),
+        "pinned": comment.get("pinned") is True,
+        "url": permalink if isinstance(permalink, str) and permalink.startswith(ORIGIN + "/") else None,
+    }
+
+
+def _is_comment(obj: Any) -> bool:
+    return str(_get(obj, "$type") or "").endswith(".feed.Comment")
+
+
+def top_comments(data: Any, urn: str, limit: int) -> list[dict[str, Any]]:
+    """The post's top-level comments in LinkedIn's own order (its "Most relevant" sort), at most `limit`. Read from
+    the single-update response (updatesV2 ...&commentsCount=N): the post's socialDetail lists them; replies are left
+    out."""
+    if limit <= 0:
+        return []
+    index = _index(data)
+    post = next((o for o in index.values() if _update_type(o) and _activity(o) == urn), None)
+    if post is None:
+        post = next((o for o in index.values() if _update_type(o)), None)
+    detail = _ref(post, "socialDetail", index) if post else None
+    pointers = _get(detail, "comments", "*elements") if detail else None
+    if isinstance(pointers, list):
+        found = [index[p] for p in pointers if isinstance(p, str) and p in index]
+    else:
+        found = [o for o in index.values() if _is_comment(o)]
+    rows = [comment_row(c, index) for c in found if _is_comment(c) and not c.get("parentCommentUrn")]
+    return rows[:limit]
 
 
 # --- The page's own RSC payload (search / company cards carry no urn in the DOM) ------------------------------------

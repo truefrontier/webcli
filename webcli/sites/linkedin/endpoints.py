@@ -51,7 +51,10 @@ PROFILE_UPDATES_QUERY_ID = "voyagerFeedDashProfileUpdates.4af00b28d60ed0f1488018
 PROFILE_LOOKUP = VOYAGER + "/identity/dash/profiles?q=memberIdentity&memberIdentity={handle}"
 PROFILE_UPDATES_REST = (VOYAGER + "/identity/profileUpdatesV2?count={count}&start={start}&q=memberShareFeed"
                         "&moduleKey=member-shares%3Aphone&includeLongTermHistory=true&profileUrn={urn}")
-UPDATE_URL = VOYAGER + "/feed/updatesV2?commentsCount=0&likesCount=0&q=backendUrnOrNss&urnOrNss={urn}"
+# One post, with its top `comments` top-level comments (LinkedIn's "Most relevant" order) in the same GET.
+UPDATE_URL = VOYAGER + "/feed/updatesV2?commentsCount={comments}&likesCount=0&q=backendUrnOrNss&urnOrNss={urn}"
+DEFAULT_COMMENTS = 10  # `posts read --comments N`
+MAX_COMMENTS = 50
 # Content search and company pages render as server-driven cards (no Voyager query serves them): read as rendered.
 COMPANY_POSTS_URL = ORIGIN + "/company/{name}/posts/?feedView=all"
 SEARCH_FEED = "FLAGSHIP_SEARCH"  # the search results' card ids: expanded<key>FeedType_FLAGSHIP_SEARCH
@@ -61,7 +64,11 @@ PAGINATION_PATH = "/flagship-web/rsc-action/actions/pagination"
 PAGINATION_QUERY_KEYS = frozenset({"parentSpanId", "sduiid"})
 SEARCH_PAGER = "com.linkedin.sdui.search.contentSearchResults"
 SEARCH_SCREEN = "com.linkedin.sdui.flagshipnav.search.SearchResultsContent"
-MAX_POSTS = 50  # the hard cap: no post command reads more than this many posts from LinkedIn
+MAX_POSTS = 50  # the hard cap: no post command returns more than this many posts
+# The feed is ranked, not chronological, and a third of each page is ads, promos, and carousels: to find up to
+# MAX_POSTS posts inside a --since window it may page through this many feed updates (FEED_READ_BUDGET / POSTS_PAGE
+# GETs, PAGE_PAUSE_MS apart). Read-only Voyager GETs; nothing new for the guard.
+FEED_READ_BUDGET = 200
 POSTS_PAGE = 25  # posts per Voyager request
 PAGE_PAUSE_MS = 1500  # between requests and scrolls: a person's pace, not a crawl
 
