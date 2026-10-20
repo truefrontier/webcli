@@ -8,8 +8,8 @@ class Webcli < Formula
 
   desc "Agent-native CLIs over your own signed-in, hidden Chrome sessions"
   homepage "https://github.com/truefrontier/webcli"
-  url "https://files.pythonhosted.org/packages/cf/53/37d4e56538a14df7db8790bf030c501d149f188dc16bbb362ac69c129e4a/truefrontier_webcli-0.4.1.tar.gz"
-  sha256 "9c1fd2face1706e10dc39cbac0a5b382d805af4378ed3e22a7d119e640d067bb"
+  url "https://files.pythonhosted.org/packages/97/a3/238df215edd179e76aca757af81be0c758473c095612f3540fe56ebcc5dd/truefrontier_webcli-0.5.0.tar.gz"
+  sha256 "ea7c5b5433ec91e9cfc549f81e8bd3e9a8c0d2766e8e741d006249fd06d2e383"
   license "MIT"
 
   depends_on "python@3.13"
