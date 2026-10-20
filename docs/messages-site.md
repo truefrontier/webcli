@@ -2,7 +2,7 @@
 
 `webcli messages` reads your phone's conversations through Google Messages for web (messages.google.com), in a hidden Chrome paired with your phone. It is gmsg (google-messages-cli) rebuilt on webcli's shared core. Every verb is read-only except `send`, which is a dry run unless you pass `--confirm`.
 
-Nothing here has run against the live site yet. The selectors come from gmsg, which did run live. The network rules come from Google Messages' web protocol as the open-source mautrix-gmessages bridge (libgm) implements it. Anything this doc or `webcli/sites/messages/endpoints.py` marks GUESS fails closed: if it's wrong, the guard blocks the request and names it in the error.
+`status`, `list`, and `read` have run against the live site (webcli 0.4.1, October 19, 2026). `send` has not. The selectors come from gmsg, which did run live. The network rules come from Google Messages' web protocol as the open-source mautrix-gmessages bridge (libgm) implements it, corrected by live captures (tagged LIVE in `webcli/sites/messages/endpoints.py`). Anything marked GUESS fails closed: if it's wrong, the guard blocks the request and names it in the error.
 
 ## What ships
 
@@ -36,12 +36,13 @@ Messages arrive from the phone end-to-end encrypted, so there is no readable API
 
 ## The guard
 
-Every phone action is one POST to the relay, `instantmessaging-pa.googleapis.com/$rpc/...Messaging/SendMessage`. Its body is PBLite (protobuf as a JSON array). The action type (`LIST_MESSAGES`, `MESSAGE_READ`, `SEND_MESSAGE`...) is in the clear; the request itself, including the conversation and the text, is encrypted between the browser and the phone.
+Every phone action is one POST to the relay, `instantmessaging-pa.googleapis.com/$rpc/...Messaging/SendMessage` (the live app uses the relay's other host, `instantmessaging-pa.clients6.google.com`). Its body is PBLite (protobuf as a JSON array). The action type (`LIST_MESSAGES`, `MESSAGE_READ`, `SEND_MESSAGE`...) is in the clear; the request itself, including the conversation and the text, is encrypted between the browser and the phone.
 
 So the guard sorts phone actions by type:
 
-- **Passes:** GETs on messages.google.com and Google's static hosts; the relay's long poll, acks, and token refresh; and `SendMessage` calls whose single action is a read: listing, thumbnails, and the session's own upkeep (`GET_UPDATES`, which makes this tab the active session, plus presence acks).
-- **Blocks:** every other action, including `MESSAGE_READ` (so reading never marks anything read), `TYPING_UPDATES`, `SEND_MESSAGE`, `RESEND_MESSAGE`, reactions, replies, deletes, archive, new conversations, and settings. Also blocked: pairing and unpairing calls, attachment uploads, telemetry, every other host, and any body that doesn't read as exactly one action. A field given twice counts as unreadable.
+- **Passes:** GETs on messages.google.com and Google's static hosts; the relay's long poll, acks, and token refresh; the app's sign-in (`Registration/SignInGaia`) and connection check (`Messaging/Echo`), on the clients6 host only; and `SendMessage` calls whose single action is a read: listing, thumbnails, and the session's own upkeep (`GET_UPDATES`, which makes this tab the active session, plus presence acks).
+- **Needed, and why:** without the sign-in, the app never shows the list; it gives up on `/web/unableToConnect`. The sign-in returns the session's auth token and pairs nothing. Without the connection check, the list shows, but an opened conversation never asks the phone for its messages.
+- **Blocks:** every other action, including `MESSAGE_READ` (so reading never marks anything read), `TYPING_UPDATES`, `SEND_MESSAGE`, `RESEND_MESSAGE`, reactions, replies, deletes, archive, new conversations, and settings. Also blocked: pairing and unpairing calls, attachment uploads, telemetry, every other host, and any body that doesn't read as exactly one action. A field given twice counts as unreadable. The app also calls the regional relay (`instantmessaging-pa-jms-us`), avatars, the account bar, web attestation, and cookie rotation. Live, it works without them, so they stay blocked.
 
 ## How a confirmed send is bound
 
@@ -64,13 +65,14 @@ Any refusal says `REFUSED: ... Nothing was sent.` and exits 5.
 - **New:** `search`, the `threads` alias, conversation ids in `list`, and `--yes` alongside `--confirm`.
 - **Gone:** gmsg's `login`/`pair`, `version`, and `--profile`. Use `webcli identity login messages:default`, `--version`, and `--identity`. There is no `gmsg` alias.
 
-## Unverified until the first live run
+## What the live runs showed, and what is still unverified
 
-Run `python -m webcli.core.capture messages` once paired. It records what the page requests and what the guard blocked, redacted. Then check:
+`python -m webcli.core.capture messages` records what the page requests and what the guard blocked, redacted. Live, read-only:
 
-- whether the app loads with only the listed read actions (`READ_ACTIONS`), and whether it calls `Pairing/GetWebEncryptionKey` once paired;
-- whether the body is PBLite as libgm says (binary protobuf is read too);
-- whether opening a conversation from the list by its link works headless, and whether the title selector (`header`, GUESS) finds the conversation's name;
-- whether gmsg's compose box and send button selectors still match.
+- The list needs only `IS_BUGLE_DEFAULT`, `GET_UPDATES`, and `LIST_CONVERSATIONS`. Opening a conversation adds `GET_CONVERSATION_TYPE`, `LIST_MESSAGES`, and `NOTIFY_DITTO_ACTIVITY`. All are in `READ_ACTIONS`. The guard blocks `FETCH_BLOCKED_CONTACTS` and `STICKER_USER_CONTEXT`, and nothing breaks.
+- The app never called `Pairing/GetWebEncryptionKey`.
+- Opening a conversation from the list by its link works headless.
+
+Still unverified, because they need a send: whether the title selector (`header`, GUESS) finds the conversation's name, and whether gmsg's send button selector still matches.
 
 The offline tests in `tests/test_messages.py` run every send path, dry run and confirmed, against a scripted page through the real policy.
