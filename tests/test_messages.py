@@ -605,13 +605,45 @@ def test_send_is_a_dry_run_unless_confirm_alone(calls, flags, confirm):
     assert seen == [("messages:default", "send", ("Alice", "hi"), {"confirm": confirm, "headed": False})]
 
 
-def test_an_unconfirmed_send_says_so(calls):
+@pytest.mark.parametrize("title_checked", [True, False])
+def test_a_verified_send_exits_0_whether_or_not_a_title_was_checked(calls, title_checked):
     _, answers = calls
     answers["send"] = lambda *a, confirm, headed: {**send_answer(*a, confirm=confirm, headed=headed),
-                                                   "confirmed": False}
-    result = run("send", "--to", "Alice", "--text", "hi", "--yes")
-    assert result.exit_code == 0 and "WARNING: the send went out" in result.stderr
-    assert "webcli messages read 101" in result.stderr
+                                                   "titleChecked": title_checked}
+    result = run("send", "--to", "Alice", "--text", "hi", "--confirm", "--format", "json")
+    assert result.exit_code == 0 and result.stderr == ""
+    assert json.loads(result.stdout)["confirmed"] is True
+
+
+@pytest.mark.parametrize("title_checked", [True, False])
+def test_a_sent_but_unverified_send_exits_8_and_says_check_not_resend(calls, title_checked):
+    _, answers = calls
+    answers["send"] = lambda *a, confirm, headed: {**send_answer(*a, confirm=confirm, headed=headed),
+                                                   "confirmed": False, "titleChecked": title_checked}
+    result = run("send", "--to", "Alice", "--text", "hi", "--yes", "--format", "json")
+    assert result.exit_code == 8
+    out = json.loads(result.stdout)
+    assert (out["sent"], out["confirmed"], out["titleChecked"]) == (True, False, title_checked)
+    err = json.loads(result.stderr)
+    assert (err["error"], err["code"]) == ("sent_unverified", 8)
+    assert err["message"] == ("The text was sent, but it couldn't be verified: conversation 101 didn't show it "
+                              "within 15s.")
+    assert "webcli messages read 101" in err["hint"] and "instead of sending it again" in err["hint"]
+
+
+@pytest.mark.parametrize("why", ["REFUSED: the compose box doesn't hold exactly the text. Nothing was sent.",
+                                 "the click sent nothing within 10s. Nothing was sent."])
+def test_a_refused_or_failed_send_exits_5_with_nothing_on_stdout(calls, why):
+    seen, answers = calls
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError(why)
+
+    answers["send"] = refuse
+    result = run("send", "--to", "Alice", "--text", "hi", "--confirm", "--format", "json")
+    assert result.exit_code == 5 and result.stdout == ""
+    assert json.loads(result.stderr) == {"error": why, "code": 5}
+    assert len(seen) == 1  # one call, never retried
 
 
 @pytest.mark.parametrize("args", [("send", "--to", "Alice", "--text", "   "), ("send", "--to", " ", "--text", "hi"),

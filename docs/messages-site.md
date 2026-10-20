@@ -52,9 +52,21 @@ The guard can count sends and read their type, but it can't see which conversati
 2. It types the text into the compose box and waits for the send button.
 3. Then, last, it checks three things again: the URL still holds that conversation's id, the compose box reads back exactly the text, and the page hasn't tried a send of its own during this command (a queued message or a retry, which the guard blocked). If the page moved to another conversation, it refuses without touching that conversation's compose box.
 4. Only then does it arm the guard's one slot and click send. The slot passes one `SEND_MESSAGE` and closes, or closes after 10 seconds. Everything else stays blocked: the typing indicator, the mark-as-read, and a reply or retry.
-5. It waits for the conversation to show one more sent bubble with the text. The output's `confirmed` says whether it did. A send is never retried. If `confirmed` is false, check `webcli messages read <id>` before sending again.
+5. It waits up to 15 seconds for the conversation to show one more sent bubble with the text. The output's `confirmed` says whether it did. A send is never retried.
 
-Any refusal says `REFUSED: ... Nothing was sent.` and exits 5.
+### Exit codes for `send`
+
+| Exit | When | stdout | stderr |
+|---|---|---|---|
+| 0 | Dry run (no `--confirm`, or `--dry-run`): nothing was sent. | `{dryRun: true, to, threadId, text}` | nothing |
+| 0 | Sent and verified: the conversation showed the text. | `{sent: true, confirmed: true, ...}` | nothing |
+| 8 | Sent but not verified: the text went out, but the conversation didn't show it within 15 seconds. | `{sent: true, confirmed: false, ...}` | `{"error": "sent_unverified", "code": 8, "message", "hint"}` |
+| 5 | Refused by a page check (`REFUSED: ... Nothing was sent.`), or the click sent nothing (`... Nothing was sent.`). | nothing | `{"error": "<what happened>", "code": 5}` |
+| 2 | Usage error, such as empty text. Nothing runs. | nothing | the usage error |
+
+Exit 8 means the text **was sent**. Don't send it again. Check with `webcli messages read <threadId>`. The stderr message reads: "The text was sent, but it couldn't be verified: conversation <threadId> didn't show it within 15s." Its hint names the `read` command to run.
+
+`titleChecked` doesn't change the exit code. It records whether the page showed a title to match in step 1, before the click. Without a title, the conversation id in the URL still ties the send to the resolved conversation.
 
 ## Changes from gmsg, and why
 
