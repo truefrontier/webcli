@@ -632,6 +632,64 @@ def test_a_queryid_the_page_used_beats_limsgs_default():
                               "messengerMessagesByConversation") == by_conversation
 
 
+SYNC_QID = "messengerMessages.5846eeb71c981f11e0134cb6626cc314"
+ANCHOR_QID = "messengerMessages.d8ea76885a52fd5dc5c317078ab7c977"
+CONV_Q = "urn%3Ali%3Amsg_conversation%3A%28urn%3Ali%3Afsd_profile%3AACoAAKevnkFake%2C2-ThreadFake%3D%3D%29"
+# Messenger GraphQL as LinkedIn answers it now (2026-10-21): the conversation's messages are Message URNs.
+THREADS_REFS = {"included": [
+    THREADS["included"][0],
+    {"$type": "com.linkedin.messenger.Message", "entityUrn": "urn:li:msg_message:(x,1)", "deliveredAt": 1760450400000,
+     "body": {"text": "Want an intro?"}, "*sender": "urn:li:msg_messagingParticipant:boardy"},
+    {"$type": "com.linkedin.messenger.Conversation", "entityUrn": CONV, "lastActivityAt": 1760450400000,
+     "unreadCount": 0, "*conversationParticipants": ["urn:li:msg_messagingParticipant:boardy"],
+     "messages": {"*elements": ["urn:li:msg_message:(x,1)"]}},
+]}
+
+
+def test_list_previews_resolve_the_conversations_message_refs():
+    [row] = parse.conversations(THREADS_REFS)
+    assert row["preview"] == "Want an intro?" and row["peer"] == "Boardy AI"
+
+
+def test_the_anchor_messages_query_is_kept_apart_from_the_sync_token_one():
+    sync = f"{GQL}?queryId={SYNC_QID}&variables=(conversationUrn:{CONV_Q})"
+    anchor = f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:1,conversationUrn:{CONV_Q},countBefore:20,countAfter:0)"
+    assert parse.query_key(sync) == ("messengerMessages", SYNC_QID)
+    assert parse.query_key(anchor) == ("messengerMessagesByAnchor", ANCHOR_QID)
+    assert parse.query_key("https://www.linkedin.com/voyager/api/x?queryId=y.1") is None
+
+
+def test_message_urls_try_anchor_then_sync_and_never_the_retired_rest_events():
+    # 0.5.1 cached the anchor id under messengerMessages: it is still tried, with the anchor variables, last.
+    urls = fetch._message_urls({"messengerMessages": ANCHOR_QID}, CONV, 5, now_ms=99)
+    assert urls == [f"{GQL}?queryId={ANCHOR_QID}&variables=(conversationUrn:{CONV_Q})",
+                    f"{GQL}?queryId={SYNC_QID}&variables=(conversationUrn:{CONV_Q})",
+                    f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:99,conversationUrn:{CONV_Q},countBefore:20,countAfter:0)",
+                    f"{GQL}?queryId={SYNC_QID}&variables=(deliveredAt:99,conversationUrn:{CONV_Q},countBefore:20,countAfter:0)"]
+    urls = fetch._message_urls({"messengerMessages": SYNC_QID, "messengerMessagesByAnchor": ANCHOR_QID}, CONV, 50, 7)
+    assert urls[0] == f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:7,conversationUrn:{CONV_Q},countBefore:50,countAfter:0)"
+    assert urls[1] == f"{GQL}?queryId={SYNC_QID}&variables=(conversationUrn:{CONV_Q})"
+    assert not any("/events" in u for u in urls)
+
+
+def test_history_by_thread_id_reads_the_anchor_query_the_thread_page_used(tab):
+    msg = {"included": [THREADS["included"][0], {
+        "$type": "com.linkedin.messenger.Message", "entityUrn": "urn:li:msg_message:(x,1)", "deliveredAt": 1760450400000,
+        "body": {"text": "Want an intro?"}, "*sender": "urn:li:msg_messagingParticipant:boardy"}]}
+    site = tab(LinkedIn({ME: me_as(KEVNK), f"{GQL}?queryId=messengerConversations": THREADS_REFS,
+                         f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:": msg}))
+    thread_page = "https://www.linkedin.com/messaging/thread/2-ThreadFake%3D%3D/"
+    site.page.requests = {thread_page: [
+        f"{GQL}?queryId={SYNC_QID}&variables=(conversationUrn:{CONV_Q})",
+        f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:1,conversationUrn:{CONV_Q},countBefore:20,countAfter:0)"]}
+    rows = asyncio.run(fetch.messages("2-ThreadFake==", 10))
+    assert [(r["from"], r["time"]) for r in rows] == [("Boardy AI", "2025-10-14T14:00:00Z")]
+    assert site.reads[-1].startswith(f"{GQL}?queryId={ANCHOR_QID}&variables=(deliveredAt:")
+    assert f"conversationUrn:{CONV_Q},countBefore:20,countAfter:0)" in site.reads[-1]
+    assert not any("/events" in u for u in site.reads) and site.page.options.get("send") is None
+    assert fetch.cached_query_ids()["messengerMessagesByAnchor"] == ANCHOR_QID
+
+
 def test_a_signed_out_session_is_auth_required_and_status_says_signed_out(tab):
     tab(LinkedIn({ME: 401}))
     with pytest.raises(AuthRequired):

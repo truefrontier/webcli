@@ -202,6 +202,8 @@ async def me(page: "Page") -> dict:
 def _check(status: int, rows: list, where: str, what: str) -> None:
     if status in (-1, 302, 401, 403):
         raise AuthRequired(f"{EXPIRED} (Voyager {what}: HTTP {status})")
+    if status == 429 and not rows:
+        raise RateLimited(f"LinkedIn rate-limited the Voyager {what} read (HTTP 429). Try again later.", sent=False)
     if status != 200 and not rows:
         raise RuntimeError(f"Voyager {what} failed (HTTP {status}) for {where}.")
 
@@ -231,8 +233,8 @@ async def sniff(page: "Page", url: str) -> dict[str, str]:
     seen: dict[str, str] = {}
 
     def on_request(request) -> None:
-        if qid := parse.query_id(request.url):
-            seen[qid.split(".", 1)[0]] = qid
+        if found := parse.query_key(request.url):
+            seen[found[0]] = found[1]
 
     page.on("request", on_request)
     try:
@@ -270,6 +272,24 @@ async def conversations(limit: int = 20, *, headed: bool = False) -> list[dict]:
         return await _conversations(page, (await me(page))["profileUrn"], ids, limit)
 
 
+def _message_urls(ids: dict[str, str], conv: str, limit: int, now_ms: int | None = None) -> list[str]:
+    """The Messaging GraphQL GETs that read one thread, best first: the anchor query (the newest `limit` before now),
+    then the sync-token query (conversationUrn only). The old REST /messaging/conversations/<id>/events answers 400
+    now, so it is no longer tried. A queryId cached by webcli 0.5.1 under messengerMessages may be the anchor one, so
+    each sync-token id is retried with the anchor variables last."""
+    urn = quote(conv, safe="")
+    now_ms = now_ms if now_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000) + 60_000
+    anchor = f"(deliveredAt:{now_ms},conversationUrn:{urn},countBefore:{max(limit, 20)},countAfter:0)"
+    sync = f"(conversationUrn:{urn})"
+    anchor_ids = [ids["messengerMessagesByAnchor"]] if ids.get("messengerMessagesByAnchor") else []
+    sync_ids = list(dict.fromkeys(q for q in (ids.get("messengerMessages"), ids.get("messengerMessagesByConversation"),
+                                              DEFAULT_QUERY_IDS["messengerMessages"]) if q))
+    urls = [f"{MESSAGING_GQL}?queryId={q}&variables={anchor}" for q in anchor_ids]
+    urls += [f"{MESSAGING_GQL}?queryId={q}&variables={sync}" for q in sync_ids]
+    urls += [f"{MESSAGING_GQL}?queryId={q}&variables={anchor}" for q in sync_ids if q not in anchor_ids]
+    return list(dict.fromkeys(urls))
+
+
 async def messages(target: str, limit: int = 20, *, headed: bool = False) -> list[dict]:
     """The last `limit` messages of one thread {id, time, from, text, senderUrn}, oldest first. `target`: a peer name
     (substring), a thread id (2-...), or an entityUrn. Opening the thread is read-only: the guard aborts the page's
@@ -284,23 +304,17 @@ async def messages(target: str, limit: int = 20, *, headed: bool = False) -> lis
                 raise NotFound(f"No thread matching {target!r}.", hint=LIST_HINT)
             found = {"id": raw, "entityUrn": raw if raw.startswith("urn:li:") else "", "peer": ""}
         thread, conv = parse.normalize_conversation_urn(found.get("entityUrn") or found["id"])
+        if conv == f"urn:li:msg_conversation:{thread}":  # a bare thread id: the messenger URN names the mailbox too
+            conv = f"urn:li:msg_conversation:({mailbox},{thread})"
         ids = await sniff(page, THREAD_URL.format(thread=quote(thread, safe="")))
-        qid = query_id_for(ids, "messengerMessages", "messengerMessagesByConversation")
         rows: list[dict] = []
-        status, where = 0, ""
-        for variables in (f"(conversationUrn:{quote(conv, safe='')})",
-                          f"(conversationUrn:{quote(conv, safe='')},count:{max(limit, 20)})",
-                          f"(conversationUrn:{quote('urn:li:fs_conversation:' + thread, safe='')})"):
-            status, data = await voyager_get(page, f"{MESSAGING_GQL}?queryId={qid}&variables={variables}")
-            where = MESSAGING_GQL
+        status, where = 0, MESSAGING_GQL
+        for url in _message_urls(ids, conv, limit):
+            status, data = await voyager_get(page, url)
             if status == 200 and (rows := parse.parse_messages_payload(data, self_urn=mailbox)):
                 break
-        if not rows:
-            url = f"{REST_CONVERSATIONS}/{quote(thread, safe='')}/events?keyVersion=LEGACY_INBOX&q=events&count={max(limit, 20)}"
-            status, data = await voyager_get(page, url)
-            where = url.split("?")[0]
-            if status == 200:
-                rows = parse.parse_messages_payload(data, self_urn=mailbox)
+            if status in (-1, 302, 401, 403, 429):
+                break
         _check(status, rows, where, "messages")
     hint = (found.get("peer") or "").split(",")[0].strip()
     for row in rows:

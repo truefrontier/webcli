@@ -40,10 +40,20 @@ def _name_from_member(member: dict | None) -> str:
     return _textish(member.get("name") or member.get("publicIdentifier") or "")
 
 
-def _preview_from_conv(conv: dict) -> str:
+def _preview_from_conv(conv: dict, by_urn: dict[str, dict] | None = None) -> str:
     for key in ("lastMessage", "messages", "preview"):
         lm = conv.get(key)
         if isinstance(lm, dict):
+            # Messenger GraphQL (normalized): messages is a collection of Message URNs ("*elements"); the newest one
+            # is the preview.
+            refs = lm.get("*elements")
+            if isinstance(refs, list) and by_urn is not None:
+                found = [by_urn[r] for r in refs if isinstance(r, str) and isinstance(by_urn.get(r), dict)]
+                found.sort(key=lambda m: m.get("deliveredAt") or 0)
+                for msg in reversed(found):
+                    s = _text_from_body(msg.get("body"))
+                    if s.strip():
+                        return s.strip()[:160]
             for tkey in ("text", "body", "snippet"):
                 s = _textish(lm.get(tkey))
                 if s:
@@ -148,7 +158,7 @@ def parse_conversations_payload(data: Any) -> list[dict]:
             or conv.get("deliveredAt")
             or ""
         )
-        preview = _preview_from_conv(conv)
+        preview = _preview_from_conv(conv, by_urn)
 
         rows.append(
             {
@@ -477,6 +487,21 @@ def query_id(url: str) -> str | None:
         return None
     found = parse_qs(parts.query).get("queryId", [])
     return found[0] if len(found) == 1 and re.fullmatch(r"[A-Za-z]+\.[0-9a-f]{16,64}", found[0]) else None
+
+
+def query_key(url: str) -> tuple[str, str] | None:
+    """(name, queryId) for a messaging GraphQL request URL, else None. LinkedIn registers two messengerMessages
+    queries: the sync-token one takes just (conversationUrn:...), the anchor one (deliveredAt:...,conversationUrn:...,
+    countBefore:...,countAfter:...). They share the name, so the anchor one is kept as messengerMessagesByAnchor:
+    calling it with the sync-token variables answers 200 with no messages."""
+    qid = query_id(url)
+    if qid is None:
+        return None
+    name = qid.split(".", 1)[0]
+    variables = "".join(parse_qs(urlsplit(url).query).get("variables", []))
+    if name == "messengerMessages" and ("deliveredAt:" in variables or "countBefore:" in variables):
+        name = "messengerMessagesByAnchor"
+    return name, qid
 
 
 def load_message(text: str | None) -> str:
