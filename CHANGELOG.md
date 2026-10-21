@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.5.1 candidate)
+## 0.5.1 (2026-10-21)
 
 ### Fixed
 
