@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>chromecli fixture: frames</title>
+<style>
+  /* An e-sign-viewer-like page (0.11.1): the window doesn't scroll; the document lives in a same-origin iframe that
+     fills the viewport and scrolls its own document. A small cross-origin iframe (another port: ?other=PORT) sits at
+     the bottom; chromecli reports it as skipped unless it may read it. */
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 14px sans-serif; }
+  header { height: 50px; display: flex; gap: 8px; align-items: center; padding: 0 8px; box-sizing: border-box; }
+  .dup { width: 120px; height: 30px; overflow-y: auto; border: 1px solid #ccc; }
+  .dup p { height: 100px; margin: 0; }
+  #flat { display: block; width: 200px; height: 30px; overflow: auto; }
+  x-closed { display: block; width: 300px; height: 30px; background: #eee; }
+  #viewer { display: block; width: 100%; height: calc(100% - 100px); border: 0; }
+  #other { display: block; width: 300px; height: 40px; border: 0; }
+</style>
+</head>
+<body>
+<header>
+  <strong>sca-true-frontier</strong>
+  <div class="dup"><p>Recipients A</p></div>
+  <div class="dup"><p>Recipients B</p></div>
+  <main id="flat">Toolbar</main>
+  <x-closed id="closed-host"></x-closed>
+</header>
+<iframe id="viewer" src="frames-inner.html" title="Document viewer"></iframe>
+<script>
+  const host = document.getElementById("closed-host");
+  host.attachShadow({ mode: "closed" }).innerHTML = "<span>Closed shadow text</span>";
+  const port = new URLSearchParams(location.search).get("other");
+  if (port) {
+    const f = document.createElement("iframe");
+    f.id = "other";
+    f.title = "Other origin";
+    f.src = `http://127.0.0.1:${port}/frames-other.html`;
+    document.body.appendChild(f);
+  }
+</script>
+</body>
+</html>

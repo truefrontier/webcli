@@ -9,11 +9,17 @@ export function pageSnapshot(opts) {
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
   // Open shadow roots (web components): deep queries, deep parents, the flat (rendered) tree.
   const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const shadowOf = (n) => {
+    if (n.shadowRoot) return n.shadowRoot;
+    const d = globalThis.chrome && globalThis.chrome.dom;
+    if (!d || typeof d.openOrClosedShadowRoot !== "function") return null;
+    try { return d.openOrClosedShadowRoot(n) || null; } catch { return null; }
+  };
   const deepAll = (sel) => {
     const out = [];
     const visit = (root) => {
       out.push(...root.querySelectorAll(sel));
-      for (const n of root.querySelectorAll("*")) if (n.shadowRoot) visit(n.shadowRoot);
+      for (const n of root.querySelectorAll("*")) { const r = shadowOf(n); if (r) visit(r); }
     };
     visit(document);
     return out;
@@ -33,7 +39,8 @@ export function pageSnapshot(opts) {
         if (cs.display === "none" || cs.visibility === "hidden") return;
         if (x.tagName === "SLOT") { const a = x.assignedNodes({ flatten: true }); (a.length ? a : Array.from(x.childNodes)).forEach(walk); return; }
       }
-      for (const c of (x.shadowRoot ? x.shadowRoot.childNodes : x.childNodes)) walk(c);
+      const sr = x.nodeType === 1 ? shadowOf(x) : null;
+      for (const c of (sr ? sr.childNodes : x.childNodes)) walk(c);
     };
     walk(n);
     return out.join(" ");

@@ -100,9 +100,23 @@ NOTES = [
     "too: act if on the opener's origin, read otherwise, never on a denied origin (needs Chrome host access to that "
     "origin, else shareSkipped permission_needed). click/press results list them: openedTabs [{id, url, share}]. "
     "`list --all` adds unshared tabs as metadata (share null; denied origins never shown).",
-    "Shadow DOM: read, --elements, find, --text, --selector, wait and the page actions see inside open shadow roots "
-    "(web components like Shopify Polaris); refs work there too. Closed shadow roots and cross-origin iframes stay "
-    "invisible. script_error messages carry the page-side error (redacted in the log).",
+    "Shadow DOM: read, --elements, find, --text, --selector, wait and the page actions see inside shadow roots, open "
+    "and closed (web components like Shopify Polaris); refs work there too. script_error messages carry the "
+    "page-side error (redacted in the log).",
+    "Iframes (0.11.1): read, --elements, find, wait, scroll and screenshot --full-page also read the tab's iframes that "
+    "are on the tab's origin, or on the same site (e.g. cdn.signnow.com in app.signnow.com) when Chrome already "
+    "grants chromecli access to that origin; never other sites, denied origins, or frames inside a skipped frame. "
+    "read appends each frame's content after a `[frame N: url WxH]` line (md: an HTML comment) and lists frames "
+    "[{frameId, origin, url, chars, rect, offset}]; their elements have refs like f5:e3 (read-only: page actions take "
+    "top-frame refs only, a frame ref exits 2 bad_target reason frame_ref). Replies list what chromecli couldn't "
+    "read: skipped [{kind iframe|canvas|plugin|closed_shadow_host, frameId?, origin?, url?, rect {x,y,w,h}, reason "
+    "other_site|no_host_permission|denied|opaque_origin|parent_skipped|load_error|not_loaded|frame_unreachable|"
+    "too_many_frames|canvas_pixels|plugin_content|closed_shadow_root, detail?}]. A page that read gives ~0 chars "
+    "with a big canvas in skipped draws its text as pixels: use screenshot --full-page.",
+    "Errors carry reason (and the underlying message): no_match (element_not_found, exit 3), multiple_matches "
+    "(ambiguous_target, exit 3, with count and candidates), not_scrollable (script_error, exit 5, with scrollHeight and "
+    "clientHeight), frame_unreachable (script_error: the frame is skipped, gone or navigated), frame_ref, "
+    "page_exception, inject_failed, no_result.",
     "Previews (no --confirm) of click/type/fill/select/press send one read-only page.probe when the bridge is up: "
     "probe {found, element, gateEstimate {heuristic, wouldPrompt true|false|\"depends_on_jev\", grantSkippable}} or "
     "{found false, wouldFail CODE}; probe.error when the probe itself failed (e.g. not_shared). Nothing is dispatched.",
@@ -130,17 +144,20 @@ NOTES = [
     "`scroll TAB [--by page|N|Npx] [--up] [--to top|bottom] [--into SELECTOR] [--container SELECTOR]` (0.10.2) scrolls "
     "a Read or Act tab (a read op: no --confirm, never prompts; Off/denied/paused: the same exit 4 errors as read). "
     "Default: one page down (clientHeight - 40px). Without --container it scrolls the largest visible scrollable "
-    "element (overflow-y auto/scroll, also in open shadow roots; it must cover >= 30% of the viewport to beat the "
-    "window), else the document. JSON: {tab, url, title, origin, share, op: scroll, target {description, kind "
-    "document|element, auto, inShadow}, scrollTop, scrollLeft, scrollHeight, clientHeight, atTop, atEnd, moved, "
-    "devicePixelRatio}.",
+    "element or readable iframe document (overflow-y auto/scroll, also in shadow roots; it must cover >= 30% of the "
+    "viewport to beat the window), else the document. --container must match exactly one scrollable element across "
+    "the readable frames (html/body mean that frame's window). JSON: {tab, url, title, origin, share, op: scroll, "
+    "target {description, kind document|element, auto, inShadow, frameId?, frameOrigin?, frameUrl?}, scrollTop, "
+    "scrollLeft, scrollHeight, clientHeight, atTop, atEnd, moved, devicePixelRatio, scrollable false and skipped "
+    "[...] when nothing scrolls}.",
     "Pages that render as images (read returns ~0 chars, e.g. e-sign viewers): `screenshot TAB --full-page [--pages N "
     "(<= 50, default 50)] [--container SELECTOR] [--out DIR] [--jpeg]` scrolls the target to the top, captures a "
     "viewport, scrolls by clientHeight - 40px, and repeats until the end or N shots (~2 captures/s: Chrome's limit), "
     "then restores the scroll position (also on errors). Files: page-01.png, page-02.png ... in DIR, else a new "
     "~/.webcli/chromecli/screenshots/tab<ID>-<YYYYmmdd-HHMMSS>-full/. JSON: {tab, url, title, origin, share, fullPage, "
     "format, dir, files, count, atEnd, pages [{file, scrollTop, bytes}], target, scrollHeight, clientHeight, "
-    "overlapPx, devicePixelRatio, restored, restoredTo}. On an error the files already written stay; the error JSON "
+    "overlapPx, devicePixelRatio, restored, restoredTo, skipped?}; the target may be an iframe's document (0.11.1). "
+    "On an error the files already written stay; the error JSON "
     "has partial {count, files (names)} and restored. No --stitch (no image library in webcli): read the pages in "
     "order; neighbours overlap by ~40px.",
     "`read` JSON has url and title; text output starts with `Title:` and `URL:` lines, then a blank line.",
@@ -275,8 +292,9 @@ def show_cmd(tab, active, fmt, quiet) -> None:
 @click.option("--elements", is_flag=True, help="Add interactive elements (refs e1..eN; values are never read).")
 @agent_output_options(formats=("text", "json"), rows=False)
 def read_cmd(tab, active, as_, max_chars, elements, fmt, quiet) -> None:
-    """A shared tab's content as text or markdown (open shadow roots included). JSON: {tab, url, title, origin, as,
-    content, chars, truncated, elements?}; text: Title/URL lines, a blank line, then the content."""
+    """A shared tab's content as text or markdown (shadow roots and same-site iframes included). JSON: {tab, url,
+    title, origin, as, content, chars, truncated, elements?, frames?, skipped?}; text: Title/URL lines, a blank line,
+    then the content (then one `[skipped ...]` line per iframe/region chromecli couldn't read)."""
     args = {**_target(tab, active), "as": as_, "maxChars": max_chars, "elements": elements}
     res = bridge.request("tabs.read", args)
     if resolve_format(fmt, human="text") == "json":
@@ -289,7 +307,18 @@ def read_cmd(tab, active, as_, max_chars, elements, fmt, quiet) -> None:
         for el in res.get("elements") or []:
             click.echo(f"[{el.get('ref')}] {el.get('tag')}{'/' + el['role'] if el.get('role') else ''} "
                        f"{el.get('name') or ''}".rstrip())
+        for sk in res.get("skipped") or []:
+            click.echo(_skipped_line(sk))
     raise SystemExit(EXIT_OK)
+
+
+def _skipped_line(sk: dict) -> str:
+    """One `read` text line for something chromecli couldn't read (an iframe, a canvas, a closed shadow root)."""
+    r = sk.get("rect") or {}
+    box = f" {r.get('w')}x{r.get('h')} at {r.get('x')},{r.get('y')}" if r else ""
+    where = sk.get("url") or sk.get("origin") or sk.get("description") or ""
+    where = redact_url(str(where)) if sk.get("kind") == "iframe" else str(where)
+    return f"[skipped {sk.get('kind')}{' ' + where if where else ''}{box}: {sk.get('reason')}]"
 
 
 FULL_PAGE_MAX = 50
@@ -323,8 +352,8 @@ def _write_image(path: Path, data) -> int:
                    "scroll container; the scroll position is restored afterwards.")
 @click.option("--pages", type=click.IntRange(1, FULL_PAGE_MAX), default=FULL_PAGE_MAX, show_default=True,
               help="With --full-page: at most this many viewports.")
-@click.option("--container", default=None, help="With --full-page: the scroll container (CSS selector; open shadow "
-              "roots searched). Default: auto-detected like `scroll`.")
+@click.option("--container", default=None, help="With --full-page: the scroll container (CSS selector; shadow roots "
+              "and same-site iframes searched). Default: auto-detected like `scroll`.")
 @click.option("--out", "out_dir", type=click.Path(path_type=Path, file_okay=False), default=None,
               help="With --full-page: the folder to write into (default ~/.webcli/chromecli/screenshots/"
                    "tab<ID>-<time>-full/).")
@@ -381,6 +410,8 @@ def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | 
     path = tgt.pop("path", None)
     if path is None:
         die("The extension didn't identify the scroll target.", protocol.exit_code("script_error"), error="script_error")
+    # 0.11.1: the target can be in an iframe; every later call names the frame too.
+    where = {"path": path, **({"frameId": tgt["frameId"]} if tgt.get("frameId") else {})}
     original = {"top": first.get("scrollTop") or 0, "left": first.get("scrollLeft") or 0}
     folder = (out_dir.expanduser() if out_dir else
               config.home() / "chromecli" / "screenshots" / f"tab{tab}-{time.strftime('%Y%m%d-%H%M%S')}-full")
@@ -391,7 +422,7 @@ def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | 
 
     def restore() -> dict:
         try:
-            r = _ask("page.scroll", {"tab": tab, "path": path, "to": original}, timeout=min(bridge.timeout_seconds(), 10))
+            r = _ask("page.scroll", {"tab": tab, **where, "to": original}, timeout=min(bridge.timeout_seconds(), 10))
             return {"restored": abs((r.get("scrollTop") or 0) - original["top"]) <= 2, "restoredTo": original}
         except _Failed as f:
             err = (f.reply or {}).get("error") or {}
@@ -399,7 +430,7 @@ def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | 
                     "restoreError": err.get("code") or ("bridge_down" if f.down else "error")}
 
     try:
-        st = _ask("page.scroll", {"tab": tab, "path": path, "to": "top", "settleMs": FULL_PAGE_SETTLE_MS})
+        st = _ask("page.scroll", {"tab": tab, **where, "to": "top", "settleMs": FULL_PAGE_SETTLE_MS})
         for i in range(1, pages + 1):
             res = _ask("tabs.screenshot", {"tab": tab, "format": "jpeg" if jpeg else "png", "quality": quality, "part": i},
                        timeout=max(bridge.timeout_seconds(), 30))
@@ -414,7 +445,7 @@ def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | 
             if i == pages:
                 break
             step = max(1, int(st.get("clientHeight") or 0) - FULL_PAGE_OVERLAP)
-            nxt = _ask("page.scroll", {"tab": tab, "path": path, "by": step, "settleMs": FULL_PAGE_SETTLE_MS})
+            nxt = _ask("page.scroll", {"tab": tab, **where, "by": step, "settleMs": FULL_PAGE_SETTLE_MS})
             if (nxt.get("moved") or 0) <= 0:  # it didn't move: that's the end, whatever atEnd says
                 at_end = True
                 break
@@ -438,7 +469,9 @@ def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | 
             "share": first.get("share"), "fullPage": True, "format": "jpeg" if jpeg else "png",
             "dir": str(folder.resolve()), "files": [s["file"] for s in shots], "count": len(shots), "atEnd": at_end,
             "pages": shots, "target": tgt, "scrollHeight": st.get("scrollHeight"), "clientHeight": st.get("clientHeight"),
-            "overlapPx": FULL_PAGE_OVERLAP, "devicePixelRatio": first.get("devicePixelRatio"), **back}
+            "overlapPx": FULL_PAGE_OVERLAP, "devicePixelRatio": first.get("devicePixelRatio"),
+            **({"skipped": first["skipped"]} if first.get("skipped") else {}),
+            **({"scrollable": False} if first.get("scrollable") is False else {}), **back}
 
 
 def _by(value: str | None) -> str | int | None:
@@ -458,13 +491,16 @@ def _by(value: str | None) -> str | int | None:
 @click.option("--by", "by", default=None, help="page (the target's height minus 40px; the default) or N pixels.")
 @click.option("--up", is_flag=True, help="Scroll up instead of down (with --by).")
 @click.option("--to", "to", type=click.Choice(["top", "bottom"]), default=None, help="Jump to the top or the bottom.")
-@click.option("--into", default=None, help="Scroll this element (CSS selector; open shadow roots searched) into view.")
-@click.option("--container", default=None, help="The scroll container (CSS selector). Default: the largest visible "
-              "scrollable element (inner viewers like signNow), else the window.")
+@click.option("--into", default=None, help="Scroll this element (CSS selector; shadow roots and same-site iframes "
+              "searched) into view.")
+@click.option("--container", default=None, help="The scroll container (CSS selector; shadow roots and same-site "
+              "iframes searched). Default: the largest visible scrollable element or iframe document (inner viewers "
+              "like signNow), else the window.")
 @agent_output_options(rows=False)
 def scroll_cmd(tab, active, by, up, to, into, container, fmt, quiet) -> None:
     """Scroll a shared tab (Share-read is enough; never prompts). JSON: {tab, origin, share, op, url, title, target
-    {description, kind, auto, inShadow}, scrollTop, scrollLeft, scrollHeight, clientHeight, atTop, atEnd, moved}."""
+    {description, kind, auto, inShadow, frameId?, frameOrigin?, frameUrl?}, scrollTop, scrollLeft, scrollHeight,
+    clientHeight, atTop, atEnd, moved, scrollable?, skipped?}."""
     target = _target(tab, active)
     actions = [n for n, v in (("--by", by), ("--to", to), ("--into", into)) if v not in (None, "")]
     if len(actions) > 1:

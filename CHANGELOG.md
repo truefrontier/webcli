@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.11.1 (2026-10-22)
+
+chromecli on pages whose content lives in iframes or closed shadow roots (field report: a signNow agreement, where
+`read` gave 0 chars, `scroll` and `--full-page` picked the window at 1042/1042, and `--container` failed with a bare
+`script_error`).
+
+### Added
+
+- **Iframes**: `read`, `--elements`, `find`, `wait`, `scroll` and `screenshot --full-page` also run in the tab's
+  iframes that are on the tab's origin, or on the same site (scheme + registrable domain) when Chrome already grants
+  chromecli host access to that origin. Other sites, denied origins, opaque origins and frames inside a skipped frame
+  are never read (no script runs there) and are listed as skipped. New extension permission `webNavigation` (lists
+  frames; no page access). No `debugger` permission.
+  - `read`: the top frame's content, then each frame's after `[frame N: url WxH]` (md: an HTML comment); `frames
+    [{frameId, origin, url, chars, rect, offset}]`; subframe element refs are `f<frameId>:e<n>` with `frame: N`.
+  - `find` ranks elements from every readable frame; `wait --selector/--text` matches in any readable frame. Page
+    actions stay top-frame only: a frame ref exits 2 `bad_target` (`reason: "frame_ref"`).
+  - `scroll` auto-detect works across frames: an iframe whose document scrolls (or a scroller inside it) covering
+    ≥ 30% of the viewport wins. `target` adds `frameId`, `frameOrigin`, `frameUrl`; `--full-page` passes `frameId`
+    on every scroll (host log `frame=N`). `--container` / `--into` search every readable frame.
+- **Closed shadow roots** are read through `chrome.dom.openOrClosedShadowRoot` (`--elements` marks them
+  `closedShadow: true`).
+- **`skipped`** in `read`, `find`, `scroll` (when nothing scrolls or frames were left out) and `--full-page`:
+  `[{kind iframe|canvas|plugin|closed_shadow_host, frameId?, origin?, url?, rect, reason, detail?}]`, reasons
+  `other_site`, `no_host_permission`, `denied`, `opaque_origin`, `parent_skipped`, `load_error`, `not_loaded`,
+  `frame_unreachable`, `too_many_frames`, `canvas_pixels`, `plugin_content`, `closed_shadow_root`. `read` text output
+  prints one `[skipped ...]` line each. `scroll` adds `scrollable: false` when nothing scrolls.
+- **Error reasons**: errors keep their code/exit and add `reason` plus the underlying message: `no_match`
+  (element_not_found; `matches`), `multiple_matches` (ambiguous_target; `count`, `candidates`), `not_scrollable`
+  (script_error; `scrollHeight`, `clientHeight`), `frame_unreachable`, `frame_ref`, `bad_selector`, `target_gone`,
+  `page_exception`, `inject_failed`, `no_result`.
+
+### Fixed
+
+- A page script's error lost its code and message on the way out of the extension (the reply was spread with
+  `code: undefined, message: undefined`), so e.g. `scroll --container '[class*=scroll]'` with no match printed
+  `{"error": "script_error", "message": "script_error"}`. It now prints `element_not_found` / `no_match` (exit 3) with
+  the message.
+
 ## 0.11.0 (2026-10-22)
 
 ### Added
