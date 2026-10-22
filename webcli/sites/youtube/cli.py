@@ -1,4 +1,5 @@
-"""`webcli youtube`: your YouTube watch history, read-only, from your own signed-in, hidden Chrome (ytcli parity)."""
+"""`webcli youtube`: your YouTube watch history, read-only, from your own signed-in, hidden Chrome (ytcli parity).
+`playlist create` is the one write: a dry run unless --confirm."""
 
 from __future__ import annotations
 
@@ -10,7 +11,10 @@ from webcli.core.output import (
     EXIT_AUTH,
     EXIT_NOT_FOUND,
     EXIT_OK,
+    EXIT_SENT_UNVERIFIED,
+    EXIT_USAGE,
     agent_output_options,
+    confirm_write,
     die,
     emit_csv,
     emit_json,
@@ -21,11 +25,12 @@ from webcli.core.output import (
     select_fields,
     truncate,
     warn,
+    write_options,
 )
 from webcli.sites import data
 from webcli.sites.youtube import ADAPTER as SITE
-from webcli.sites.youtube.endpoints import DEFAULT_LIMIT
-from webcli.sites.youtube.parse import parse_since
+from webcli.sites.youtube.endpoints import DEFAULT_LIMIT, PRIVACY
+from webcli.sites.youtube.parse import parse_since, video_id
 
 FIELDS = ("title", "channel", "channelUrl", "videoId", "url", "watchedAt", "watchedAtPrecision", "durationSec",
           "isShort", "source")
@@ -46,11 +51,26 @@ NOTES = [
     "YYYY-MM-DD or ISO 8601 (local time when no offset).",
     "Rows: title, channel, channelUrl, videoId, url, watchedAt (ISO 8601), watchedAtPrecision (exact|day), "
     "durationSec (YouTube source only), isShort, source (myactivity|youtube-history). No history exits 3.",
+    "`playlist create --title T VIDEO...` takes video ids or links (youtu.be, watch?v=, /shorts/, /embed/, /live/), "
+    "in playlist order; a bad one or one given twice exits 2. --privacy defaults to private.",
 ]
-WRITES = ["Nothing: no likes, subscriptions, comments, playlist edits, history pause or clear. The guard allows only "
-          "youtubei's browse and account reads, and My Activity's own list paging."]
+WRITES = [
+    "Only `playlist create --title T [--privacy private|unlisted|public] VIDEO... --confirm` (alias --yes): one new "
+    "playlist of exactly those videos, in that order, on the signed-in channel. Without --confirm it is a dry run: it "
+    "prints {dryRun: true, title, privacy, videoIds, videoCount}, opens no browser, writes nothing, and exits 0. "
+    "--dry-run with --confirm exits 2.",
+    "A confirmed create passes the guard once: one youtubei playlist/create whose body is exactly that title, privacy, "
+    "and list, only while webcli's own call is in flight. It then reads the playlist back. Never retried.",
+    "Exit codes for a confirmed create: 0 when the read-back shows exactly the list ({created: true, confirmed: true, "
+    "playlistId, url}). 8 (error \"sent_unverified\") when the create went out but the read-back didn't match or "
+    "YouTube's answer was unreadable (playlistId may be null): check your playlists instead of creating it again. 5 "
+    "when the guard passed nothing (nothing was created).",
+    "Never: likes, subscriptions, comments, other playlist edits (adding to or deleting a playlist), history pause or "
+    "clear.",
+]
 
-group = data.site_group(SITE, "YouTube watch history, read-only (unofficial). Identity google:default.")
+group = data.site_group(SITE, "YouTube watch history, read-only, and playlist create: a dry run unless --confirm "
+                              "(unofficial). Identity google:default.")
 
 
 def _since(ctx: click.Context, param: click.Parameter, value: str | None) -> datetime | None:
@@ -123,6 +143,46 @@ def history_cmd(limit, since, source, fmt, compact, select, quiet, as_csv) -> No
     else:
         rows_table("YouTube watch history", [{c: _cell(r, c) for c in COLUMNS} for r in rows], COLUMNS)
     note_showing(len(rows), quiet=quiet, noun="watches")
+    raise SystemExit(EXIT_OK)
+
+
+@group.group("playlist")
+def playlist_group() -> None:
+    """Create a playlist (a dry run unless --confirm)."""
+
+
+@playlist_group.command("create")
+@click.argument("videos", nargs=-1, required=True, metavar="VIDEO...")
+@click.option("--title", required=True, help="The playlist's title.")
+@click.option("--privacy", type=click.Choice(sorted(PRIVACY)), default="private", show_default=True,
+              help="Who can see it: unlisted means anyone with the link.")
+@write_options
+@agent_output_options(formats=("table", "json"), rows=False)
+def playlist_create_cmd(videos, title, privacy, dry_run, confirm, fmt, quiet) -> None:
+    """Create one playlist of VIDEO... (ids or links), in order. A DRY RUN unless --confirm: prints the plan, opens
+    nothing."""
+    if dry_run and confirm:
+        raise click.UsageError("--dry-run and --confirm contradict each other; pass one.")
+    title = title.strip()
+    if not title:
+        die("--title is empty.", EXIT_USAGE)
+    try:
+        ids = [video_id(v) for v in videos]
+    except ValueError as exc:
+        die(str(exc), EXIT_USAGE)
+    if len(set(ids)) != len(ids):
+        twice = sorted({i for i in ids if ids.count(i) > 1})
+        die(f"Video given more than once: {', '.join(twice)}.", EXIT_USAGE)
+    plan = {"action": "create playlist", "title": title, "privacy": privacy, "videoIds": ids, "videoCount": len(ids)}
+    if not confirm_write(confirm, plan):
+        raise SystemExit(EXIT_OK)
+    out = data.call(SITE, "create_playlist", title, ids, privacy, confirm=True)
+    data.emit_record("Created playlist", out, fmt)
+    if not out["confirmed"]:
+        where = out["url"] or "your YouTube playlists"
+        die(f"The playlist was created, but it couldn't be verified: {where} didn't show exactly the "
+            f"{len(ids)} videos.", EXIT_SENT_UNVERIFIED, error="sent_unverified",
+            hint=f"Check {where} instead of creating it again (a create is never retried).")
     raise SystemExit(EXIT_OK)
 
 

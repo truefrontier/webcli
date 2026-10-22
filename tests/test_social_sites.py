@@ -80,7 +80,7 @@ WIRING = [
     ("messages", "status", [], RECORD),
     ("messages", "list", [], {"--limit"} | ROWS),
     ("messages", "threads", [], {"--limit"} | ROWS),
-    ("messages", "read", ["QUERY"], {"--limit"} | ROWS),
+    ("messages", "read", ["QUERY"], {"--limit", "--image-out"} | ROWS),
     ("messages", "search", ["QUERY"], {"--limit"} | ROWS),
     ("messages", "send", [], {"--to", "--text", "--dry-run", "--confirm", "--yes"} | RECORD),
 ]

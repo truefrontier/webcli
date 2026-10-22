@@ -46,7 +46,14 @@ RELAY_READS = frozenset({"Messaging/ReceiveMessages", "Messaging/AckMessages", "
 SESSION_HOST = "instantmessaging-pa.clients6.google.com"
 SESSION_RPCS = frozenset({"Registration/SignInGaia", "Messaging/Echo"})
 # LIBGM: everything else the relay serves stays blocked: Pairing/RegisterPhoneRelay and RefreshPhoneRelay (a new QR
-# code: only the unguarded login window pairs), Pairing/RevokeRelayPairing (unpair), and /upload (attachments).
+# code: only the unguarded login window pairs), Pairing/RevokeRelayPairing (unpair), and POSTs to /upload (attachment
+# uploads); a GET there, the download below, only for `read --image-out`.
+# LIVE (2026-10-21), LIBGM (DownloadMedia: a GET to UploadMediaURL, the attachment id and key in a header): the app
+# fetches an image's encrypted bytes with a GET to MEDIA_HOST + MEDIA_PATH (no query) and decrypts them in the page,
+# so a blocked GET leaves every image bubble a spinner. The guard passes that GET only on a page opened with the
+# core guard's download permission.
+MEDIA_HOST = "instantmessaging-pa.googleapis.com"
+MEDIA_PATH = "/upload"
 # LIVE, not needed for the list or a conversation, so blocked too: the regional relay instantmessaging-pa-jms-us
 # (Registration/ListIdentities and SignInSecondary, Messaging/Echo and PullMessages), and past the relay the avatars
 # (lh3.googleusercontent.com), the account bar (ogads-pa), web attestation (waa-pa), cookie rotation
@@ -105,6 +112,11 @@ SELECTORS = {
              "[data-e2e-text-message-content]", "mws-text-message-part",
              ".text, [data-e2e-message-text], .message-text, .message-content"],
     "image": "mws-image-message-part, [data-e2e-image-message]",
+    # LIVE (2026-10-21): inside an image part, the thumbnail (its <img> a blob: of the decrypted preview, 450px
+    # wide); clicking it opens the lightbox, whose <img> is a blob: of the full-size image (3024px). Escape closes it.
+    "imageOpen": "mws-image, [data-e2e-message-image]",
+    "lightbox": "mws-lightbox",  # open while it is in the page, its image loaded or not
+    "lightboxImage": "mws-image img",
     "aria": "mws-text-message-part, [aria-label]",
     "stamp": ["mws-absolute-timestamp", "mws-relative-timestamp", ".time, [data-e2e-timestamp], .timestamp"],
     # The open conversation's title (GUESS): send checks it names the resolved conversation when one is found.
@@ -127,3 +139,5 @@ SETTLE_MS = 500  # rows and bubbles hydrate after they appear
 BUTTON_SECONDS = 8  # the send button enables after the text is in
 SEND_SECONDS = 10  # the guard's one send slot stays open this long after the click
 CONFIRM_SECONDS = 15  # the thread shows the sent text within this
+IMAGE_SECONDS = 20  # the lightbox shows the full-size image within this (a phone photo is ~7 MB over the relay)
+CLOSE_SECONDS = 5  # the lightbox is gone within this after Escape

@@ -48,20 +48,50 @@ def conversations(raw) -> list[dict]:
             for item in raw or [] if isinstance(item, dict)]
 
 
-def messages(raw) -> list[dict]:
-    """One conversation's bubbles {direction: sent|received, text, timestamp}, oldest first. An image with no text is
-    "[image]"; a bubble with neither is left out (gmsg)."""
-    rows = []
-    for item in raw or []:
+def _bubbles(raw) -> list[tuple[int, dict]]:
+    """(index in `raw`, row) for each bubble that makes a row: see messages()."""
+    out = []
+    for index, item in enumerate(raw or []):
         if not isinstance(item, dict):
             continue
         text = _clean(item.get("text")) or ("[image]" if item.get("image") else "")
         if not text:
             continue
         aria = ARIA_TIME.search(item.get("aria") or "")
-        rows.append({"direction": "sent" if item.get("sent") else "received", "text": text,
-                     "timestamp": _clean(item.get("time")) or (aria[1].strip() if aria else "")})
-    return rows
+        out.append((index, {"direction": "sent" if item.get("sent") else "received", "text": text,
+                            "timestamp": _clean(item.get("time")) or (aria[1].strip() if aria else "")}))
+    return out
+
+
+def messages(raw, saved: dict[int, list[str]] | None = None) -> list[dict]:
+    """One conversation's bubbles {direction: sent|received, text, timestamp}, oldest first. An image with no text is
+    "[image]"; a bubble with neither is left out (gmsg). With `saved` ({index in raw: paths}, `read --image-out`),
+    every row also has images: the paths its bubble's images were saved to ([] for none)."""
+    return [row if saved is None else {**row, "images": saved.get(index, [])} for index, row in _bubbles(raw)]
+
+
+def image_parts(raw, limit: int | None = None) -> list[tuple[int, int, int]]:
+    """(bubble index in raw, part index in the bubble, n) for each image in the bubbles of the last `limit` rows, in
+    order. n numbers the image among every image the conversation shows (1-based), so a file name stays the same
+    whatever --limit is. A bubble's `images` is its image count (1 when only `image` is given)."""
+    counts = [int(item.get("images") or bool(item.get("image"))) if isinstance(item, dict) else 0 for item in raw or []]
+    rows = [index for index, _row in _bubbles(raw)]
+    keep = set(rows[-limit:] if limit else rows)
+    out, n = [], 0
+    for index, count in enumerate(counts):
+        for part in range(count):
+            n += 1
+            if index in keep:
+                out.append((index, part, n))
+    return out
+
+
+def image_ext(data: bytes) -> str:
+    """A saved image's file extension, from its first bytes: .jpg, .png, .gif, .webp, else .bin."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    magic = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"), (b"GIF8", ".gif"))
+    return next((ext for head, ext in magic if data.startswith(head)), ".bin")
 
 
 def resolve(rows: list[dict], query: str) -> dict | None:

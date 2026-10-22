@@ -1,5 +1,6 @@
 """youtube.com (webcli youtube): ytcli ported onto the shared core. Identity provider "google" (the google:default
-profile gemini's login signs in). Read-only watch history."""
+profile gemini's login signs in). Read-only watch history; the one write is `playlist create`, a dry run unless
+--confirm."""
 
 from __future__ import annotations
 
@@ -17,10 +18,10 @@ ADAPTER = Site(
     kind="data",
     provider="google",
     summary="YouTube watch history, read-only: history (My Activity's exact times, else YouTube's day precision), "
-            "status (ytcli parity)",
+            "status (ytcli parity); playlist create (dry run unless --confirm)",
     cli=_cli,
     fetch="webcli.sites.youtube.fetch",
-    ops=("status", "history"),
-    verbs={"history": Strategy.COOKIE, "status": Strategy.COOKIE},
+    ops=("status", "history", "create_playlist"),
+    verbs={"history": Strategy.COOKIE, "status": Strategy.COOKIE, "playlist create": Strategy.COOKIE},
     status_op="status",
 )

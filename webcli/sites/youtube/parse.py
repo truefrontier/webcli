@@ -1,4 +1,5 @@
-"""Pure parsers for youtubei responses (FEhistory browse, account_menu) and --since, from ytcli. No browser code."""
+"""Pure parsers for youtubei responses (FEhistory browse, account_menu, a playlist's VL browse), --since, and video
+ids, from ytcli. No browser code."""
 
 from __future__ import annotations
 
@@ -6,7 +7,7 @@ import base64
 import re
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any, Iterator
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 YT = "https://www.youtube.com"
 _MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
@@ -20,6 +21,8 @@ _VIDEO_KEYS = ("videoRenderer", "lockupViewModel", "shortsLockupViewModel", "ree
 # ponytail: matches the bytes of protobuf field 23 (tag ba 01, length 24) instead of decoding the
 # message; checked on 271/271 real Shorts. Swap for a wire-format reader if YouTube reorders it.
 _REEL_CHANNEL = re.compile(rb"\xba\x01\x18(UC[\w-]{22})")
+VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_VIDEO_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 
 
 def text_of(node: Any) -> str | None:
@@ -344,3 +347,53 @@ def take_newer(rows: list[dict], cutoff: datetime | None) -> tuple[list[dict], b
         if is_older(row, cutoff):
             return rows[:i], True
     return list(rows), False
+
+
+def video_id(text: str) -> str:
+    """The 11-character video id in an id, a youtu.be/ID link, or a youtube.com watch?v=ID, /shorts/ID, /embed/ID,
+    or /live/ID URL. ValueError for anything else."""
+    text = text.strip()
+    if VIDEO_ID.fullmatch(text):
+        return text
+    parts = urlsplit(text if "//" in text else f"https://{text}")
+    host = (parts.hostname or "").lower()
+    found = None
+    if host == "youtu.be":
+        found = parts.path.strip("/")
+    elif host in _VIDEO_HOSTS:
+        if parts.path == "/watch":
+            found = (parse_qs(parts.query).get("v") or [""])[0]
+        elif parts.path.split("/")[1:2] in (["shorts"], ["embed"], ["live"]):
+            found = parts.path.split("/")[2] if len(parts.path.split("/")) > 2 else ""
+    if found and VIDEO_ID.fullmatch(found):
+        return found
+    raise ValueError(f"Not a YouTube video id or link: {text!r}")
+
+
+def _playlist_items(resp: dict) -> list:
+    """The playlist's own list items: playlistVideoListRenderer's on a VL browse page, a continuation's appended
+    items otherwise."""
+    for found in _find(resp.get("contents"), "playlistVideoListRenderer"):
+        return found.get("contents") or [] if isinstance(found, dict) else []
+    items: list = []
+    for action in _find(resp.get("onResponseReceivedActions"), "appendContinuationItemsAction"):
+        items += (action.get("continuationItems") or []) if isinstance(action, dict) else []
+    return items
+
+
+def playlist_page(resp: dict) -> tuple[list[str], str | None]:
+    """(video ids in order, the next page's token) for one VL<playlistId> browse page or continuation. Only the
+    playlist's own rows: the recommendations YouTube appends below it (their own section and continuation) are left
+    out."""
+    ids: list[str] = []
+    token = None
+    for item in _playlist_items(resp):
+        if not isinstance(item, dict):
+            continue
+        row = item.get("playlistVideoRenderer")
+        if isinstance(row, dict) and isinstance(row.get("videoId"), str):
+            ids.append(row["videoId"])
+        command = next(_find(item.get("continuationItemRenderer"), "continuationCommand"), None)
+        if isinstance(command, dict) and command.get("token"):
+            token = command["token"]
+    return ids, token

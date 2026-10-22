@@ -40,12 +40,13 @@ SITES = ("keep", "photos", "youtube", "recorder", "contacts", "gmail")
 VERBS = {
     "keep": {"list", "get", "info", "search", "status", "agent-help"},
     "photos": {"list", "search", "info", "albums", "download", "status", "agent-help"},
-    "youtube": {"history", "status", "agent-help"},
+    "youtube": {"history", "status", "playlist", "agent-help"},
     "recorder": {"list", "info", "search", "transcript", "download", "sync", "status", "agent-help"},
     "contacts": {"list", "get", "search", "other", "labels", "export", "status", "label", "agent-help"},
     "gmail": {"filters", "status", "agent-help"},
 }
-SUBVERBS = {("contacts", "label"): {"add", "remove"}, ("gmail", "filters"): {"list", "create", "delete"}}
+SUBVERBS = {("contacts", "label"): {"add", "remove"}, ("gmail", "filters"): {"list", "create", "delete"},
+            ("youtube", "playlist"): {"create"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
 WRITE = {"--dry-run", "--confirm", "--yes"} | RECORD

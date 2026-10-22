@@ -15,6 +15,10 @@ POLICY (every read):
     GET_OR_CREATE_CONVERSATION, settings, group edits), pairing and unpairing, attachment uploads, a body that doesn't
     read as exactly one action (a field given twice counts as unreadable), telemetry, and every other host.
 
+Downloads (`read --image-out` alone): while the page holds the core guard's download permission, also the GET (only
+GET, https, no query) to MEDIA_HOST + MEDIA_PATH, the app's encrypted-attachment download. POSTs there (uploads) stay
+blocked with or without it, and download adds nothing else.
+
 send_policy(scope) is `send --confirm`'s alone, and counts only while the command's page holds the core guard's send
 permission. On top of the reads it passes ONE SEND_MESSAGE, and only while the scope is armed. fetch.send arms it
 after checking in the page that the open conversation is the resolved one, that the compose box holds exactly the
@@ -41,6 +45,8 @@ from webcli.sites.messages.endpoints import (
     ACTIONS,
     DATA_EVENT,
     HOSTS,
+    MEDIA_HOST,
+    MEDIA_PATH,
     READ_ACTIONS,
     RELAY_HOSTS,
     RELAY_READS,
@@ -213,8 +219,17 @@ def send_allowed(method: str, url: str, body: bytes | None, scope: SendScope | N
     return True
 
 
-def request_allowed(method: str, url: str, body: bytes | None = None, *, scope: SendScope | None = None) -> bool:
-    return read_allowed(method, url, body) or send_allowed(method, url, body, scope)
+def media_allowed(method: str, url: str) -> bool:
+    """The app's attachment download: a GET to exactly https://MEDIA_HOST/MEDIA_PATH, with no query."""
+    parts = urlsplit(url)
+    return (method.upper() == "GET" and _secure(url) and parts.hostname == MEDIA_HOST and parts.path == MEDIA_PATH
+            and not parts.query)
+
+
+def request_allowed(method: str, url: str, body: bytes | None = None, *, scope: SendScope | None = None,
+                    download: bool = False) -> bool:
+    return (read_allowed(method, url, body) or (download and media_allowed(method, url))
+            or send_allowed(method, url, body, scope))
 
 
 def _body(request: "Request") -> bytes | None:
@@ -241,10 +256,12 @@ def _describe(request: "Request") -> str:
 
 def send_policy(scope: SendScope | None) -> Policy:
     """The policy for one command. A scope counts only while the page holds send (state.send): only a confirmed
-    `send` opens its page that way."""
+    `send` opens its page that way. The media download counts only while it holds download (state.download): only
+    `read --image-out` opens its page that way."""
 
     def allowed(request: "Request", state: Guard) -> bool:
-        return request_allowed(request.method, request.url, _body(request), scope=scope if state.send else None)
+        return request_allowed(request.method, request.url, _body(request), scope=scope if state.send else None,
+                               download=state.download)
 
     return Policy("messages", allowed, _describe)
 

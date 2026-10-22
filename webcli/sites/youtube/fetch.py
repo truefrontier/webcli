@@ -1,4 +1,5 @@
-"""Browser-side work for webcli youtube: status and watch history from two sources (ytcli's). READ-ONLY.
+"""Browser-side work for webcli youtube: status and watch history from two sources (ytcli's), and the one write,
+create_playlist.
 
 Every youtubei call runs inside the youtube.com page (page.evaluate + fetch). The SAPISIDHASH header is computed
 there from document.cookie, so cookie values never reach Python, stdout, or logs. My Activity is read off its own
@@ -17,7 +18,8 @@ from urllib.parse import urlsplit
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from webcli.core import browser
-from webcli.core.errors import AuthRequired
+from webcli.core.errors import AuthRequired, UsageError
+from webcli.sites.google import blocked
 from webcli.sites.youtube import myactivity
 from webcli.sites.youtube.endpoints import (
     APP_HOST,
@@ -25,10 +27,20 @@ from webcli.sites.youtube.endpoints import (
     MAX_SCROLLS,
     MYACTIVITY_HOST,
     MYACTIVITY_URL,
+    PLAYLIST_URL,
+    PRIVACY,
     SIGN_IN_URL,
+    VERIFY_TRIES,
 )
-from webcli.sites.youtube.guard import POLICY
-from webcli.sites.youtube.parse import account_from_menu, channel_names, history_page, name_channels, take_newer
+from webcli.sites.youtube.guard import POLICY, WriteScope, write_policy
+from webcli.sites.youtube.parse import (
+    account_from_menu,
+    channel_names,
+    history_page,
+    name_channels,
+    playlist_page,
+    take_newer,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -49,7 +61,8 @@ class VerificationRequired(AuthRequired):
         super().__init__(message)
 
 
-# Only ever called with "browse", "account/account_menu", or "account/accounts_list" (the guard allows no other).
+# Called with "browse", "account/account_menu", "account/accounts_list", and (create_playlist only, behind its write
+# scope) "playlist/create"; the guard allows no other. redirect: 'error', so no allowed POST is replayed elsewhere.
 YT_CALL_JS = """
 async ([endpoint, extra]) => {
   const cfg = (k) => window.ytcfg.get(k);
@@ -86,7 +99,7 @@ async ([endpoint, extra]) => {
   if (visitor) headers['X-Goog-Visitor-Id'] = visitor;
   const key = encodeURIComponent(cfg('INNERTUBE_API_KEY'));
   const res = await fetch(`/youtubei/v1/${endpoint}?key=${key}&prettyPrint=false`, {
-    method: 'POST', credentials: 'include', headers, body: JSON.stringify({context, ...extra}),
+    method: 'POST', credentials: 'include', redirect: 'error', headers, body: JSON.stringify({context, ...extra}),
   });
   let json = null;
   try { json = await res.json(); } catch (e) {}
@@ -247,3 +260,68 @@ async def history(source: str = "auto", limit: int | None = None, since: str | N
             return {"rows": rows, "notes": notes}
         notes.append(f"My Activity unavailable ({reason}); using YouTube history (day precision).")
         return {"rows": await youtube_history(page, limit=limit, cutoff=cutoff), "notes": notes}
+
+
+async def _playlist_ids(page: "Page", playlist_id: str) -> list[str]:
+    """Every video id the playlist shows, in order: its VL browse page and continuations."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    body: dict = {"browseId": f"VL{playlist_id}"}
+    while True:
+        rows, token = playlist_page(await yt_call(page, "browse", body))
+        ids += rows
+        if not token or token in seen:
+            return ids
+        seen.add(token)
+        body = {"continuation": token}
+
+
+async def create_playlist(title: str, video_ids: list[str], privacy: str = "private", *, confirm: bool = False,
+                          headed: bool = False) -> dict:
+    """Create one playlist of `video_ids` (in order) titled `title`, `privacy` private|unlisted|public. A WRITE: runs
+    only with confirm=True; the CLI's dry run never calls it.
+
+    The page opens with send on and write_policy(scope); the scope is armed only around webcli's own playlist/create
+    call, and the guard passes exactly one whose body is this title, privacy, and list. Then the playlist is read
+    back (VL browse). {created, confirmed, playlistId, url, title, privacy, videoIds, shownCount, account}: confirmed
+    when the read-back shows exactly the list. Once the call went out, created is True even when YouTube's answer was
+    unreadable (playlistId null): never retried. RuntimeError when the guard passed nothing (nothing was created).
+    """
+    if not confirm:
+        raise UsageError("create_playlist writes: it runs only with confirm=True.")
+    if not video_ids:
+        raise UsageError("A playlist needs at least one video.")
+    scope = WriteScope(title, PRIVACY[privacy], tuple(video_ids))
+    async with browser.site_page(write_policy(scope), send=True) as page:
+        if not await signed_in(page):
+            raise AuthRequired("Not signed in to YouTube.")
+        account = await _account(page)
+        body = {"title": title, "privacyStatus": scope.privacy, "videoIds": list(video_ids)}
+        scope.armed = True
+        try:
+            result = await page.evaluate(YT_CALL_JS, ["playlist/create", body])
+        except Exception:  # whether it went out is the guard's to say
+            result = {}
+        finally:
+            scope.armed = False
+        if not scope.used:
+            raise RuntimeError(f"The guard passed no playlist/create: nothing was created.{blocked()}")
+        answer = result.get("json") if result.get("status") == 200 else None
+        playlist_id = answer.get("playlistId") if isinstance(answer, dict) else None
+        out = {"created": True, "confirmed": False, "playlistId": playlist_id,
+               "url": PLAYLIST_URL.format(id=playlist_id) if playlist_id else None, "title": title,
+               "privacy": privacy, "videoIds": list(video_ids), "shownCount": None,
+               "account": account.get("handle") or account.get("accountName")}
+        if not isinstance(playlist_id, str):
+            return out
+        try:  # the create went out: from here on, any failure only leaves it unconfirmed
+            for attempt in range(VERIFY_TRIES):
+                shown = await _playlist_ids(page, playlist_id)
+                out["shownCount"] = len(shown)
+                if shown == list(video_ids):
+                    out["confirmed"] = True
+                    break
+                await page.wait_for_timeout(1500 * (attempt + 1))
+        except Exception:
+            pass
+    return out

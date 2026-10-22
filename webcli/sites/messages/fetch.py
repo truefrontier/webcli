@@ -16,23 +16,28 @@ opens with send on and send_policy(scope); see send() for the checks made before
 from __future__ import annotations
 
 import asyncio
+import base64
 from typing import TYPE_CHECKING, Callable, NoReturn
 from urllib.parse import urlsplit
 
 from webcli.core import browser, guard
 from webcli.core.errors import AuthRequired, NotFound, UsageError
+from webcli.sites import google
 from webcli.sites.google import blocked
 from webcli.sites.messages import parse
 from webcli.sites.messages.endpoints import (
     APP_HOST,
     APP_URL,
     BUTTON_SECONDS,
+    CLOSE_SECONDS,
     CONFIRM_SECONDS,
     EMPTY_POLLS,
+    IMAGE_SECONDS,
     INPUTS,
     LOAD_SECONDS,
     LOGIN_URL,
     MESSAGES_SECONDS,
+    ORIGIN,
     POLL_MS,
     SELECTORS,
     SEND_BUTTON,
@@ -95,8 +100,36 @@ MESSAGES_JS = """/* messages:messages */ (s) => [...document.querySelectorAll(s.
   return {sent: out === 'true' || msg.classList.contains('outgoing') || core.classList.contains('outgoing')
                 || msg.classList.contains('sent') || !!msg.querySelector(s.outgoing),
           text: text ? (text.textContent || '').trim() : '', image: !!msg.querySelector(s.image),
+          images: msg.querySelectorAll(s.image).length,
           aria: part ? part.getAttribute('aria-label') || '' : '', time: stamp ? (stamp.textContent || '').trim() : ''};
 })"""
+# An image part's thumbnail <img>; open-image clicks it, as a click would, opening the lightbox.
+IMAGE_PART_JS = """(s, i, k) => { const msg = document.querySelectorAll(s.message)[i];
+  return msg ? msg.querySelectorAll(s.image)[k] || null : null; }"""
+OPEN_IMAGE_JS = f"""/* messages:open-image */ ([s, i, k]) => {{
+  const part = ({IMAGE_PART_JS})(s, i, k), el = part && (part.querySelector(s.imageOpen) || part);
+  if (!el) return false;
+  el.click();
+  return true;
+}}"""
+PREVIEW_JS = f"""/* messages:preview */ ([s, i, k]) => {{
+  const part = ({IMAGE_PART_JS})(s, i, k), img = part && part.querySelector('img');
+  return img && img.complete && img.naturalWidth ? img.currentSrc || img.src : null;
+}}"""
+LIGHTBOX_JS = """/* messages:lightbox */ (s) => {
+  const box = document.querySelector(s.lightbox), img = box && box.querySelector(s.lightboxImage);
+  return box ? {src: img && img.complete && img.naturalWidth ? img.currentSrc || img.src : null} : null;
+}"""
+BLOB_JS = """/* messages:blob */ async (src) => {
+  const blob = await (await fetch(src)).blob();
+  return await new Promise((ok, fail) => {
+    const reader = new FileReader();
+    reader.onload = () => ok(reader.result);
+    reader.onerror = () => fail(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}"""
+BLOB_PREFIX = f"blob:{ORIGIN}/"  # an image the app decrypted into the page: reading it makes no request
 HEADER_JS = """/* messages:header */ (sels) => {
   for (const sel of sels) { const el = document.querySelector(sel); if (el) return (el.textContent || '').trim(); }
   return null;
@@ -182,14 +215,72 @@ async def _bubbles(page: "Page") -> list[dict]:
     return parse.messages(await page.evaluate(MESSAGES_JS, SELECTORS))
 
 
-async def _loaded(page: "Page") -> list[dict]:
-    """The open conversation's bubbles, once they have hydrated (or MESSAGES_SECONDS have passed)."""
+async def _hydrated(page: "Page") -> list[dict]:
+    """The open conversation's raw bubbles (MESSAGES_JS), once they have hydrated (or MESSAGES_SECONDS have
+    passed)."""
     for _ in range(_polls(MESSAGES_SECONDS)):
         if (await _snapshot(page)).get("messages"):
             break
         await page.wait_for_timeout(POLL_MS)
     await page.wait_for_timeout(SETTLE_MS)
-    return await _bubbles(page)
+    return await page.evaluate(MESSAGES_JS, SELECTORS)
+
+
+async def _loaded(page: "Page") -> list[dict]:
+    """The open conversation's bubbles, once they have hydrated (or MESSAGES_SECONDS have passed)."""
+    return parse.messages(await _hydrated(page))
+
+
+async def _closed(page: "Page") -> bool:
+    """No lightbox open: Escape one that is, and wait CLOSE_SECONDS for it to go. False when it stays."""
+    if not await page.evaluate(LIGHTBOX_JS, SELECTORS):
+        return True
+    await page.keyboard.press("Escape")
+    for _ in range(_polls(CLOSE_SECONDS)):
+        if not await page.evaluate(LIGHTBOX_JS, SELECTORS):
+            return True
+        await page.wait_for_timeout(POLL_MS)
+    return False
+
+
+async def _image(page: "Page", bubble: int, part: int) -> bytes | None:
+    """One image's bytes, full size: with no lightbox open (so the one that opens is this image's), click its
+    thumbnail and take the lightbox's image once it has loaded as a blob other than the thumbnail's; past
+    IMAGE_SECONDS, whichever has loaded (the lightbox's, else the thumbnail's). Read before the lightbox closes. None
+    when nothing loaded or a lightbox won't close. Only a blob: of the app's origin is read: that makes no request."""
+    if not await _closed(page) or not await page.evaluate(OPEN_IMAGE_JS, [SELECTORS, bubble, part]):
+        return None
+    src = None
+    for _ in range(_polls(IMAGE_SECONDS)):
+        preview = await page.evaluate(PREVIEW_JS, [SELECTORS, bubble, part])
+        full = ((await page.evaluate(LIGHTBOX_JS, SELECTORS)) or {}).get("src")
+        src = full or preview
+        if full and full != preview:
+            break
+        await page.wait_for_timeout(POLL_MS)
+    url = await page.evaluate(BLOB_JS, src) if (src or "").startswith(BLOB_PREFIX) else None
+    await _closed(page)
+    head, _, body = (url or "").partition(",")
+    return base64.b64decode(body) if head.endswith(";base64") and body else None
+
+
+async def _save_images(page: "Page", raw: list[dict], limit: int | None, thread: str,
+                       out_dir: str) -> tuple[dict[int, list[str]], int]:
+    """Save each image of the last `limit` rows as out_dir/<thread>-<n><ext> (parse.image_parts' n; a file of that
+    name is replaced). ({bubble index: saved paths}, how many images didn't load).
+    ponytail: bubbles are found again by their index in `raw`, which holds while the app only appends (a new
+    message); find them by msg-id if the app ever prepends while a read runs (it does on scrolling up, which this
+    never does)."""
+    saved: dict[int, list[str]] = {}
+    missing = 0
+    for bubble, part, n in parse.image_parts(raw, limit):
+        data = await _image(page, bubble, part)
+        if not data:
+            missing += 1
+            continue
+        name = google.safe_name(f"{thread}-{n}{parse.image_ext(data)}", f"image-{n}.bin")
+        saved.setdefault(bubble, []).append(str(google.save_file(out_dir, name, data).resolve()))
+    return saved, missing
 
 
 async def status(*, headed: bool = False) -> dict:
@@ -211,15 +302,26 @@ async def conversations(limit: int | None = None, *, headed: bool = False) -> li
     return rows[:limit] if limit else rows
 
 
-async def messages(query: str, limit: int | None = None, *, headed: bool = False) -> dict:
+async def messages(query: str, limit: int | None = None, *, image_dir: str | None = None,
+                   headed: bool = False) -> dict:
     """{conversation, messages}: the messages the app shows for the conversation `query` names (oldest first, the
-    last `limit`). READ-ONLY: the guard aborts the app's mark-as-read."""
-    async with browser.site_page(POLICY) as page:
+    last `limit`). READ-ONLY: the guard aborts the app's mark-as-read.
+
+    With image_dir (an existing absolute directory, `read --image-out`) the page opens with the guard's download
+    permission, which lets the app fetch its encrypted attachments, and each image in those messages is saved there
+    full size (_image): every row then has images (its saved paths), and the result has imagesMissing (how many
+    didn't load)."""
+    async with browser.site_page(POLICY, download=image_dir is not None) as page:
         await open_app(page)
         row = await _find(page, query)
         await _open(page, row)
-        rows = await _loaded(page)
-    return {"conversation": row, "messages": rows[-limit:] if limit else rows}
+        raw = await _hydrated(page)
+        if image_dir is None:
+            rows = parse.messages(raw)
+            return {"conversation": row, "messages": rows[-limit:] if limit else rows}
+        saved, missing = await _save_images(page, raw, limit, row["id"], image_dir)
+    rows = parse.messages(raw, saved)
+    return {"conversation": row, "messages": rows[-limit:] if limit else rows, "imagesMissing": missing}
 
 
 async def _usable(loc: "Locator") -> bool:

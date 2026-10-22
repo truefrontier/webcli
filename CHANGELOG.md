@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 (2026-10-21)
+
+### Added
+
+- `webcli messages read QUERY --image-out DIR`: saves each image in the messages read (after `--limit`) full size, as `DIR/<conversation id>-<n>.<jpg|png|gif|webp>` (n: the image's place among the conversation's images, so names don't change with `--limit`; a file of that name is replaced), and every row gains `images`, its saved paths (`[]` for none). For each image it opens the app's full-size viewer and reads the decrypted image out of the page (a phone photo comes out at its full 3024x4032, not the 450px thumbnail); if the viewer doesn't load, the thumbnail is saved. An image that doesn't load at all is left out with a warning on stderr; the exit is still 0. Without `--image-out`, `read` is unchanged (`[image]`, no `images` field).
+- `webcli youtube playlist create --title T [--privacy private|unlisted|public] VIDEO...`: one new playlist of exactly those videos (ids or youtu.be / watch / shorts / embed / live links), in that order, on the signed-in channel. A dry run unless `--confirm` (alias `--yes`): the dry run prints the plan and opens no browser. A confirmed create reads the playlist back and exits 0 when it shows exactly the list, 8 (`sent_unverified`, with the playlist's id and url when YouTube gave one) when the create went out but couldn't be verified, and 5 only when nothing went out. Never retried. `--privacy` defaults to private. A bad video or one given twice exits 2.
+
+### Security
+
+- The messages guard passes one more request, and only on a page opened with the core guard's download permission (only `read --image-out` opens one): the app's encrypted-attachment download, a GET (no query) to exactly `https://instantmessaging-pa.googleapis.com/upload`. Without it every image stays a spinner. POSTs there (uploads) stay blocked with or without the permission, and download allows nothing else. Reading still leaves the conversation unread (MESSAGE_READ stays blocked). Saving reads `blob:` URLs of the app's own origin, which make no request.
+- The YouTube guard passes one write, and only for `playlist create --confirm`: a single POST to exactly `https://www.youtube.com/youtubei/v1/playlist/create`, only while webcli's own call is in flight on a page holding the core guard's send permission, and only when its JSON body is exactly `{context, title, privacyStatus, videoIds}` with that command's title, privacy, and video list (same order; a key given twice or a NaN fails). The first one uses the scope up. Every other YouTube write (likes, subscriptions, comments, adding to or deleting a playlist, history pause or clear) stays blocked. webcli's own youtubei calls now use `redirect: 'error'`.
+
 ## 0.5.2 (2026-10-21)
 
 ### Fixed

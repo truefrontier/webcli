@@ -20,7 +20,7 @@ from webcli.apps import webcli as webcli_app
 from webcli.core import browser, daemon, guard
 from webcli.core.errors import AuthRequired, NotFound, UsageError
 from webcli.sites.messages import fetch, guard as mguard, parse
-from webcli.sites.messages.endpoints import ACTIONS, APP_URL, AUTH_PATH, INPUTS, SEND_BUTTON
+from webcli.sites.messages.endpoints import ACTIONS, APP_URL, AUTH_PATH, INPUTS, MEDIA_HOST, MEDIA_PATH, SEND_BUTTON
 from webcli.sites.messages.guard import POLICY, SendScope, outgoing_action, request_allowed, send_policy
 
 from conftest import make_profile
@@ -30,6 +30,8 @@ RPC = "https://instantmessaging-pa.googleapis.com/$rpc/google.internal.communica
 RPC_GOOGLE = "https://instantmessaging-pa.clients6.google.com/$rpc/google.internal.communications.instantmessaging.v1."
 SEND = RPC + "Messaging/SendMessage"
 SEND_GOOGLE = RPC_GOOGLE + "Messaging/SendMessage"
+MEDIA = f"https://{MEDIA_HOST}{MEDIA_PATH}"
+JPEG = b"\xff\xd8\xff\xe0 jpeg "
 JMS = "https://instantmessaging-pa-jms-us.clients6.google.com/$rpc/google.internal.communications.instantmessaging.v1."
 A = {name: number for number, name in ACTIONS.items()}
 ROWS = [
@@ -133,13 +135,16 @@ class MessagesWeb:
 
     def __init__(self, *, paired: bool = True, use_here: bool = False, rows=None, title=None, loads: bool = True,
                  read_back: str | None = None, click_sends: str = "SEND_MESSAGE", queued: str | None = None,
-                 on_button=None, dies_after_send: bool = False) -> None:
-        self.paired, self.use_here, self.loads = paired, use_here, loads
+                 on_button=None, dies_after_send: bool = False, full_size: bool = True, sticky: bool = False) -> None:
+        self.paired, self.use_here, self.loads, self.full_size = paired, use_here, loads, full_size
+        self.sticky = sticky  # the lightbox ignores Escape
         self.rows = ROWS if rows is None else rows
         self.bubbles = {k: list(v) for k, v in BUBBLES.items()}
         self.title, self.read_back, self.click_sends, self.queued = title, read_back, click_sends, queued
         self.on_button, self.dies_after_send = on_button, dies_after_send
         self.path, self.thread, self.composed, self.online = "/", None, "", False
+        self.media = False  # the app's attachment download got out: thumbnails and the lightbox can load
+        self.viewing: tuple[int, int] | None = None  # (bubble, part) the lightbox shows
         self.fills: list[str] = []
         self.clicks = self.use_here_clicks = 0
         self.wire: list[tuple[str, bool]] = []
@@ -148,7 +153,10 @@ class MessagesWeb:
             "/* messages:state */": self.state, "/* messages:use-here */": self.click_use_here,
             "/* messages:conversations */": lambda _s: list(self.rows), "/* messages:open */": self.open,
             "/* messages:messages */": self.thread_bubbles,
-            "/* messages:header */": lambda _sels: self.title(self.thread) if callable(self.title) else self.title})
+            "/* messages:header */": lambda _sels: self.title(self.thread) if callable(self.title) else self.title,
+            "/* messages:open-image */": self.open_image, "/* messages:preview */": self.preview,
+            "/* messages:lightbox */": self.lightbox, "/* messages:blob */": self.blob})
+        self.page.keyboard = SimpleNamespace(press=self.press)
         self.page.options = {}
         self.page.locator = self.locator
         goto = self.page.goto
@@ -204,10 +212,38 @@ class MessagesWeb:
         self.page.url = "https://messages.google.com" + self.path
         if self.online:
             self.relay("LIST_MESSAGES")
+            if any(b.get("image") for b in self.shown()):  # the thumbnails: the app downloads each attachment
+                self.media = self.relay_raw("GET", MEDIA, None)
         self.relay("MESSAGE_READ")  # opening an unread conversation marks it read on the phone
         if self.queued:
             self.relay(self.queued)  # a message the app still had queued tries to go out
         return True
+
+    def open_image(self, arg) -> bool:
+        _s, bubble, part = arg
+        shown = self.shown()
+        if bubble >= len(shown) or part >= int(shown[bubble].get("images") or shown[bubble].get("image")):
+            return False
+        self.viewing = (bubble, part)
+        return True
+
+    def preview(self, arg) -> str | None:
+        _s, bubble, part = arg
+        return f"blob:https://messages.google.com/thumb-{bubble}-{part}" if self.media else None
+
+    def lightbox(self, _sel) -> dict | None:
+        if self.viewing is None:
+            return None
+        loaded = self.media and self.full_size
+        return {"src": "blob:https://messages.google.com/full-%d-%d" % self.viewing if loaded else None}
+
+    def blob(self, src: str) -> str:
+        return "data:image/jpeg;base64," + base64.b64encode(JPEG + src.rsplit("/", 1)[-1].encode()).decode()
+
+    async def press(self, key: str) -> None:
+        self.page.keys.append(key)
+        if key == "Escape" and not self.sticky:
+            self.viewing = None
 
     def locator(self, selector: str) -> Locator:
         if selector == INPUTS[0]:
@@ -227,7 +263,7 @@ def web(monkeypatch):
         @asynccontextmanager
         async def site_page(policy, **options):
             site.page.policy, site.page.options = policy, options
-            guard.state.begin(policy, send=options.get("send", False))
+            guard.state.begin(policy, send=options.get("send", False), download=options.get("download", False))
             try:
                 yield site.page
             finally:
@@ -335,6 +371,34 @@ def test_the_read_policy(method, url, body, ok):
     assert request_allowed(method, url, body) is ok
 
 
+@pytest.mark.parametrize(("method", "url", "ok"), [
+    ("GET", MEDIA, True),  # the app's attachment download
+    ("POST", MEDIA, False),  # an upload, download or not
+    ("PUT", MEDIA, False),
+    ("OPTIONS", MEDIA, False),
+    ("GET", MEDIA + "?upload_id=1", False),  # exactly the download the app makes: no query
+    ("GET", MEDIA + "/x", False),
+    ("GET", MEDIA.replace("https:", "http:"), False),
+    ("GET", "https://instantmessaging-pa.clients6.google.com/upload", False),
+    ("GET", "https://instantmessaging-pa-jms-us.clients6.google.com/upload", False),
+    ("GET", "https://lh3.googleusercontent.com/a/ACg8ocK=s64", False),  # download opens nothing else
+    ("GET", "https://api.tenor.com/v1/gifs", False),
+])
+def test_the_media_download_passes_only_with_download(method, url, ok):
+    body = b"x" if method in ("POST", "PUT") else None
+    assert request_allowed(method, url, body, download=True) is ok
+    assert not request_allowed(method, url, body)  # never without it
+    request = SimpleNamespace(method=method, url=url, post_data_buffer=body)
+    assert POLICY.allowed(request, guard.Guard(download=True)) is ok
+    assert not POLICY.allowed(request, guard.Guard(send=True))  # send isn't download
+
+
+def test_download_lets_no_write_out():
+    for action in ("SEND_MESSAGE", "MESSAGE_READ", "TYPING_UPDATES", "DELETE_MESSAGE", "DOWNLOAD_MESSAGE"):
+        assert not request_allowed("POST", SEND, pblite(A[action]), download=True)
+    assert not request_allowed("POST", SEND, pblite(3), scope=SendScope(), download=True)
+
+
 @pytest.mark.parametrize(("url", "body"), [
     (SEND_GOOGLE, pblite(A["SEND_MESSAGE"])),
     (SEND_GOOGLE, binary(A["SEND_MESSAGE"])),
@@ -414,6 +478,25 @@ def test_conversation_and_message_rows():
         {"direction": "received", "text": "See you at 6", "timestamp": "2:14 PM"}]
 
 
+def test_image_parts_number_every_image_and_follow_the_limit():
+    raw = [{"text": "hi"}, {"image": True, "images": 2}, {"text": ""}, {"image": True}, {"text": "bye"}]
+    assert parse.image_parts(raw) == [(1, 0, 1), (1, 1, 2), (3, 0, 3)]
+    assert parse.image_parts(raw, 2) == [(3, 0, 3)]  # the last 2 rows: n stays the conversation's
+    assert parse.image_parts(raw, 1) == []
+    assert parse.messages(raw, {1: ["/d/a.jpg", "/d/b.jpg"]}) == [
+        {"direction": "received", "text": "hi", "timestamp": "", "images": []},
+        {"direction": "received", "text": "[image]", "timestamp": "", "images": ["/d/a.jpg", "/d/b.jpg"]},
+        {"direction": "received", "text": "[image]", "timestamp": "", "images": []},
+        {"direction": "received", "text": "bye", "timestamp": "", "images": []}]
+    assert "images" not in parse.messages(raw)[0]
+
+
+@pytest.mark.parametrize(("data", "ext"), [(JPEG, ".jpg"), (b"\x89PNG\r\n\x1a\n....", ".png"), (b"GIF89a", ".gif"),
+                                           (b"RIFF\0\0\0\0WEBPVP8 ", ".webp"), (b"<html>", ".bin"), (b"", ".bin")])
+def test_image_ext_reads_the_bytes(data, ext):
+    assert parse.image_ext(data) == ext
+
+
 @pytest.mark.parametrize(("value", "found"), [
     ("/web/conversations/101", "101"), ("https://messages.google.com/web/conversations/7?x=1", "7"),
     ("conversations/9", "9"), ("/web/conversations/new", None), ("/web/conversations", None), (None, None),
@@ -485,6 +568,69 @@ def test_read_opens_the_conversation_and_leaves_it_unread(web):
     assert [m["text"] for m in found["messages"]] == ["Dinner?", "Sure", "[image]", "See you at 6"]
     assert ("LIST_MESSAGES", True) in site.wire and ("MESSAGE_READ", False) in site.wire  # mark-as-read blocked
     assert [m["text"] for m in asyncio.run(fetch.messages("101", 2))["messages"]] == ["[image]", "See you at 6"]
+
+
+def test_read_without_image_out_lets_no_attachment_download_out(web):
+    site = web(MessagesWeb())
+    found = asyncio.run(fetch.messages("alice"))
+    assert site.page.options == {"download": False} and site.media is False
+    assert "GET instantmessaging-pa.googleapis.com/upload" in guard.state.blocked
+    assert all("images" not in m for m in found["messages"]) and "imagesMissing" not in found
+    assert site.page.keys == []  # no lightbox opened
+
+
+def test_read_image_out_saves_each_image_full_size_and_stays_read_only(web, tmp_path):
+    site = web(MessagesWeb())
+    found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
+    assert site.page.options == {"download": True} and site.media is True
+    path = tmp_path / "101-1.jpg"
+    assert path.read_bytes() == JPEG + b"full-2-0"  # the lightbox's blob, not the thumbnail's
+    assert [m["images"] for m in found["messages"]] == [[], [], [str(path.resolve())], []]
+    assert found["imagesMissing"] == 0 and site.viewing is None and site.page.keys == ["Escape"]
+    assert ("MESSAGE_READ", False) in site.wire  # still unread
+    assert [action for action, ok in site.wire if ok] == ["LIST_CONVERSATIONS", "LIST_MESSAGES"]
+
+
+def test_read_image_out_saves_only_the_limited_rows_and_every_image_of_a_bubble(web, tmp_path):
+    site = web(MessagesWeb())
+    site.bubbles["101"][2] = {**site.bubbles["101"][2], "images": 2}
+    assert [m["images"] for m in asyncio.run(fetch.messages("101", 1, image_dir=str(tmp_path)))["messages"]] == [[]]
+    assert list(tmp_path.iterdir()) == []
+    rows = asyncio.run(fetch.messages("101", 2, image_dir=str(tmp_path)))["messages"]
+    assert rows[0]["images"] == [str((tmp_path / "101-1.jpg").resolve()), str((tmp_path / "101-2.jpg").resolve())]
+    assert (tmp_path / "101-2.jpg").read_bytes() == JPEG + b"full-2-1"
+
+
+def test_a_lightbox_that_wont_close_is_never_read_for_the_next_image(web, tmp_path):
+    site = web(MessagesWeb(sticky=True))
+    site.bubbles["101"][2] = {**site.bubbles["101"][2], "images": 2}
+    found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
+    assert (tmp_path / "101-1.jpg").read_bytes() == JPEG + b"full-2-0"
+    assert not (tmp_path / "101-2.jpg").exists() and found["imagesMissing"] == 1  # never the first one's blob again
+    assert site.viewing == (2, 0)
+
+
+def test_a_lightbox_still_loading_counts_as_open(web, tmp_path):
+    site = web(MessagesWeb(sticky=True, full_size=False))  # open with no image yet, and it won't close
+    site.bubbles["101"][2] = {**site.bubbles["101"][2], "images": 2}
+    found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
+    assert (tmp_path / "101-1.jpg").read_bytes() == JPEG + b"thumb-2-0"
+    assert not (tmp_path / "101-2.jpg").exists() and found["imagesMissing"] == 1
+
+
+def test_a_lightbox_that_never_loads_falls_back_to_the_thumbnail(web, tmp_path):
+    web(MessagesWeb(full_size=False))
+    found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
+    assert (tmp_path / "101-1.jpg").read_bytes() == JPEG + b"thumb-2-0" and found["imagesMissing"] == 0
+
+
+def test_an_image_that_never_loads_is_counted_missing(web, tmp_path, monkeypatch):
+    site = web(MessagesWeb())
+    monkeypatch.setattr(site, "relay_raw", lambda method, url, body: url != MEDIA and MessagesWeb.relay_raw(
+        site, method, url, body))  # the attachment download fails
+    found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
+    assert found["imagesMissing"] == 1 and list(tmp_path.iterdir()) == []
+    assert [m["images"] for m in found["messages"]] == [[], [], [], []]
 
 
 def test_read_finds_only_conversations_in_the_list(web):
@@ -682,6 +828,27 @@ def test_read_prints_the_messages(calls):
     result = run("read", "Alice", "--limit", "1", "--format", "json")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == [{"direction": "received", "text": "See you at 6", "timestamp": "2:14 PM"}]
+
+
+def test_read_image_out_passes_an_absolute_created_dir_and_prints_images(calls, tmp_path, monkeypatch):
+    seen, answers = calls
+    monkeypatch.chdir(tmp_path)
+
+    def answer(query, limit, *, image_dir, headed):
+        rows = parse.messages(BUBBLES["101"], {2: [f"{image_dir}/101-1.jpg"]})
+        return {"conversation": parse.conversations(ROWS)[0], "messages": rows[-limit:] if limit else rows,
+                "imagesMissing": 1}
+
+    answers["messages"] = answer
+    result = run("read", "Alice", "--limit", "2", "--image-out", "pics", "--format", "json")
+    assert result.exit_code == 0, result.output
+    out_dir = str((tmp_path / "pics").resolve())
+    assert (tmp_path / "pics").is_dir() and seen[-1][3] == {"image_dir": out_dir, "headed": False}
+    assert json.loads(result.stdout)[0] == {"direction": "received", "text": "[image]", "timestamp": "2:13 PM",
+                                            "images": [f"{out_dir}/101-1.jpg"]}
+    assert "1 image(s) didn't load" in result.stderr  # a warning, even in JSON mode
+    assert run("read", "Alice", "--csv", "--limit", "2", "--image-out", "pics").stdout.splitlines()[0] == (
+        "direction,text,timestamp,images")
 
 
 def test_search_exits_3_on_no_match(calls):

@@ -17,6 +17,7 @@ from webcli.core.output import (
     die,
     emit_rows,
     note,
+    warn,
 )
 from webcli.sites import data
 from webcli.sites.messages import ADAPTER as SITE
@@ -26,6 +27,7 @@ from webcli.sites.messages.endpoints import CONFIRM_SECONDS, SEND_SECONDS
 FIELDS = ["id", "name", "preview", "timestamp", "unread"]
 COMPACT = ("id", "name", "timestamp", "unread")
 MESSAGE_FIELDS = ["direction", "text", "timestamp"]
+IMAGE_FIELDS = [*MESSAGE_FIELDS, "images"]
 SEARCH_FIELDS = [*FIELDS, "matched"]
 NOTES = [
     "Identity messages:default, its own pairing: Google Messages for web pairs with your phone by QR code, not a Google "
@@ -41,6 +43,11 @@ NOTES = [
     "is ever started.",
     "`read` prints the conversation's messages the app shows, oldest first: {direction: sent|received, text, "
     "timestamp}; an image is \"[image]\". The guard blocks the app's mark-as-read, so reading leaves it unread.",
+    "`read --image-out DIR` also saves each image in those messages (after --limit) full size, as DIR/<conversation "
+    "id>-<n>.<jpg|png|gif|webp> (n: the image's place among the conversation's images, so names don't depend on "
+    "--limit; a file of that name is replaced), and every row gains images: its saved paths ([] for none). It opens "
+    "the full-size viewer for each one, so it takes a few seconds per image. An image that doesn't load is left out "
+    "and counted on stderr; the exit is still 0. Without --image-out the guard blocks the app's attachment download.",
     "`search` matches the name, the number, and the latest message's preview (not older message text); each row "
     "has matched: the fields that hit. No match exits 3.",
     "Google Messages keeps one active web session: every command takes it over (as gmsg did, it clicks \"Use "
@@ -109,15 +116,24 @@ group.add_command(list_cmd, "threads")
 @group.command("read")
 @click.argument("query", callback=_query_arg)
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Only the last N messages.")
+@click.option("--image-out", "image_out", metavar="DIR", default=None,
+              help="Save each image in these messages full size into DIR (created); rows gain images: the paths.")
 @agent_output_options()
-def read_cmd(query, limit, **opts) -> None:
-    """The messages in one conversation (QUERY: its id, a name, or a number), oldest first. READ-ONLY: it stays
-    unread."""
-    found = _call("messages", query, limit)
+def read_cmd(query, limit, image_out, **opts) -> None:
+    """The messages in one conversation (QUERY: its id, a name, or a number), oldest first; with --image-out, its
+    images saved too. READ-ONLY: it stays unread."""
+    if image_out is None:
+        found, fields = _call("messages", query, limit), MESSAGE_FIELDS
+    else:
+        found, fields = _call("messages", query, limit, image_dir=data.out_dir(image_out)), IMAGE_FIELDS
     conversation = found["conversation"]
     note(f"Conversation: {conversation['name']} ({conversation['id']})", quiet=opts["quiet"])
-    emit_rows(found["messages"], title=conversation["name"], fields=MESSAGE_FIELDS, compact_fields=MESSAGE_FIELDS,
-              columns=MESSAGE_FIELDS, noun="messages", **opts)
+    if image_out is not None:
+        note(f"Saved {sum(len(row['images']) for row in found['messages'])} image(s).", quiet=opts["quiet"])
+        if missing := found.get("imagesMissing"):
+            warn(f"{missing} image(s) didn't load, so they weren't saved (their rows have images: []).")
+    emit_rows(found["messages"], title=conversation["name"], fields=fields, compact_fields=fields, columns=fields,
+              noun="messages", **opts)
     raise SystemExit(EXIT_OK)
 
 

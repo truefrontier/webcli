@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from webcli.sites.youtube import parse
 from webcli.sites.youtube.parse import (
     account_from_menu,
     continuation_token,
@@ -153,3 +154,44 @@ def test_take_newer_stops_at_first_older_row():
     assert take_newer(rows, cutoff) == (rows[:3], True)
     assert take_newer(rows[:3], cutoff) == (rows[:3], False)
     assert take_newer(rows, None) == (rows, False)
+
+
+def _pl_row(video: str) -> dict:
+    return {"playlistVideoRenderer": {"videoId": video}}
+
+
+def _more(token: str) -> dict:
+    return {"continuationItemRenderer": {"continuationEndpoint": {"continuationCommand": {"token": token}}}}
+
+
+def test_playlist_page_reads_only_the_playlists_own_rows_and_token():
+    # Live shape (2026-10-21): the list, then a recommendations section with its own continuation.
+    first = {"contents": {"twoColumnBrowseResultsRenderer": {"tabs": [{"tabRenderer": {"content": {
+        "sectionListRenderer": {"contents": [
+            {"itemSectionRenderer": {"contents": [{"playlistVideoListRenderer": {
+                "contents": [_pl_row("_0d4Hm5Hs6g"), _pl_row("ABQLEtCyb1g"), _more("list-2")]}}]}},
+            {"itemSectionRenderer": {"contents": [_pl_row("jNQXAC9IVRw")]}},
+            _more("recommended")]}}}}]}}}
+    assert parse.playlist_page(first) == (["_0d4Hm5Hs6g", "ABQLEtCyb1g"], "list-2")
+    later = {"onResponseReceivedActions": [{"appendContinuationItemsAction": {"continuationItems": [
+        _pl_row("mJ7L9RK7kyc")]}}]}
+    assert parse.playlist_page(later) == (["mJ7L9RK7kyc"], None)
+    recommended = {"onResponseReceivedActions": [{"appendContinuationItemsAction": {"continuationItems": [
+        {"itemSectionRenderer": {"contents": [_pl_row("jNQXAC9IVRw")]}}]}}]}
+    assert parse.playlist_page(recommended) == ([], None)
+
+
+@pytest.mark.parametrize(("text", "video"), [
+    ("_0d4Hm5Hs6g", "_0d4Hm5Hs6g"), ("https://youtu.be/ABQLEtCyb1g?si=x", "ABQLEtCyb1g"),
+    ("youtube.com/watch?v=mJ7L9RK7kyc&t=3", "mJ7L9RK7kyc"), ("https://m.youtube.com/shorts/jNQXAC9IVRw", "jNQXAC9IVRw"),
+    ("https://www.youtube.com/embed/jNQXAC9IVRw", "jNQXAC9IVRw"),
+])
+def test_video_id_takes_ids_and_links(text, video):
+    assert parse.video_id(text) == video
+
+
+@pytest.mark.parametrize("text", ["nope", "https://evil.example/watch?v=jNQXAC9IVRw", "https://youtu.be/short",
+                                  "https://www.youtube.com/playlist?list=PL1", "jNQXAC9IVRw1"])
+def test_video_id_refuses_anything_else(text):
+    with pytest.raises(ValueError):
+        parse.video_id(text)

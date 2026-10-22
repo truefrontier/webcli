@@ -8,16 +8,17 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
 from webcli.core import daemon
-from webcli.core.errors import AuthRequired
+from webcli.core.errors import AuthRequired, UsageError
 from webcli.sites.youtube import fetch
 from webcli.sites.youtube.endpoints import MYACTIVITY_URL, SIGN_IN_URL
-from webcli.sites.youtube.guard import request_allowed
+from webcli.sites.youtube.guard import WriteScope, request_allowed, write_policy
 
 from google_fakes import ScriptedPage, install
 
@@ -44,6 +45,7 @@ def load(name: str) -> dict:
     ("POST", "https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x", True),
     ("POST", "https://accounts.google.com/RotateCookies", True),
     ("POST", "https://www.youtube.com/youtubei/v1/browse/edit_playlist", False),
+    ("POST", "https://www.youtube.com/youtubei/v1/playlist/create?key=k", False),
     ("POST", "https://www.youtube.com/youtubei/v1/browseX", False),
     ("POST", "https://www.youtube.com/youtubei/v1/like/like", False),
     ("POST", "https://www.youtube.com/youtubei/v1/subscription/subscribe", False),
@@ -65,6 +67,114 @@ def load(name: str) -> dict:
 ])
 def test_request_allowed(method, url, allowed):
     assert request_allowed(method, url) is allowed
+
+
+# The one write: playlist/create, bound to its scope.
+
+CREATE = "https://www.youtube.com/youtubei/v1/playlist/create?key=k&prettyPrint=false"
+IDS = ("_0d4Hm5Hs6g", "ABQLEtCyb1g")
+
+
+def create_json(**override) -> str:
+    return json.dumps({"context": {"client": {}}, "title": "Pieces", "privacyStatus": "UNLISTED",
+                       "videoIds": list(IDS), **override})
+
+
+def armed() -> WriteScope:
+    return WriteScope("Pieces", "UNLISTED", IDS, armed=True)
+
+
+def test_the_scope_passes_exactly_one_matching_create():
+    scope = armed()
+    assert request_allowed("POST", CREATE, create_json(), scope=scope)
+    assert scope.used and not scope.armed
+    scope.armed = True
+    assert not request_allowed("POST", CREATE, create_json(), scope=scope)  # used up: no second
+
+
+@pytest.mark.parametrize(("url", "body"), [
+    (CREATE, create_json(title="Other")),
+    (CREATE, create_json(privacyStatus="PUBLIC")),
+    (CREATE, create_json(videoIds=list(reversed(IDS)))),
+    (CREATE, create_json(videoIds=[*IDS, "jNQXAC9IVRw"])),
+    (CREATE, create_json(description="extra")),
+    (CREATE, '{"context": {}, "title": "Other", "title": "Pieces", "privacyStatus": "UNLISTED", '
+             '"videoIds": ["_0d4Hm5Hs6g", "ABQLEtCyb1g"]}'),
+    (CREATE, '{"context": {"n": NaN}, "title": "Pieces", "privacyStatus": "UNLISTED", '
+             '"videoIds": ["_0d4Hm5Hs6g", "ABQLEtCyb1g"]}'),
+    (CREATE, "not json"),
+    (CREATE, None),
+    ("https://www.youtube.com/youtubei/v1/playlist/delete?key=k", create_json()),
+    ("https://www.youtube.com/youtubei/v1/browse/edit_playlist?key=k", create_json()),
+    ("https://www.youtube.com:443/youtubei/v1/playlist/create", create_json()),
+    ("http://www.youtube.com/youtubei/v1/playlist/create", create_json()),
+    ("https://youtube.com.evil.example/youtubei/v1/playlist/create", create_json()),
+])
+def test_the_scope_refuses_any_other_write(url, body):
+    scope = armed()
+    assert not request_allowed("POST", url, body, scope=scope) and not scope.used
+
+
+def test_the_scope_counts_only_while_armed_and_only_with_send():
+    idle = WriteScope("Pieces", "UNLISTED", IDS)
+    assert not request_allowed("POST", CREATE, create_json(), scope=idle)
+    request = SimpleNamespace(method="POST", url=CREATE, post_data=create_json())
+    scope = armed()
+    assert not write_policy(scope).allowed(request, SimpleNamespace(send=False)) and not scope.used
+    assert write_policy(scope).allowed(request, SimpleNamespace(send=True)) and scope.used
+
+
+def playlist_page(*, playlist_id="PLnew", shown=IDS, create_status=200) -> ScriptedPage:
+    """A signed-in page whose playlist/create goes through the real policy, as the page route would."""
+    page = youtube_page(signed_in_already=True)
+    reads = page.answers["SAPISIDHASH"]
+
+    def yt_call(arg):
+        endpoint, body = arg
+        if endpoint == "playlist/create":
+            request = SimpleNamespace(method="POST", url=CREATE, post_data=json.dumps({"context": {}, **body}))
+            if not page.policy.allowed(request, SimpleNamespace(send=True)):
+                raise RuntimeError("net::ERR_FAILED")  # the guard aborted it
+            return {"status": create_status, "json": {"playlistId": playlist_id} if create_status == 200 else None}
+        if endpoint == "browse" and body.get("browseId", "").startswith("VL"):
+            return {"status": 200, "json": {"contents": {"playlistVideoListRenderer": {
+                "contents": [{"playlistVideoRenderer": {"videoId": v}} for v in shown]}}}}
+        return reads(arg)
+
+    page.answers["SAPISIDHASH"] = yt_call
+    return page
+
+
+def test_create_playlist_creates_once_and_reads_it_back(monkeypatch):
+    install(monkeypatch, playlist_page())
+    out = asyncio.run(fetch.create_playlist("Pieces", list(IDS), "unlisted", confirm=True))
+    assert out == {"created": True, "confirmed": True, "playlistId": "PLnew",
+                   "url": "https://www.youtube.com/playlist?list=PLnew", "title": "Pieces", "privacy": "unlisted",
+                   "videoIds": list(IDS), "shownCount": 2, "account": "@testviewer"}
+
+
+def test_create_playlist_unverified_and_refused(monkeypatch):
+    install(monkeypatch, playlist_page(shown=IDS[:1]))
+    out = asyncio.run(fetch.create_playlist("Pieces", list(IDS), "unlisted", confirm=True))
+    assert (out["created"], out["confirmed"], out["shownCount"]) == (True, False, 1)
+    install(monkeypatch, playlist_page(create_status=500))
+    out = asyncio.run(fetch.create_playlist("Pieces", list(IDS), "unlisted", confirm=True))
+    assert (out["created"], out["confirmed"], out["playlistId"]) == (True, False, None)  # went out: never "nothing"
+    broken = install(monkeypatch, playlist_page())
+    create = broken.answers["SAPISIDHASH"]
+
+    def read_back_fails(arg):
+        if arg[0] == "browse" and arg[1].get("browseId", "").startswith("VL"):
+            raise RuntimeError("Target page, context or browser has been closed")
+        return create(arg)
+
+    broken.answers["SAPISIDHASH"] = read_back_fails
+    out = asyncio.run(fetch.create_playlist("Pieces", list(IDS), "unlisted", confirm=True))
+    assert (out["created"], out["confirmed"], out["playlistId"], out["shownCount"]) == (True, False, "PLnew", None)
+    with pytest.raises(UsageError):
+        asyncio.run(fetch.create_playlist("Pieces", list(IDS), "unlisted"))
+    with pytest.raises(UsageError):
+        asyncio.run(fetch.create_playlist("Pieces", [], "unlisted", confirm=True))
 
 
 # Sign-in and status.
@@ -200,3 +310,28 @@ def test_no_history_exits_3(calls):
     result = run("history", "--since", "2026-10-01")
     error = json.loads(result.stderr.splitlines()[-1])  # after the fallback note
     assert result.exit_code == 3 and error["code"] == 3 and error["error"].startswith("No watch history found since")
+
+
+def test_playlist_create_is_a_dry_run_without_confirm(calls):
+    result = run("playlist", "create", "--title", "Pieces", "_0d4Hm5Hs6g", "https://youtu.be/ABQLEtCyb1g?si=x")
+    assert result.exit_code == 0 and not calls
+    assert json.loads(result.stdout) == {"dryRun": True, "action": "create playlist", "title": "Pieces",
+                                         "privacy": "private", "videoIds": list(IDS), "videoCount": 2,
+                                         "hint": "Nothing was written. Re-run with --confirm to write."}
+    assert run("playlist", "create", "--title", "Pieces", "nope").exit_code == 2
+    assert run("playlist", "create", "--title", "Pieces", *IDS, IDS[0]).exit_code == 2
+    assert run("playlist", "create", "--title", " ", *IDS).exit_code == 2
+    assert run("playlist", "create", "--title", "Pieces", "--dry-run", "--confirm", *IDS).exit_code == 2
+    assert not calls
+
+
+def test_playlist_create_confirm_exits_0_or_8(calls):
+    calls.answer.clear()
+    calls.answer.update({"created": True, "confirmed": True, "playlistId": "PLnew", "url": "u", "title": "Pieces",
+                         "privacy": "unlisted", "videoIds": list(IDS), "shownCount": 2, "account": "@testviewer"})
+    result = run("playlist", "create", "--title", "Pieces", "--privacy", "unlisted", "--confirm", *IDS)
+    assert result.exit_code == 0 and json.loads(result.stdout)["playlistId"] == "PLnew"
+    assert calls[-1] == ("create_playlist", ("Pieces", list(IDS), "unlisted"))
+    calls.answer["confirmed"] = False
+    result = run("playlist", "create", "--title", "Pieces", "--yes", *IDS)
+    assert result.exit_code == 8 and json.loads(result.stderr.splitlines()[-1])["error"] == "sent_unverified"
