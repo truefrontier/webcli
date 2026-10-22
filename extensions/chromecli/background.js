@@ -24,19 +24,24 @@ import {
 import {
   BATCH_MAX, checkClause, clauseScopeBody, mapBody, pageContext, parseClauseScope, parseMap, quoteKey, splitQuote,
 } from "./clauses.js";
+import {
+  CHUNK_BYTES, GRANT_ERROR, isActive, recBadge, recButton, recView, recordOptions, refusal, validRecId,
+} from "./recorder.js";
 
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
 const AUDIT_MAX = 200;
 // page.scroll (0.10.2) is a read op: it moves a scroll position on a Read or Act tab, never prompts, never gated.
 const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-  "page.find", "page.probe", "page.scroll", "grant.list"];
+  "page.find", "page.probe", "page.scroll", "grant.list", "record.status"];
 const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
 const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
 const GRANT_WRITE_OPS = ["grant.add", "grant.add_batch", "grant.revoke"];
-const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
+// 0.12.1: record.start needs --confirm and Kevin's Start; record.stop only ever stops (no --confirm).
+const RECORD_OPS = ["record.start", "record.stop"];
+const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS, ...RECORD_OPS]);
 // Ops that change something: the CLI sends them only with --confirm (confirm: true); anything else is refused.
-const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
+const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS, "record.start"]);
 
 let port = null;
 let backoff = 1000;
@@ -227,6 +232,10 @@ async function revoke(tabId, reason) {
     const shares = await getShares();
     if (shares[tabId]) { gone = shares[tabId]; delete shares[tabId]; await setShares(shares); }
   });
+  // 0.12.1: unshare / origin change / close / deny ends the tab's recording (the file is finalized).
+  const rec = recFor(tabId);
+  const why = reason === "unshared" ? "unshared" : reason === "closed" ? "tab closed" : `unshared (${reason})`;
+  if (rec) stopRecording(rec.recId, why).catch(() => {});
   if (gone) {
     post({ event: "share_changed", tab: tabId, origin: gone.origin, level: null, reason });
     await auditAdd({ op: "unshare", tab: tabId, origin: gone.origin, outcome: reason });
@@ -237,7 +246,11 @@ async function revoke(tabId, reason) {
 async function updateBadge(tabId) {
   const [shares, paused] = [await getShares(), await getPaused()];
   try {
-    if (shares[tabId]) {
+    const rb = recBadge(recFor(tabId));
+    if (rb) {
+      await chrome.action.setBadgeText({ tabId, text: rb.text });
+      await chrome.action.setBadgeBackgroundColor({ tabId, color: rb.color });
+    } else if (shares[tabId]) {
       const b = badgeFor(shares[tabId], paused);
       await chrome.action.setBadgeText({ tabId, text: b.text });
       await chrome.action.setBadgeBackgroundColor({ tabId, color: b.color });
@@ -263,7 +276,7 @@ async function refreshBadges() {
 
 async function setPaused(paused) {
   await chrome.storage.local.set({ paused: !!paused });
-  if (paused) { cancelAllConfirms("paused"); await clearGrants("paused"); }
+  if (paused) { cancelAllConfirms("paused"); await clearGrants("paused"); stopAllRecordings("paused").catch(() => {}); }
   post({ event: "paused_changed", paused: !!paused });
   await auditAdd({ op: paused ? "pause" : "resume", tab: null, origin: null, outcome: "ok" });
   await refreshBadges();
@@ -347,6 +360,9 @@ async function dispatch(op, args, req = {}) {
     }
     case "tabs.read": return readTab(args);
     case "tabs.screenshot": return screenshot(args);
+    case "record.start": return recordStart(args, req);
+    case "record.stop": return recordStop(args);
+    case "record.status": return recordStatus(args);
     case "history.search": return historySearch(args);
     case "tab.open": return tabOpen(args, req);
     case "tab.focus": return tabFocus(args);
@@ -371,6 +387,8 @@ async function statusInfo() {
     extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: jev.configured, confirmsPending: pendingConfirms(),
     chromeVersion: (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || null,
     shares: Object.entries(shares).map(([tab, s]) => ({ tab: Number(tab), origin: s.origin, level: s.level })),
+    recording: { canRecord: !!(chrome.tabCapture?.getMediaStreamId && chrome.offscreen?.createDocument),
+      active: [...recordings.values()].filter(isActive).map((r) => ({ recId: r.recId, tab: r.tab, state: r.state })) },
     policy: { hash: st.active.hash, pending: !!st.pending, pendingLoosening: st.pending?.loosening || [],
       implicitActive: st.active.implicit_active, history: st.active.history, deny: st.active.deny,
       denyExcept: st.active.deny_except || [], frameActAllow: st.active.frame_act_allow || [], readAllow: st.active.read_allow, actAllow: st.active.act_allow },
@@ -509,10 +527,16 @@ async function screenshot(args) {
   const origin = originOf(tab.url);
   let win = null;
   try { win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }); } catch { /* none */ }
-  if (!tab.active || !win || win.id !== tab.windowId || win.state === "minimized") {
-    throw new OpError("not_visible", `Tab ${tab.id} isn't the active tab of the front Chrome window.`, { tab: tab.id, origin });
-  }
+  const visible = !!(tab.active && win && win.id === tab.windowId && win.state !== "minimized");
   const format = args.format === "jpeg" ? "jpeg" : "png";
+  // 0.12.1: covered (or asked with covered: true): a frame from the tab's recording stream.
+  const rec = recFor(tab.id);
+  if (args.covered === true || !visible) {
+    if (rec?.state === "recording") return streamShot(tab, rec, level, format, args.quality);
+    throw new OpError("not_visible", visible ? `Tab ${tab.id} has no active recording to take a covered screenshot from.`
+      : `Tab ${tab.id} isn't the active tab of the front Chrome window, and it isn't being recorded.`, { tab: tab.id, origin,
+      hint: "Start a recording (chromecli record start TAB --confirm; Kevin clicks Start) and screenshot again, or have Kevin bring the tab to the front." });
+  }
   const opts = format === "jpeg" ? { format, quality: Math.min(Math.max(1, Number(args.quality) || 80), 100) } : { format };
   let dataUrl;
   try {
@@ -529,7 +553,7 @@ async function screenshot(args) {
   if (!after || !after.active || originOf(after.url) !== origin) {
     throw new OpError("not_visible", `Tab ${tab.id} changed during the capture.`, { tab: tab.id, origin });
   }
-  return { tab: tab.id, url: tab.url, title: tab.title, origin, share: level, format,
+  return { tab: tab.id, url: tab.url, title: tab.title, origin, share: level, format, source: "visible",
     data: dataUrl.slice(dataUrl.indexOf(",") + 1) };
 }
 
@@ -1716,6 +1740,321 @@ async function collectOpened(openerId, since) {
   return out;
 }
 
+// ---- tab recording (0.12.1): chrome.tabCapture + an offscreen MediaRecorder (see recorder.js). No debugger.
+// record.start needs --confirm AND Kevin's Start in the confirm window; Chrome also needs the tab's activeTab grant
+// (Kevin clicked the chromecli icon on it since it last changed site). Without the grant the request waits for
+// Kevin's Record in the popup on that tab (state awaiting_popup). Pause, Unshare, closing the tab, or the tab
+// leaving its origin stop the recording and finalize the file.
+const recordings = new Map(); // recId -> rec (active ones plus the last few finished)
+const REC_KEEP = 20;
+const recFor = (tabId) => [...recordings.values()].find((r) => r.tab === tabId && isActive(r)) || null;
+const OFFSCREEN = "offscreen.html";
+
+// Keep finished recordings (newest last) for status, at most REC_KEEP.
+function recNote(rec) {
+  recordings.delete(rec.recId);
+  recordings.set(rec.recId, rec);
+  const done = [...recordings.values()].filter((r) => !isActive(r));
+  for (const r of done.slice(0, Math.max(0, done.length - REC_KEEP))) recordings.delete(r.recId);
+}
+
+async function hasOffscreen() {
+  try {
+    if (chrome.runtime.getContexts) {
+      const ctx = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [chrome.runtime.getURL(OFFSCREEN)] });
+      return ctx.length > 0;
+    }
+    return !!(await chrome.offscreen?.hasDocument?.());
+  } catch { return false; }
+}
+
+let offscreenCreating = null;
+async function ensureOffscreen() {
+  if (await hasOffscreen()) return;
+  if (!offscreenCreating) {
+    offscreenCreating = chrome.offscreen.createDocument({ url: OFFSCREEN, reasons: ["USER_MEDIA"],
+      justification: "Record a tab Kevin shared (chromecli record start) with tabCapture + MediaRecorder." })
+      .finally(() => { offscreenCreating = null; });
+  }
+  await offscreenCreating;
+}
+
+async function closeOffscreenIfIdle() {
+  if ([...recordings.values()].some((r) => isActive(r) && r.state !== "awaiting_popup")) return;
+  try { if (await hasOffscreen()) await chrome.offscreen.closeDocument(); } catch { /* gone */ }
+}
+
+const toOffscreen = (msg) => chrome.runtime.sendMessage({ target: "offscreen", ...msg });
+
+// The share checks for recording: access() (paused / deny / Off) plus Kevin-shared only (recorder.js refusal).
+async function checkRecordable(tab) {
+  await access(tab, "read");
+  const [shares, bot] = [await getShares(), await getBotTabs()];
+  const why = refusal({ share: shares[tab.id], bot: !!bot[tab.id] });
+  if (why) throw new OpError(why.code, why.message, { tab: tab.id, origin: originOf(tab.url || ""), reason: why.reason });
+  return shares[tab.id].level;
+}
+
+// The capture size: the tab's viewport in device pixels (capped at 4K), so text stays sharp.
+async function captureSize(tab) {
+  let dpr = 2;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => window.devicePixelRatio });
+    if (Number(res?.result) > 0) dpr = Number(res.result);
+  } catch { /* no access: assume a Retina display */ }
+  const w = Math.round((tab.width || 1440) * dpr);
+  const hh = Math.round((tab.height || 900) * dpr);
+  const k = Math.min(1, 3840 / w, 2160 / hh);
+  return { maxWidth: Math.max(2, Math.round(w * k)), maxHeight: Math.max(2, Math.round(hh * k)) };
+}
+
+async function recordStart(args, req) {
+  if (!validRecId(args.recId)) throw new OpError("bad_request", "record.start needs a recId from chromecli-host.");
+  let opts;
+  try { opts = recordOptions(args); } catch (e) { throw new OpError(e.code || "bad_request", e.message); }
+  if (!chrome.tabCapture?.getMediaStreamId || !chrome.offscreen?.createDocument) {
+    throw new OpError("permission_needed", "This chromecli extension has no tabCapture / offscreen permission yet.",
+      { hint: "Kevin: reload the chromecli extension in chrome://extensions (0.12.1 adds tabCapture and offscreen)." });
+  }
+  const tab = await resolveTab(args);
+  const level = await checkRecordable(tab);
+  const origin = originOf(tab.url || "");
+  const where = { tab: tab.id, origin };
+  if (recFor(tab.id)) throw new OpError("bad_request", `Tab ${tab.id} is already being recorded (chromecli record status).`, { ...where, reason: "already_recording" });
+  if (recordings.has(args.recId)) throw new OpError("bad_request", "That recId is taken.", where);
+  const info = { op: "record", origin, url: tab.url, title: tab.title || "", reasons: [], record: opts };
+  await confirmOrThrow(info, req, where);
+  // Kevin clicked Start: check again (the tab may have moved on while the window was up).
+  const now = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!now) throw new OpError("tab_not_found", `Tab ${tab.id} closed before the recording started.`, where);
+  await checkRecordable(now);
+  if (originOf(now.url || "") !== origin) throw new OpError("not_shared", `Tab ${tab.id} left ${origin}; not recording.`, where);
+  if (recFor(tab.id)) throw new OpError("bad_request", `Tab ${tab.id} is already being recorded.`, { ...where, reason: "already_recording" });
+  const rec = { recId: args.recId, tab: tab.id, origin, title: now.title || "", level, ...opts, state: "starting",
+    createdAt: Date.now(), bytes: 0, chunks: 0, via: "confirm" };
+  recordings.set(rec.recId, rec);
+  await updateBadge(tab.id);
+  let streamId;
+  try {
+    streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+  } catch (e) {
+    const m = String(e?.message || e);
+    if (!GRANT_ERROR.test(m)) { await recFail(rec, `tabCapture: ${m}`); throw new OpError("capture_failed", `Chrome refused to capture tab ${tab.id}: ${m}`, where); }
+    // Chrome wants the extension invoked on this tab: wait for Kevin's Record in the popup.
+    rec.state = "awaiting_popup";
+    rec.waitUntil = Date.now() + opts.waitSec * 1000;
+    rec.waitTimer = setTimeout(() => recCancel(rec, "expired", "Kevin didn't press Record in time"), opts.waitSec * 1000);
+    rec.waitTimer?.unref?.();
+    await updateBadge(tab.id);
+    chrome.notifications?.create?.(`chromecli-rec-${rec.recId}`, { type: "basic", iconUrl: "icons/icon128.png",
+      title: "chromecli: one more click to record", message: `Open “${trunc(rec.title, 60)}”, click the chromecli icon, then Record.`,
+      priority: 2 }).catch?.(() => {});
+    post({ event: "rec_waiting", recId: rec.recId, tab: tab.id, origin });
+    await auditAdd({ op: "record-wait", tab: tab.id, origin, outcome: "awaiting_popup" });
+    return { ...recView(rec), confirmedInBrowser: true,
+      hint: `Chrome only lets an extension capture a tab after Kevin clicks its icon on that tab. Kevin: switch to tab ${tab.id}, click the chromecli icon, press Record. Waiting up to ${opts.waitSec}s.` };
+  }
+  await beginCapture(rec, streamId, now);
+  return { ...recView(rec), confirmedInBrowser: true };
+}
+
+async function beginCapture(rec, streamId, tab) {
+  // Stopped (pause, unshare, ...) while Chrome was handing out the stream ID.
+  if (!["starting", "awaiting_popup"].includes(rec.state)) {
+    const why = rec.reason || "stopped";
+    await recCancel(rec, "cancelled", why);
+    throw new OpError("capture_failed", `Tab ${rec.tab}'s recording was stopped before it started (${why}).`, { tab: rec.tab, origin: rec.origin });
+  }
+  rec.state = "starting";
+  const size = await captureSize(tab);
+  let res;
+  try {
+    await ensureOffscreen();
+    res = await toOffscreen({ type: "start", recId: rec.recId, streamId, fps: rec.fps, audio: rec.audio, chunkBytes: CHUNK_BYTES, ...size });
+  } catch (e) {
+    res = { ok: false, error: String(e?.message || e) };
+  }
+  if (!res?.ok) {
+    await recFail(rec, res?.error || "the recorder didn't start");
+    throw new OpError("capture_failed", `Couldn't start recording tab ${rec.tab}: ${res?.error || "no answer"}`, { tab: rec.tab, origin: rec.origin });
+  }
+  // Stopped (pause, unshare, ...) while the recorder was starting.
+  if (rec.state !== "starting") { toOffscreen({ type: "stop", recId: rec.recId, reason: rec.reason || "stopped" }).catch(() => {}); return; }
+  Object.assign(rec, { state: "recording", startedAt: Date.now(), mime: res.mime, width: res.width, height: res.height, audio: !!res.audio && rec.audio });
+  rec.maxTimer = setTimeout(() => stopRecording(rec.recId, "max_duration").catch(() => {}), rec.maxSec * 1000);
+  rec.maxTimer?.unref?.(); // (node tests only; Chrome's timers are numbers)
+  post({ event: "rec_started", recId: rec.recId, tab: rec.tab, origin: rec.origin, mime: rec.mime, fps: rec.fps, audio: rec.audio,
+    maxSec: rec.maxSec, width: rec.width, height: rec.height, via: rec.via });
+  await auditAdd({ op: "record-start", tab: rec.tab, origin: rec.origin, outcome: "ok" });
+  await updateBadge(rec.tab);
+}
+
+async function recFail(rec, error) {
+  rec.state = "failed"; rec.error = String(error).slice(0, 300); rec.stoppedAt = Date.now();
+  clearTimeout(rec.waitTimer);
+  post({ event: "rec_stopped", recId: rec.recId, tab: rec.tab, origin: rec.origin, state: "failed", reason: "failed", error: rec.error, bytes: 0, durationMs: 0 });
+  await auditAdd({ op: "record-stop", tab: rec.tab, origin: rec.origin, outcome: "failed" });
+  recNote(rec);
+  await updateBadge(rec.tab);
+}
+
+// A request that never started recording (expired, paused, unshared while waiting for the popup).
+async function recCancel(rec, state, reason) {
+  if (!isActive(rec)) return;
+  clearTimeout(rec.waitTimer);
+  Object.assign(rec, { state, reason, stoppedAt: Date.now() });
+  post({ event: "rec_stopped", recId: rec.recId, tab: rec.tab, origin: rec.origin, state, reason, bytes: 0, durationMs: 0 });
+  await auditAdd({ op: "record-stop", tab: rec.tab, origin: rec.origin, outcome: state });
+  recNote(rec);
+  await updateBadge(rec.tab);
+}
+
+// Stop and finalize; resolves with the recording once the last chunk went to the host.
+async function stopRecording(recId, reason) {
+  const rec = recordings.get(recId);
+  if (!rec || !isActive(rec)) return rec || null;
+  if (rec.state === "awaiting_popup") { await recCancel(rec, "cancelled", reason); return rec; }
+  if (rec.state === "starting") { rec.reason = reason; rec.state = "stopping"; return rec; }
+  if (rec.state === "recording") {
+    rec.state = "stopping";
+    rec.reason = reason;
+    clearTimeout(rec.maxTimer);
+    rec.finished ??= new Promise((res) => { rec.finish = res; });
+    toOffscreen({ type: "stop", recId, reason }).then((res) => { if (res?.ok && !res.gone) recDone({ ...res, recId }); },
+      () => recDone({ recId, reason, error: "the recorder went away" }));
+    await updateBadge(rec.tab);
+  }
+  let timer;
+  const timeout = new Promise((res) => { timer = setTimeout(() => res("timeout"), 20000); });
+  const how = await Promise.race([rec.finished, timeout]);
+  clearTimeout(timer);
+  if (how === "timeout" && isActive(rec)) {
+    await recDone({ recId, reason: rec.reason, error: "the recorder didn't finish in 20s" });
+  }
+  return rec;
+}
+
+async function stopAllRecordings(reason, filter = () => true) {
+  const active = [...recordings.values()].filter((r) => isActive(r) && filter(r));
+  return Promise.all(active.map((r) => stopRecording(r.recId, reason)));
+}
+
+// The offscreen recorder finished one (stop, tab closed, chunk not delivered): tell the host, which closes the file.
+async function recDone(msg) {
+  const rec = recordings.get(msg.recId);
+  if (!rec || rec.state === "stopped" || rec.state === "failed") return;
+  clearTimeout(rec.maxTimer);
+  // The bytes the worker forwarded are what the host got (the recorder may count a chunk that wasn't delivered).
+  const bytes = rec.chunks ? rec.bytes : (msg.bytes || 0);
+  Object.assign(rec, { state: msg.error && !bytes ? "failed" : "stopped", stoppedAt: Date.now(),
+    reason: rec.reason || msg.reason || "stopped", bytes, chunks: rec.chunks || msg.chunks || 0,
+    frames: msg.frames ?? rec.frames, ...(msg.error ? { error: String(msg.error).slice(0, 300) } : {}) });
+  post({ event: "rec_stopped", recId: rec.recId, tab: rec.tab, origin: rec.origin, state: rec.state, reason: rec.reason,
+    bytes: rec.bytes, chunks: rec.chunks, durationMs: rec.startedAt ? rec.stoppedAt - rec.startedAt : 0, mime: rec.mime || null,
+    ...(rec.error ? { error: rec.error } : {}) });
+  await auditAdd({ op: "record-stop", tab: rec.tab, origin: rec.origin, outcome: rec.reason });
+  recNote(rec);
+  rec.finish?.(rec);
+  await updateBadge(rec.tab);
+  await closeOffscreenIfIdle();
+}
+
+// Messages from offscreen.html. Chunks are forwarded in order, synchronously (no await before post).
+function offscreenMessage(msg) {
+  if (msg?.type === "rec_chunk") {
+    const rec = recordings.get(msg.recId);
+    if (!rec || !["recording", "stopping"].includes(rec.state) || typeof msg.data !== "string" || !Number.isInteger(msg.seq)) {
+      return { ok: false, error: "no such recording" };
+    }
+    if (msg.data.length > Math.ceil(CHUNK_BYTES / 3) * 4 + 4) return { ok: false, error: "chunk too big" };
+    if (!post({ event: "rec_chunk", recId: rec.recId, seq: msg.seq, data: msg.data })) {
+      stopRecording(rec.recId, "host_disconnected").catch(() => {});
+      return { ok: false, error: "chromecli-host isn't connected" };
+    }
+    rec.chunks = msg.seq + 1;
+    rec.bytes += Math.floor(msg.data.length * 3 / 4) - (msg.data.endsWith("==") ? 2 : msg.data.endsWith("=") ? 1 : 0);
+    return { ok: true };
+  }
+  if (msg?.type === "rec_done") { recDone(msg).catch(() => {}); return { ok: true }; }
+  return { ok: false, error: "unknown message" };
+}
+
+async function recordStop(args) {
+  let targets;
+  if (args.all) targets = [...recordings.values()].filter(isActive);
+  else if (validRecId(args.recId)) targets = recordings.has(args.recId) ? [recordings.get(args.recId)] : [];
+  else {
+    if (!Number.isInteger(args.tab)) throw new OpError("bad_target", "Give a tab id, a recId, or all: true.");
+    const r = recFor(args.tab);
+    targets = r ? [r] : [];
+  }
+  const out = [];
+  for (const r of targets) out.push(recView(await stopRecording(r.recId, args.reason === "cli" || !args.reason ? "stopped (chromecli record stop)" : String(args.reason).slice(0, 60))));
+  // Already finished ones for that tab (auto-stopped), so the CLI can still convert them.
+  const finished = [...recordings.values()].filter((r) => !isActive(r) && !targets.includes(r)
+    && (args.all || r.recId === args.recId || r.tab === args.tab)).map((r) => recView(r));
+  return { ...(Number.isInteger(args.tab) ? { tab: args.tab } : {}), stopped: out, finished };
+}
+
+function recordStatus(args) {
+  let rows = [...recordings.values()];
+  if (validRecId(args.recId)) rows = rows.filter((r) => r.recId === args.recId);
+  if (Number.isInteger(args.tab)) rows = rows.filter((r) => r.tab === args.tab);
+  return { recordings: rows.map((r) => recView(r)), active: rows.filter(isActive).length };
+}
+
+// Kevin's Record in the popup: the click on the chromecli icon (on that tab) is what gives Chrome's grant.
+async function popupRecordStart(recId) {
+  const rec = recordings.get(recId);
+  if (!rec || rec.state !== "awaiting_popup") return { ok: false, error: "This recording request is no longer waiting." };
+  const tab = await chrome.tabs.get(rec.tab).catch(() => null);
+  if (!tab) { await recCancel(rec, "cancelled", "tab closed"); return { ok: false, error: "That tab closed." }; }
+  try {
+    await checkRecordable(tab);
+    if (originOf(tab.url || "") !== rec.origin) throw new OpError("not_shared", "The tab left the site it was shared on.");
+  } catch (e) { await recCancel(rec, "cancelled", e.code || "refused"); return { ok: false, error: e.message }; }
+  let streamId;
+  try {
+    streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: rec.tab });
+  } catch (e) {
+    const m = String(e?.message || e);
+    return { ok: false, error: GRANT_ERROR.test(m)
+      ? "Chrome needs the click on that tab: switch to it, click the chromecli icon there, then Record." : `Chrome refused: ${m}` };
+  }
+  clearTimeout(rec.waitTimer);
+  rec.via = "popup";
+  try { await beginCapture(rec, streamId, tab); } catch (e) { return { ok: false, error: e.message }; }
+  return { ok: true };
+}
+
+// A covered / background tab: a frame from its recording's stream instead of captureVisibleTab.
+async function streamShot(tab, rec, level, format, quality) {
+  const origin = originOf(tab.url || "");
+  let res;
+  try { res = await toOffscreen({ type: "frame", recId: rec.recId, format, quality }); } catch (e) { res = { ok: false, error: String(e?.message || e) }; }
+  if (!res?.ok) throw new OpError("script_error", `No frame from tab ${tab.id}'s recording: ${res?.error || "no answer"}`, { tab: tab.id, origin });
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!after || originOf(after.url || "") !== origin || recFor(tab.id) !== rec) {
+    throw new OpError("not_visible", `Tab ${tab.id} changed during the capture.`, { tab: tab.id, origin });
+  }
+  return { tab: tab.id, url: tab.url, title: tab.title, origin, share: level, format, source: "stream", recId: rec.recId,
+    width: res.width, height: res.height, frameAgeMs: res.frameAgeMs, frames: res.frames, data: res.data };
+}
+
+const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s));
+
+// Stop before the tab shows another origin's pixels (onUpdated only fires at commit).
+chrome.webNavigation?.onBeforeNavigate?.addListener((d) => {
+  if (d.frameId !== 0) return;
+  const rec = recFor(d.tabId);
+  if (rec && originOf(d.url) !== rec.origin) stopRecording(rec.recId, "origin changed").catch(() => {});
+});
+chrome.webNavigation?.onCommitted?.addListener((d) => {
+  if (d.frameId !== 0) return;
+  const rec = recFor(d.tabId);
+  if (rec && originOf(d.url) !== rec.origin) stopRecording(rec.recId, "origin changed").catch(() => {});
+});
+
 // ---- popup messages (only from this extension's own pages, never from a tab)
 // The confirm window is an extension page in a popup window (so it has sender.tab); it may only read and answer
 // its own confirm. No web page can load confirm.html (it is not web-accessible).
@@ -1724,6 +2063,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !url.startsWith(chrome.runtime.getURL(""))) return false;
   const fromConfirm = url.startsWith(chrome.runtime.getURL("confirm.html"));
   const fromOptions = url.startsWith(chrome.runtime.getURL("options.html"));
+  // 0.12.1: the offscreen recorder only sends chunks and its done note (handled at once, in order).
+  if (url.startsWith(chrome.runtime.getURL("offscreen.html"))) {
+    if (sender.tab) return false;
+    sendResponse(offscreenMessage(msg));
+    return false;
+  }
+  if (msg?.target === "offscreen") return false;
   if (fromConfirm ? !["confirmGet", "confirmAnswer"].includes(msg?.type)
     : fromOptions ? !["jevStatus", "jevTest"].includes(msg?.type) : !!sender.tab) return false;
   popupMessage(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -1743,8 +2089,10 @@ async function popupMessage(msg) {
       for (const [id, s] of Object.entries(shares)) {
         let t = null;
         try { t = await chrome.tabs.get(Number(id)); } catch { /* gone; revoked on its own */ }
+        const rec = recFor(Number(id));
         shared.push({ tabId: Number(id), origin: s.origin, level: s.level, at: s.at ?? null,
-          title: t?.title || "", favIconUrl: t?.favIconUrl || "", windowId: t?.windowId ?? null });
+          title: t?.title || "", favIconUrl: t?.favIconUrl || "", windowId: t?.windowId ?? null,
+          ...(rec ? { rec: { ...recView(rec), button: recButton(rec) } } : {}) });
       }
       return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url), favIconUrl: tab.favIconUrl || "" },
         shared,
@@ -1792,6 +2140,13 @@ async function popupMessage(msg) {
       return { ok: true };
     }
     case "unshare": await revoke(msg.tabId, "unshared"); return { ok: true };
+    case "recordStart": return popupRecordStart(String(msg.recId || ""));
+    case "recordStop": {
+      const rec = recordings.get(String(msg.recId || ""));
+      if (!rec || !isActive(rec)) return { ok: false, error: "Not recording." };
+      await stopRecording(rec.recId, "stopped by Kevin");
+      return { ok: true };
+    }
     case "unshareAll": {
       const shares = await getShares();
       for (const id of Object.keys(shares)) await revoke(Number(id), "unshare all");

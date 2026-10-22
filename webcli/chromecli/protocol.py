@@ -26,19 +26,23 @@ CLI_REQUEST_MAX = 1 * 2**20
 
 # page.scroll (0.10.2): moves a scroll position on a Read or Act tab; read-only in every other way, never gated.
 READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-            "page.find", "page.probe", "page.scroll", "grant.list")
+            "page.find", "page.probe", "page.scroll", "grant.list", "record.status")
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
 # Pre-approval grants (stored in the extension; 0.10.1: grant.add needs userApproved and Jev's scope check).
 # 0.11.5: grant.add_batch, one quote covering several grants (clause-aware check).
 GRANT_OPS = ("grant.add", "grant.add_batch", "grant.revoke")
-OPS = READ_OPS + TAB_OPS + PAGE_OPS + GRANT_OPS
+# 0.12.1: tab recording. record.start needs --confirm and Kevin's Start in the browser; record.stop only stops.
+RECORD_OPS = ("record.start", "record.stop")
+# Answered by chromecli-host itself (never forwarded): the recording files it wrote this session.
+HOST_OPS = ("record.files",)
+OPS = READ_OPS + TAB_OPS + PAGE_OPS + GRANT_OPS + RECORD_OPS + HOST_OPS
 # Ops that change something: sent only with --confirm (confirm: true); the extension refuses them otherwise.
-MUTATING_OPS = TAB_OPS + PAGE_OPS + GRANT_OPS
+MUTATING_OPS = TAB_OPS + PAGE_OPS + GRANT_OPS + ("record.start",)
 # Not in this version: bad_request.
 FUTURE_OPS = ("page.elements",)
 EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "grants_cleared", "grant_added",
-                   "grant_refused", "error")
+                   "grant_refused", "error", "rec_waiting", "rec_started", "rec_chunk", "rec_stopped")
 
 # Spec section 4: one table, every error code the host or extension can answer with.
 ERROR_EXIT: dict[str, int] = {
@@ -51,6 +55,7 @@ ERROR_EXIT: dict[str, int] = {
     "not_visible": 4, "permission_needed": 4, "policy_pending": 4,
     # 5: bridge / page
     "bridge_down": 5, "host_busy": 5, "timeout": 5, "url_mismatch": 5, "script_error": 5, "jev_error": 5,
+    "capture_failed": 5,
     # 7: config
     "config_error": 7, "host_not_installed": 7, "jev_not_configured": 7, "history_disabled": 7, "eval_disabled": 7,
     # 8: dispatched, not verified
@@ -64,7 +69,11 @@ ERROR_HINTS: dict[str, str] = {
     "paused": "Agents are paused in the chromecli popup; Kevin un-pauses there.",
     "origin_blocked": "That origin is on the deny list; it can't be shared.",
     "policy_pending": "A [chromecli] config change widens access; Kevin accepts or rejects it in the chromecli popup.",
-    "not_visible": "Screenshots need the tab to be the active tab of a focused window; Kevin brings it to the front.",
+    "not_visible": "Screenshots need the tab in front of a focused window, or a recording of it: `chromecli record start TAB "
+                   "--confirm` (Kevin clicks Start), then screenshot works while the tab is covered. Or Kevin brings "
+                   "the tab to the front.",
+    "capture_failed": "Chrome couldn't capture the tab. Kevin: reload the chromecli extension, click its icon on that "
+                      "tab, then try again (see `chromecli record status`).",
     "permission_needed": "Kevin: click the chromecli icon on that tab (re-share it) so Chrome grants access, then retry.",
     "bridge_down": "Chrome isn't running, or the chromecli extension isn't loaded/connected. See `chromecli status`.",
     "host_busy": "Another chromecli-host is already serving (two Chrome profiles with the extension?).",

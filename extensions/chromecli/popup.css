@@ -373,3 +373,12 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* 0.12.1: tab recording */
+.rec-btn { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: 22px; padding: 0 8px; font-size: 11.5px; }
+.rec-btn .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: #D93025; }
+.rec-btn.stop .rec-dot { border-radius: 1.5px; animation: rec-pulse 1.2s ease-in-out infinite; }
+.rec-btn.record { color: #fff; background: #D93025; border-color: #D93025; }
+.rec-btn.record .rec-dot { background: #fff; }
+@keyframes rec-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .rec-btn.stop .rec-dot { animation: none; } }

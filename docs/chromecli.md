@@ -74,6 +74,12 @@ chromecli grant add-batch --origin O [--frame-origin F] [--op click] [--tab TAB]
 chromecli grant list [--format json]
 chromecli grant revoke ID | --all --confirm
 
+# 0.12.1 recording: a shared tab; preview unless --confirm, and then Kevin clicks Start in Chrome
+chromecli record start TAB [--out FILE.webm|.mp4] [--fps 30] [--max 10m] [--audio] [--wait 2m] [--force] --confirm
+chromecli record stop TAB | --all     # finalizes; .mp4 is converted here (ffmpeg on PATH, else stays .webm)
+chromecli record status [TAB]
+chromecli screenshot TAB --covered    # newest frame of the tab's recording (also used by itself when it isn't in front)
+
 chromecli install-host [--extension-id ID] [--confirm]    # dry run without --confirm
 chromecli uninstall-host [--confirm]
 chromecli doctor                    # same row as `webcli doctor` -> "chromecli"
@@ -534,6 +540,85 @@ frame_act_allow = ["https://asdescribed.truefrontier.app"]
   where a button is pressed N times. There is no other bypass. 0.11.5: use `grant add-batch` for this (one call,
   each grant checked against its own item of the quote; see "One quote, several steps").
 
+## Recording and covered screenshots (0.12.1)
+
+**What it does.** `chromecli record start TAB --confirm` records one tab Kevin shared (Share-read or Share-act; not
+bot-opened, not an inherited share, not a denied origin, not while paused) into a WebM file. It captures only that
+tab's page pixels, iframes included: never the screen, other tabs, or Chrome's own UI.
+
+**How.** `chrome.tabCapture.getMediaStreamId({targetTabId})` in the service worker, then an offscreen document
+(`offscreen.html`, reason `USER_MEDIA`) opens the stream and runs `MediaRecorder` (VP9, else VP8; `--fps` 1-60 caps
+the frame rate). There's no `debugger` permission and no CDP. New permissions: `tabCapture` (Chrome's warning: "Read
+and change all your data on all websites"; an unpacked extension gets no prompt on reload) and `offscreen` (no
+warning).
+
+**Two gates.**
+
+1. *Kevin's Start.* Without `--confirm` the command is a preview (nothing is sent). With it, the confirm window says
+   "Start recording this tab: <title> (<origin>)"; only Kevin's Start click starts it. Deny, closing the window, or
+   the confirm timeout refuse it (exit 4 `declined` / `confirm_timeout`). `--confirm` alone never records.
+2. *Chrome's grant.* Chrome lets an extension capture a tab only after Kevin clicked its icon on that tab since the
+   tab last changed site (opening the popup and sharing counts; reloading the extension resets it). The confirm
+   window click doesn't count. Without the grant, after Start the request turns `awaiting_popup`: the CLI prints
+   "Chrome only lets an extension capture a tab after Kevin clicks its icon on that tab. Kevin: switch to tab N,
+   click the chromecli icon, press Record. Waiting up to 2m." on stderr; the badge shows orange `REC?`, a
+   notification shows, and that tab's row in the popup has a **Record** button (it works when the popup is opened on
+   that tab). The CLI waits up to `--wait` (5s-15m, default 2m), then exit 4 `confirm_timeout`; Ctrl-C cancels it.
+
+**While recording.** The badge is red `REC`; the popup's row for the tab has **Stop**. It stops and finalizes by
+itself on Pause (popup, shortcut), Unshare, the tab closing, a top-frame navigation to another origin (as soon as it
+starts), or `--max` (1s-4h, default 10m). One recording per tab.
+
+**Files.** The host, not the extension, picks and writes the file: the extension only sees a recording ID. Default
+`~/.webcli/chromecli/recordings/tab<ID> <YYYY-MM-DD> at <HH.MM.SS>.webm` (spaces, so the log's redactor leaves the
+name readable); `--out` must end in `.webm` or `.mp4`, and an existing file needs `--force`. Files are 0600, the
+directory 0700. The offscreen recorder emits a chunk each second; the service worker slices it to at most 512 KiB
+(about 683 KiB in base64), under Chrome's native messaging limits (1 MB host→Chrome, 64 MiB Chrome→host), and the
+host writes and flushes each one as it arrives. Chunks must arrive in order: a gap, a bad chunk, or a chunk over 1
+MiB stops writing (`writeError`) instead of writing a corrupt file. The host keeps the last 50 recordings of its
+session for `record status`.
+
+**`.mp4`.** `--out demo.mp4` records `demo.webm`; `record stop` then runs ffmpeg if it's on PATH (libx264 veryfast
+crf 18, else h264_videotoolbox; yuv420p; even dimensions; `+faststart`; AAC with `--audio`) and keeps the .webm.
+Without ffmpeg: `converted: false` and a note ("ffmpeg isn't on PATH, so the recording stays WebM ... brew install
+ffmpeg"). The conversion runs once per recording.
+
+**Audio.** Off by default. `--audio` adds the tab's sound; because capturing mutes the tab for Kevin, the offscreen
+document plays it back through an `AudioContext`.
+
+**Stop and status.** `record stop TAB|--all` returns `{stopped: [...], finished: [...]}` (path, bytesWritten,
+durationMs, chunks, reason, converted/note for .mp4). `record status [TAB]` lists them, active first. A recording that
+Pause already stopped is still listed from the host (`record stop` while paused says so).
+
+**Covered screenshots.** `screenshot TAB --covered`, or a plain `screenshot` of a shared tab that isn't in front,
+returns the newest frame of that tab's recording (`source: "stream"`, `frameAgeMs`, `frames`, `recId`; via
+`MediaStreamTrackProcessor`, with a `<video>` fallback). A tab in front says `source: "visible"`. A tab that isn't in
+front and isn't recording: exit 4 `not_visible`, hint "chromecli record start TAB --confirm".
+
+**Throttling, measured.** Chrome 153 (Chrome for Testing), `tests/fixtures/chromecli/animated.html` (a rAF counter, a
+100 ms timer, a CSS animation, a ticking iframe), Playwright's anti-throttling flags removed:
+
+| Tab state while recording | rAF/s | 100 ms timer/s | visibilityState | stream frame |
+|---|---|---|---|---|
+| In front | ~120 | 10 | visible | fresh |
+| Window covered by another window | ~123 | 10 | visible | fresh (13-26 ms old), changing |
+| Background tab of its window | ~120 | 10 | visible | fresh (4-25 ms old), changing |
+| Window minimized | ~1 | 10 | visible | frozen (6-9 s old) |
+
+Chrome treats a captured tab as visible, so covering it or switching tabs doesn't throttle it; minimizing its window
+stops painting. A stream frame older than 2s adds `warning` to the screenshot JSON (and a stderr line). Advice (also
+in agent-help): give the recorded tab its own window, leave it behind other windows, never minimized.
+
+**Log.** `event=record_start tab= origin= file="..." rec=<8 chars> mime= size= fps= audio= max_s= via=confirm|popup`
+and `event=record_stop ... state= duration_s= bytes= chunks= reason=`, plus `record_waiting` and `rec_chunk_dropped`.
+The directory is never logged. Redaction still covers the whole line (an origin with digits, like
+`http://127.0.0.1:8765`, shows as `<redacted>`).
+
+**Tested.** Node with mocks (`extensions/chromecli/test/record.test.mjs`), pytest (`tests/test_chromecli_record.py`),
+and by hand in an isolated Chrome for Testing: `tests/e2e/chromecli_record_e2e.py` (its docstring says how; it never
+touches Kevin's Chrome). The icon-click grant and the popup's Record button can't be automated: the E2E stands in
+for the grant with `--allowlisted-extension-id`, and `--noallow` checks the `awaiting_popup` path.
+
 ## Config
 
 ```toml
@@ -559,7 +644,7 @@ Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME
 
 2 bad_request/too_large/bad_target/missing_expect; 3 tab_not_found/element_not_found/ambiguous_target/no_history;
 4 not_shared/not_act_shared/origin_blocked/paused/declined/confirm_timeout/not_visible/permission_needed/
-policy_pending; 5 bridge_down/host_busy/timeout/url_mismatch/script_error; 7 config_error/host_not_installed/
+policy_pending; 5 bridge_down/host_busy/timeout/url_mismatch/script_error/capture_failed; 7 config_error/host_not_installed/
 history_disabled/eval_disabled/jev_not_configured; 8 sent_unverified; 9 grant_overreach/grant_unclear (Jev refused a
 pre-approval). jev_error is 5. 2 also covers missing_user_approval (0.10.1).
 
@@ -580,8 +665,9 @@ Hosts before 0.11.4 also refused unknown `[chromecli]` keys (exit 7 "has unknown
 ## Test fixtures
 
 `tests/fixtures/chromecli/scroll.html` (inner scroll viewer for `scroll` / `--full-page`), `form.html` (email, password, country select, "Next" link, "Place order" submit that shows
-"submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), and `frames.html` (0.11.1:
-iframes, a closed shadow root, a canvas). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
+"submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), `frames.html` (0.11.1:
+iframes, a closed shadow root, a canvas), and `animated.html` (0.12.1: something changes every frame, for recording
+and throttling checks; `window.__stats` counts rAF, timer ticks, visibility changes). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
 
 `extensions/chromecli/test/fixtures/grant-batch-as-described.json` (0.11.5): quote (b) above, the vague quote (a)
@@ -591,4 +677,6 @@ response shape, keyed by target. Hand-made in the recorded shape; tests never ca
 ## Not yet
 
 `page.elements` (a Jev-ranked element list op), chtabs retirement (P5), reporting which account is signed in to a
-tab (future work). `chtabs` (press-chrome) is untouched.
+tab (future work). Recording: more than one recording per tab, recording a whole window or the screen, keeping a
+recording across a site change (Chrome drops the capture grant there anyway), and a way to grant the capture
+without Kevin's icon click (there's none, by design). `chtabs` (press-chrome) is untouched.

@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- chromecli recording fixture (0.12.1): something changes every frame, so a recording or a covered screenshot shows
+     whether Chrome kept painting the tab. window.__stats counts requestAnimationFrame callbacks, 100 ms interval ticks,
+     and visibility changes; the big number is the rAF count, the bar moves with a CSS animation (compositor). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chromecli animated fixture</title>
+<style>
+  body { font: 16px -apple-system, system-ui, sans-serif; margin: 0; background: #0b1020; color: #f4f6fb; }
+  main { padding: 32px; }
+  #raf { font: 700 120px ui-monospace, Menlo, monospace; letter-spacing: -2px; }
+  #info { font: 18px ui-monospace, Menlo, monospace; opacity: .85; white-space: pre; }
+  .track { height: 24px; background: #1d2440; border-radius: 12px; overflow: hidden; margin-top: 24px; }
+  .bar { width: 20%; height: 100%; background: linear-gradient(90deg, #d93025, #f6ae2d); animation: slide 2s linear infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(500%); } }
+  iframe { width: 420px; height: 90px; border: 1px solid #39406a; margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="raf">0</div>
+  <div id="info"></div>
+  <div class="track"><div class="bar"></div></div>
+  <iframe title="inner" srcdoc="<body style='margin:0;background:#12352a;color:#bff5d8;font:28px ui-monospace,Menlo,monospace'><div id=c>iframe 0</div><script>let n=0;setInterval(()=>{c.textContent='iframe '+(++n)},100)</script></body>"></iframe>
+</main>
+<script>
+  const s = (window.__stats = { raf: 0, interval: 0, visibility: [document.visibilityState], start: Date.now() });
+  const raf = document.getElementById("raf");
+  const info = document.getElementById("info");
+  function frame() { s.raf++; raf.textContent = String(s.raf); requestAnimationFrame(frame); }
+  requestAnimationFrame(frame);
+  setInterval(() => {
+    s.interval++;
+    info.textContent = `interval ${s.interval}  visibility ${document.visibilityState}  ${new Date().toISOString().slice(11, 23)}`;
+  }, 100);
+  document.addEventListener("visibilitychange", () => s.visibility.push(document.visibilityState));
+</script>
+</body>
+</html>

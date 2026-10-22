@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from webcli import __version__
-from webcli.chromecli import LOCK_NAME, LOG_NAME, SOCKET_NAME, install, policy, protocol
+from webcli.chromecli import LOCK_NAME, LOG_NAME, SOCKET_NAME, install, policy, protocol, recording
 from webcli.core import config
 from webcli.core.errors import ConfigError
 from webcli.core.redact import redact_text, redact_url
@@ -180,6 +180,13 @@ def _summary(op: str, args: dict) -> str:
             parts.append("path=1")
     if op == "tabs.screenshot" and args.get("part"):  # one viewport of `screenshot --full-page`
         parts.append(f"full_page_part={redact_text(str(args['part']))[:4]}")
+    if op == "tabs.screenshot" and args.get("covered"):  # 0.12.1
+        parts.append("covered=1")
+    if op == "record.start":  # 0.12.1: the file name only (paths look like tokens to the redactor)
+        parts.append(f"file={recording.log_name(Path(str(args.get('out') or '')).name)} fps={args.get('fps', 30)} audio={args.get('audio') is True} "
+                     f"max_s={args.get('maxSec', 600)}")
+    if op == "record.stop" and args.get("all"):
+        parts.append("all=1")
     if op == "tabs.list" and args.get("all"):
         parts.append("all=1")
     if op == "page.probe" and args.get("op"):
@@ -224,6 +231,8 @@ class Host:
         self.config_stamp: tuple | None = None
         self.server: socket.socket | None = None
         self.sock_path: Path | None = None
+        self.recordings = recording.Recordings()
+        self.rec_drops: dict[str, int] = {}
 
     # extension side
     def send(self, message: dict) -> None:
@@ -285,6 +294,31 @@ class Host:
                   + (f"reason={json.dumps(redact_text(str(msg.get('reason')))[:300], ensure_ascii=False)} " if msg.get("reason") else "")
                   + (f"clause={_clause_log(msg['clause'])} " if msg.get("clause") else "")  # 0.11.5
                   + f"quote={json.dumps(redact_text(str(msg.get('quote') or ''))[:500], ensure_ascii=False)}")
+        elif kind == "rec_chunk":  # 0.12.1: appended to the recording's file as it comes
+            why = self.recordings.chunk(msg)
+            if why:
+                rid = str(msg.get("recId"))[:32]
+                self.rec_drops[rid] = self.rec_drops.get(rid, 0) + 1
+                if self.rec_drops[rid] == 1:
+                    audit(f"event=rec_chunk_dropped rec={redact_text(rid)} seq={msg.get('seq')} why={redact_text(why)[:160]}")
+        elif kind == "rec_waiting":
+            self.recordings.waiting(msg)
+            audit(f"event=record_waiting tab={msg.get('tab')} origin={redact_url(str(msg.get('origin')))} "
+                  f"rec={redact_text(str(msg.get('recId'))[:8])} why=needs Kevin's Record in the popup")
+        elif kind == "rec_started":
+            r = self.recordings.started(msg)
+            if r:
+                audit(f"event=record_start tab={r['tab']} origin={redact_url(str(r['origin']))} file={recording.log_name(r['path'].name)} "
+                      f"rec={r['recId'][:8]} mime={redact_text(str(r['mime']))[:40]} size={r['width']}x{r['height']} fps={r['fps']} "
+                      f"audio={r['audio'] is True} max_s={r['maxSec']} via={redact_text(str(msg.get('via')))[:10]}")
+        elif kind == "rec_stopped":
+            r = self.recordings.stopped(msg)
+            if r:
+                dur = (r["durationMs"] or 0) / 1000
+                audit(f"event=record_stop tab={r['tab']} origin={redact_url(str(r['origin'] or msg.get('origin')))} "
+                      f"file={recording.log_name(r['path'].name)} rec={r['recId'][:8]} state={r['state']} duration_s={dur:.1f} "
+                      f"bytes={r['bytes']} chunks={r['nextSeq']} reason={redact_text(str(r['reason']))[:80]}"
+                      + (f" error={json.dumps(redact_text(str(r['error']))[:200])}" if r["error"] else ""))
         else:
             audit(f"event={redact_text(str(kind))}")
 
@@ -387,12 +421,51 @@ class Host:
                 # The host's version (and the extension's) let the CLI say "reload the extension" when they differ.
                 reply = protocol.reply_error(None, "config_error", self.config_error, hostVersion=__version__,
                                              extVersion=(self.hello or {}).get("extVersion"))
+            elif op in protocol.HOST_OPS:
+                reply = {"v": protocol.VERSION, "id": None, "ok": True, "result": {"recordings": self.recordings.all()}}
+            elif op == "record.start":
+                reply = self.record_start(req)
             else:
                 reply = self.forward(req)
+                if op in ("record.stop", "record.status") and reply.get("ok") and isinstance(reply.get("result"), dict):
+                    self.enrich(reply["result"])
             if op == "status" and reply.get("ok") and isinstance(reply.get("result"), dict):
                 reply["result"]["host"] = self.host_info()
         self.audit_op(op, args, reply, (time.monotonic() - start) * 1000)
         return reply
+
+    # 0.12.1: recordings. The CLI names the file; the extension only ever sees the host's recId.
+    def record_start(self, req: dict) -> dict:
+        args = dict(req["args"])
+        out = args.pop("out", None)
+        if not isinstance(out, str) or not os.path.isabs(out) or not out.endswith(".webm") or os.path.isdir(out):
+            return protocol.reply_error(None, "bad_request", "record.start needs out: an absolute path ending in .webm.")
+        requested = args.pop("requestedOut", None)
+        rec_id = self.recordings.register(Path(out), requested if isinstance(requested, str) else None, args.get("tab"),
+                                          fps=args.get("fps"), audio=args.get("audio") is True, max_sec=args.get("maxSec"))
+        args["recId"] = rec_id
+        reply = self.forward({**req, "args": args})
+        if not reply.get("ok"):
+            self.recordings.drop(rec_id)
+            return reply
+        if isinstance(reply.get("result"), dict):
+            reply["result"]["recId"] = rec_id
+            self.enrich(reply["result"])
+        return reply
+
+    def enrich(self, result: dict) -> None:
+        """Add the host's side (path, bytes written, write errors) to each recording row of a reply."""
+        def add(row: Any) -> None:
+            if isinstance(row, dict) and isinstance(row.get("recId"), str):
+                mine = self.recordings.view(row["recId"])
+                if mine:
+                    row.update({k: mine[k] for k in ("path", "file", "requested", "bytesWritten")})
+                    if mine.get("error"):
+                        row["writeError"] = mine["error"]
+        add(result)
+        for key in ("recordings", "stopped", "finished"):
+            for row in result.get(key) or []:
+                add(row)
 
     def audit_op(self, op: str, args: dict, reply: dict, ms: float) -> None:
         result = reply.get("result") if isinstance(reply.get("result"), dict) else {}
@@ -496,6 +569,7 @@ class Host:
         if self.stopped.is_set():
             return
         self.stopped.set()
+        self.recordings.close_all(f"host stopped ({why})")
         audit(f"event=host_stop reason={why}")
         if self.server is not None:
             try:

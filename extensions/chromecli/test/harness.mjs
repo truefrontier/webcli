@@ -26,7 +26,10 @@ let n = 0;
 // webNavigation.getAllFrames rows (default: the top frame only); h.frameThrows: frameIds whose injection throws.
 export async function loadBackground({ page } = {}) {
   const h = { posted: [], granted: new Set(), windowsCreated: [], windowsRemoved: [], tabsCreated: [], tabsRemoved: [],
-    tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })), frames: new Map(), frameThrows: new Map() };
+    tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })), frames: new Map(), frameThrows: new Map(),
+    // 0.12.1 recording: tabCapture + a fake offscreen recorder (h.off.* answers; captureError makes getMediaStreamId throw).
+    streamIds: [], offscreenOpen: false, offscreenCreated: 0, toOffscreen: [], captureError: null,
+    off: { start: null, frame: null, stopDelayMs: 0 } };
   globalThis.__chromecliOpenWaitMs = 40;
   globalThis.__chromecliCaptureGapMs = 0;
   h.port = { onMessage: event(), onDisconnect: event(), postMessage: (m) => h.posted.push(structuredClone(m)) };
@@ -39,7 +42,31 @@ export async function loadBackground({ page } = {}) {
   let nextWin = 500;
   const chrome = {
     runtime: { id: EXT_ID, getManifest: () => ({ version: "0.8.0" }), getURL: (p) => EXT + p,
-      connectNative: () => h.port, onMessage: event(), onStartup: event(), onInstalled: event(), lastError: null },
+      connectNative: () => h.port, onMessage: event(), onStartup: event(), onInstalled: event(), lastError: null,
+      getContexts: async ({ contextTypes }) => (h.offscreenOpen && contextTypes.includes("OFFSCREEN_DOCUMENT")
+        ? [{ contextType: "OFFSCREEN_DOCUMENT", documentUrl: EXT + "offscreen.html" }] : []),
+      sendMessage: async (msg) => {
+        if (msg?.target !== "offscreen") return undefined;
+        if (!h.offscreenOpen) throw new Error("Could not establish connection. Receiving end does not exist.");
+        h.toOffscreen.push(structuredClone(msg));
+        if (msg.type === "start") return h.off.start ? h.off.start(msg) : { ok: true, mime: "video/webm;codecs=vp9", width: 2880, height: 1800, audio: !!msg.audio };
+        if (msg.type === "frame") return h.off.frame ? h.off.frame(msg) : { ok: true, data: "iVBORw0KGgo=", width: 2880, height: 1800, frames: 42, frameAgeMs: 16 };
+        if (msg.type === "stop") {
+          if (h.off.stopDelayMs) await new Promise((r) => setTimeout(r, h.off.stopDelayMs));
+          const done = { type: "rec_done", recId: msg.recId, bytes: h.offBytes?.[msg.recId] || 0, chunks: h.offChunks?.[msg.recId] || 0, frames: 42, mime: "video/webm;codecs=vp9", durationMs: 1000, reason: msg.reason };
+          await h.message(done, "offscreen.html");
+          return { ok: true, ...done };
+        }
+        return { ok: true };
+      } },
+    tabCapture: { getMediaStreamId: async ({ targetTabId }) => {
+      if (h.captureError) throw new Error(h.captureError);
+      h.streamIds.push(targetTabId); return `stream-${targetTabId}`;
+    } },
+    offscreen: {
+      createDocument: async ({ url, reasons }) => { h.offscreenCreated++; h.offscreenOpen = true; h.offscreenReasons = reasons; h.offscreenUrl = url; },
+      closeDocument: async () => { h.offscreenOpen = false; },
+    },
     storage: { session: area(), local: area(), onChanged: event() },
     tabs: {
       query: async (q) => [...h.tabs.values()].filter((t) => !q.active || t.active),
@@ -84,6 +111,7 @@ export async function loadBackground({ page } = {}) {
       },
     },
     webNavigation: {
+      onBeforeNavigate: event(), onCommitted: event(),
       getAllFrames: async ({ tabId }) => structuredClone(h.frames.get(tabId)
         || [{ frameId: 0, parentFrameId: -1, url: h.tabs.get(tabId)?.url || "", errorOccurred: false }]),
     },
@@ -146,6 +174,8 @@ export async function loadBackground({ page } = {}) {
     if (pending) { t.url = url; await chrome.tabs.onUpdated.fire(t.id, { url }); }
     return t.id;
   };
+  // The offscreen recorder hands the worker one chunk (base64).
+  h.chunk = (recId, seq, data = "AAAA") => h.message({ type: "rec_chunk", recId, seq, data }, "offscreen.html");
   h.policy = async (p) => {
     const { DEFAULT_DENY } = await import("../policy.js");
     const pol = { implicit_active: "off", history: true, confirm_timeout: 60, read_allow: [], act_allow: [],

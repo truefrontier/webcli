@@ -30,6 +30,11 @@ async function answer(a) {
 }
 
 function render() {
+  // 0.12.1: a recording request says Start, not Allow once, and has no gate reasons.
+  const rec = info.op === "record";
+  $("allow").textContent = rec ? "Start recording" : "Allow once";
+  document.querySelector(".eyebrow").textContent = rec ? "An agent asks you to" : "An agent wants to";
+  document.querySelector(".reasons-card").style.display = rec ? "none" : "";
   $("headline").textContent = headline(info);
   document.title = `chromecli · ${headline(info)}?`;
   $("site").replaceChildren(el("span", "site-host", hostOf(info.origin)), ...(info.title ? [el("span", "site-sep", "·"), el("span", "site-title", info.title)] : []));

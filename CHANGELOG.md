@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.12.1 (2026-10-22)
+
+chromecli records a tab Kevin shared (`record start|stop|status`), and screenshots it while it's covered or in the
+background. Recording needs Kevin's click in Chrome every time: `--confirm` alone never starts one.
+
+### Added
+
+- **`chromecli record start TAB [--out FILE.webm|.mp4] [--fps 30] [--max 10m] [--audio] [--wait 2m] [--force]
+  --confirm`.** Only on a tab Kevin shared (Read or Act; not bot-opened, inherited, denied, or while paused). Without
+  `--confirm` it's a preview. With it, the confirm window says "Start recording this tab: <title> (<origin>)"; Kevin's
+  Start click starts it (Deny, closing the window, or the timeout don't). Capture is `chrome.tabs.tabCapture`
+  `getMediaStreamId` + an offscreen document running `MediaRecorder` (WebM VP9, VP8 fallback): only the tab's page
+  pixels, iframes included, never the rest of the screen or Chrome's UI. No `debugger` permission.
+- **Chrome's own gate.** Chrome lets an extension capture a tab only after Kevin clicked its icon on that tab since it
+  last changed site (sharing from the popup counts; reloading the extension resets it). Without it the request
+  turns `awaiting_popup`: stderr says "click the chromecli icon, press Record", the badge shows `REC?`, a
+  notification shows, and the popup's row for that tab gets a **Record** button; the CLI waits (`--wait`, 5s-15m)
+  and returns once recording, else exit 4 `confirm_timeout` (Ctrl-C cancels it).
+- **While recording** the badge is red `REC` and the popup's row has **Stop**. It stops and finalizes by itself on
+  Pause, Unshare, the tab closing, a top-frame navigation to another origin, or `--max` (1s-4h, default 10m).
+- **`record stop TAB|--all`** finalizes: `{stopped: [...], finished: [...]}` with path, bytesWritten, durationMs,
+  reason. **`record status [TAB]`** lists this host session's recordings (awaiting_popup / starting / recording /
+  stopping / stopped / failed / cancelled / expired).
+- **Files.** Default `~/.webcli/chromecli/recordings/tab<ID> <YYYY-MM-DD> at <HH.MM.SS>.webm` (0600, dir 0700). The
+  host owns the path: the extension only ever sees a recording ID. Chunks of at most 512 KiB (base64 ~683 KiB; under
+  Chrome's 1 MB host-to-extension and 64 MiB extension-to-host native-messaging limits) are written and flushed as
+  they arrive, in order; a gap or a bad chunk stops writing (`writeError`). Existing files are refused without
+  `--force`.
+- **`.mp4`.** `--out x.mp4` records `x.webm`, then `record stop` converts it with ffmpeg if it's on PATH (H.264
+  libx264 or VideoToolbox, yuv420p, even dimensions, faststart; AAC with `--audio`); the .webm is kept. Without ffmpeg
+  the result says `converted: false` and a note ("brew install ffmpeg"), and the .webm is the recording.
+- **`--audio`** (off by default) records the tab's sound and plays it back through the offscreen document, so the
+  tab isn't muted for Kevin.
+- **Covered screenshots.** `screenshot TAB --covered`, or a plain `screenshot` of a tab that isn't in front, uses the
+  newest frame of that tab's recording (`source: "stream"`, `frameAgeMs`, `frames`). Not recording: exit 4
+  `not_visible` with a hint to record it. A frame older than 2s adds `warning` (and a stderr line): its window is
+  probably minimized.
+- **Throttling, measured** (Chrome 153, `tests/fixtures/chromecli/animated.html`, Playwright's anti-throttling flags
+  removed): a captured tab covered by another window or in a background tab kept painting at ~120 rAF/s with fresh
+  frames and `visibilityState` "visible". A minimized window dropped to ~1 rAF/s and the stream froze (frameAgeMs
+  6-9s). Advice in agent-help: the recorded tab in its own window, behind others is fine, never minimized.
+- **Log.** `event=record_start` / `record_stop` lines: tab, origin, file name (quoted, never the directory), short
+  recording ID, size, fps, audio, duration_s, bytes, chunks, reason; plus `record_waiting` and `rec_chunk_dropped`.
+  The usual redaction applies to the whole line (an origin with digits, like `http://127.0.0.1:8765`, shows as
+  `<redacted>`).
+- New exit code: 5 `capture_failed` (Chrome refused the capture or the recorder failed).
+- Tests: `extensions/chromecli/test/record.test.mjs` (19: the gesture, refusals, awaiting_popup + popup Record,
+  expiry, chunk order/size, auto-stops on Pause/Unshare/origin/port loss, covered screenshots),
+  `tests/test_chromecli_record.py` (13: CLI preview, incremental 0600 writes, dropped chunks, mp4 with and without
+  ffmpeg, --force, waits, refusals, covered and stale screenshots, agent-help catches), and the by-hand
+  `tests/e2e/chromecli_record_e2e.py` (isolated Chrome for Testing; 14 checks).
+
+### Permissions
+
+- New: `tabCapture` (Chrome's warning for it is "Read and change all your data on all websites"; an unpacked
+  extension gets no prompt on reload) and `offscreen` (no warning). `webNavigation` was already there.
+- After updating, reload the extension in chrome://extensions. That clears `chrome.storage.session`, so Kevin
+  re-shares his tabs, which also gives Chrome's capture grant.
+
 ## 0.12.0 (2026-10-22)
 
 `webcli messages` finds older conversations, can start a new 1:1 or group conversation (only with `--new-ok`), and
