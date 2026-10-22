@@ -60,7 +60,8 @@ def test_find_target_and_jev_flag_on_page_actions(ext):
     fake = ext(ok_ext).start()
     r = run("click", "--tab", "7", "--find", "the delete account button", "--expect-origin", FORM)
     assert r.exit_code == 0 and json.loads(r.stdout)["target"] == {"find": "the delete account button"}
-    assert ops_sent(fake) == []  # preview
+    assert [m["op"] for m in ops_sent(fake)] == ["page.probe"]  # preview: a read-only probe only
+    fake.received.clear()
     assert run("fill", "--tab", "7", "--find", "the email field", "--value", "a@b.c", "--jev", "off",
                "--expect-origin", FORM, "--confirm").exit_code == 0
     m = ops_sent(fake)[0]

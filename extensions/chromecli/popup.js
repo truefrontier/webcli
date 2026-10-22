@@ -1,5 +1,5 @@
 import { allowToPermission, permissionPattern } from "./policy.js";
-import { auditRow, confirmsLabel, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
+import { auditRow, confirmsLabel, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
 let tab = null;
@@ -103,6 +103,18 @@ function render() {
   $("jev-chip").dataset.on = String(jv.on);
   $("jev-sub").textContent = jv.sub;
 
+  // pre-approvals (0.10.0): Kevin's toggle + the active grants
+  const grants = state.grants || [];
+  const on = !!state.grantsEnabled;
+  $("grants-toggle").setAttribute("aria-checked", String(on));
+  document.querySelector(".grants-card").classList.toggle("on", on);
+  $("grants-sub").textContent = grantsSub(on, grants.length);
+  $("grants-wrap").hidden = !on;
+  $("grants-count").textContent = grants.length ? String(grants.length) : "";
+  $("revoke-all-grants").disabled = !grants.length;
+  $("grants").replaceChildren(...grants.map(grantRow));
+  $("grants-empty").hidden = grants.length > 0;
+
   // pending policy
   $("pending").hidden = !state.pending;
   $("pending-list").replaceChildren(...(state.pending?.loosening || []).map((l) =>
@@ -150,6 +162,17 @@ function sharedRow(s) {
       s.level === "act" ? "Act" : "Read"), x);
 }
 
+function grantRow(g) {
+  const x = el("button", { class: "icon-btn", title: "Revoke", "aria-label": `Revoke pre-approval: ${grantScope(g)}` }, icon("x"));
+  x.addEventListener("click", async () => { await send({ type: "revokeGrant", id: g.id }); msg("Pre-approval revoked."); await load(); });
+  return el("li", { class: "grow" },
+    el("div", { class: "grow-main" },
+      el("div", { class: "grow-quote", title: g.quote }, `“${g.quote}”`),
+      el("div", { class: "grow-scope" }, el("span", { class: "grow-what" }, grantScope(g)), el("span", { class: "grow-on" }, ` on ${hostOf(g.origin)}`)),
+      el("div", { class: "grow-meta" }, grantMeta(g))),
+    x);
+}
+
 let msgTimer = null;
 function msg(text, err = false) {
   clearTimeout(msgTimer);
@@ -194,6 +217,13 @@ $("seg").addEventListener("keydown", (e) => {
 $("confirms").addEventListener("click", async () => { await send({ type: "showConfirm" }); window.close(); });
 $("jev-options").addEventListener("click", () => { chrome.runtime.openOptionsPage?.(); window.close(); });
 $("unshare-all").addEventListener("click", async () => { await send({ type: "unshareAll" }); msg("All tabs unshared."); await load(); });
+$("grants-toggle").addEventListener("click", async () => {
+  const on = !state.grantsEnabled;
+  await send({ type: "setGrantsEnabled", enabled: on });
+  msg(on ? "Pre-approvals on. Agents still need your words in chat." : "Pre-approvals off; all revoked.");
+  await load();
+});
+$("revoke-all-grants").addEventListener("click", async () => { await send({ type: "revokeAllGrants" }); msg("All pre-approvals revoked."); await load(); });
 $("pause").addEventListener("click", async () => { await send({ type: "pause", paused: !state.paused }); await load(); });
 $("retry").addEventListener("click", async () => {
   $("retry").disabled = true;

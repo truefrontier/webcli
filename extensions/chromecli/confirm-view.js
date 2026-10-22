@@ -42,6 +42,14 @@ export function detailRows(info) {
   }
   if (info.value) rows.push(["Value", info.value.masked ? `${info.value.text}  (${info.value.chars} chars, hidden)` : info.value.text, info.value.masked ? "masked" : "mono"]);
   if (info.key) rows.push(["Key", info.key, "mono"]);
+  // 0.10.0: a pre-approval matched the action but not its amount cap, so Kevin decides.
+  if (info.grant) {
+    const g = info.grant;
+    const money = (n) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: g.currency || "USD" }).format(n); } catch { return `${n} ${g.currency || ""}`.trim(); } };
+    rows.push(["Pre-approval", quote(trunc(g.quote || "", 200))]);
+    if (g.maxAmount != null) rows.push(["Amount", `${g.amount != null ? money(g.amount) : "couldn't read one"} (cap ${money(g.maxAmount)})`, "mono"]);
+    if (g.why) rows.push(["Why asking", g.why]);
+  }
   return rows;
 }
 

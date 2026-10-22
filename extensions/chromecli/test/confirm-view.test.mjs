@@ -28,3 +28,15 @@ test("reasons and countdown", () => {
   assert.deepEqual(countdown(10_000, 0), { seconds: 10, label: "10s", urgent: true });
   assert.equal(countdown(0, 5000).seconds, 0);
 });
+
+test("0.10.0: a grant that matched but failed its amount cap shows the quote, the parsed amount and the cap", async () => {
+  const { detailRows } = await import("../confirm-view.js");
+  const rows = detailRows({ op: "click", origin: "https://shop.example.com", element: { tag: "button", name: "Place order" },
+    grant: { id: "g1", quote: "buy it if under $50", maxAmount: 49.99, currency: "USD", amount: 59, why: "The amount on the page is over the pre-approved cap." } });
+  const m = Object.fromEntries(rows.map(([k, v]) => [k, v]));
+  assert.equal(m["Pre-approval"], "“buy it if under $50”");
+  assert.equal(m.Amount, "$59.00 (cap $49.99)");
+  assert.match(m["Why asking"], /over the pre-approved cap/);
+  const none = Object.fromEntries(detailRows({ op: "click", origin: "o", grant: { quote: "q", maxAmount: 5, currency: "USD", amount: null } }).map(([k, v]) => [k, v]));
+  assert.equal(none.Amount, "couldn't read one (cap $5.00)");
+});

@@ -63,3 +63,20 @@ test("Jev row: on/off from jevConfigured only", () => {
   assert.equal(jevView(false).chip, "Off");
   assert.match(jevView(false).sub, /TypeSafe key/);
 });
+
+test("0.10.0 pre-approval rows: scope, uses/expiry, subtitle", async () => {
+  const { grantScope, grantMeta, grantsSub } = await import("../popup-view.js");
+  assert.equal(grantScope({ op: "click", origin: "https://shop.example.com", target: { text: "Place order" }, maxAmount: 49.99, currency: "USD" }),
+    "Click “Place order” · ≤ $49.99");
+  assert.equal(grantScope({ op: "click", origin: "https://a.example", target: { text: "Delete", role: "button" } }), "Click “Delete” (button)");
+  assert.equal(grantScope({ op: "fill", origin: "https://a.example", target: { selector: "#name" } }), "Fill #name");
+  assert.equal(grantScope({ op: "press", origin: "https://a.example", target: { text: "Search" }, value: "Enter" }), "Press Enter in “Search”");
+  assert.equal(grantScope({ op: "open", origin: "https://a.example", urlPrefix: "https://a.example/admin" }), "Open a.example/admin");
+  assert.equal(grantScope({ op: "navigate", origin: "https://a.example" }), "Go to a.example");
+  const now = 1_000_000;
+  assert.equal(grantMeta({ usesLeft: 1, expiresAt: now + 28 * 60_000 }, now), "1 use left · 28m left");
+  assert.equal(grantMeta({ usesLeft: 3, expiresAt: now + 65 * 60_000 }, now), "3 uses left · 1h 5m left");
+  assert.equal(grantMeta({ usesLeft: 1, expiresAt: now - 1 }, now), "expired");
+  assert.match(grantsSub(false, 0), /^Off/);
+  assert.match(grantsSub(true, 2), /^2 active/);
+});

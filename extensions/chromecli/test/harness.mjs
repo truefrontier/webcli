@@ -25,7 +25,8 @@ let n = 0;
 // page(tabId, spec, func) -> the injected function's result (a fake page).
 export async function loadBackground({ page } = {}) {
   const h = { posted: [], granted: new Set(), windowsCreated: [], windowsRemoved: [], tabsCreated: [], tabsRemoved: [],
-    tabsUpdated: [], injected: [], page: page || (() => ({ ok: true })) };
+    tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })) };
+  globalThis.__chromecliOpenWaitMs = 40;
   h.port = { onMessage: event(), onDisconnect: event(), postMessage: (m) => h.posted.push(structuredClone(m)) };
   h.tabs = new Map([
     [1, { id: 1, windowId: 10, active: true, url: "http://127.0.0.1:8765/form.html", title: "Form", status: "complete", index: 0 }],
@@ -54,8 +55,9 @@ export async function loadBackground({ page } = {}) {
       },
       remove: async (id) => { h.tabs.delete(id); h.tabsRemoved.push(id); },
       captureVisibleTab: async () => "data:image/png;base64,iVBORw0KGgo=",
-      onUpdated: event(), onRemoved: event(), onReplaced: event(),
+      onUpdated: event(), onRemoved: event(), onReplaced: event(), onCreated: event(),
     },
+    notifications: { create: async (id, opts) => { h.notes.push({ id, ...opts }); return id; } },
     windows: {
       getLastFocused: async () => ({ id: 10, state: "normal", focused: true, type: "normal" }),
       create: async (opts) => {
@@ -126,6 +128,15 @@ export async function loadBackground({ page } = {}) {
     const origin = new URL(t.url).origin;
     h.granted.add(`${new URL(t.url).protocol}//${new URL(t.url).hostname}/*`);
     return h.message({ type: "share", tabId, origin, level });
+  };
+  // A tab the page opened (window.open / target=_blank): created with openerTabId, then (optionally) its URL lands.
+  h.openFromPage = async (opener, url, { pending = false } = {}) => {
+    const t = { id: nextTab++, windowId: 10, active: true, url: pending ? "about:blank" : url, title: "", status: "loading",
+      index: 9, openerTabId: opener };
+    h.tabs.set(t.id, t);
+    await chrome.tabs.onCreated.fire({ ...t });
+    if (pending) { t.url = url; await chrome.tabs.onUpdated.fire(t.id, { url }); }
+    return t.id;
   };
   h.policy = async (p) => {
     const { DEFAULT_DENY } = await import("../policy.js");

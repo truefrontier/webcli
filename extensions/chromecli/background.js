@@ -15,17 +15,21 @@ import {
 } from "./jev.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
 import { extractPage } from "./page/extract.js";
+import {
+  GrantError, PAGE_GRANT_OPS, amountCheck, canSkip, fmtAmount, grantMatches, grantView, isLive, validateGrant,
+} from "./grants.js";
 
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
 const AUDIT_MAX = 200;
 const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-  "page.find"];
+  "page.find", "page.probe", "grant.list"];
 const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
 const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
-const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS]);
+const GRANT_WRITE_OPS = ["grant.add", "grant.revoke"];
+const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
 // Ops that change something: the CLI sends them only with --confirm (confirm: true); anything else is refused.
-const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS]);
+const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
 
 let port = null;
 let backoff = 1000;
@@ -53,6 +57,20 @@ async function markBot(tabId, on = true) {
     if (on) bot[tabId] = { at: Date.now() }; else delete bot[tabId];
     await chrome.storage.session.set({ botTabs: bot });
   });
+}
+// Pre-approval grants (0.10.0): session storage, so they die with the browser. Accepted only while Kevin's popup
+// toggle (local "grantsEnabled", default off, settable only from the popup) is on.
+const getGrants = async () => (await chrome.storage.session.get("grants")).grants || {};
+const setGrants = (grants) => chrome.storage.session.set({ grants });
+const getGrantsEnabled = async () => (await chrome.storage.local.get("grantsEnabled")).grantsEnabled === true;
+async function clearGrants(reason) {
+  const n = Object.keys(await getGrants()).length;
+  await withLock(() => setGrants({}));
+  if (n) {
+    post({ event: "grants_cleared", count: n, reason });
+    await auditAdd({ op: "grants-revoked", tab: null, origin: null, outcome: `${n} (${reason})` });
+  }
+  return n;
 }
 async function getPolicyState() {
   return (await chrome.storage.local.get("policyState")).policyState || { active: DEFAULT_POLICY, pending: null };
@@ -225,7 +243,7 @@ async function refreshBadges() {
 
 async function setPaused(paused) {
   await chrome.storage.local.set({ paused: !!paused });
-  if (paused) cancelAllConfirms("paused");
+  if (paused) { cancelAllConfirms("paused"); await clearGrants("paused"); }
   post({ event: "paused_changed", paused: !!paused });
   await auditAdd({ op: paused ? "pause" : "resume", tab: null, origin: null, outcome: "ok" });
   await refreshBadges();
@@ -316,6 +334,10 @@ async function dispatch(op, args, req = {}) {
     case "tab.navigate": return tabNavigate(args, req);
     case "page.wait": return pageWait(args);
     case "page.find": return pageFind(args);
+    case "page.probe": return pageProbeOp(args);
+    case "grant.add": return grantAdd(args);
+    case "grant.list": return grantList();
+    case "grant.revoke": return grantRevoke(args);
     default: return pageOp(op.slice(5), args, req);
   }
   throw new OpError("bad_request", `Unknown op ${op}.`);
@@ -345,8 +367,9 @@ async function listTabs(args) {
     try {
       level = await access(tab);
     } catch (e) {
-      // Bot-opened tabs show as metadata (share null) even when unshared, unless they're on a denied origin.
-      if (!(bot[tab.id] && e.code === "not_shared" && !denied(tab.url || tab.pendingUrl || "", st.active))) continue;
+      // Bot-opened tabs (and every tab with --all) show as metadata (share null) even when unshared, unless they're
+      // on a denied origin.
+      if (!((bot[tab.id] || args.all) && e.code === "not_shared" && !denied(tab.url || tab.pendingUrl || "", st.active))) continue;
       level = null;
     }
     rows.push(row(tab, level, focused, !!bot[tab.id]));
@@ -372,7 +395,8 @@ async function readTab(args) {
     throw new OpError("script_error", m, { tab: tab.id, origin });
   }
   const out = res?.result;
-  if (!out) throw new OpError("script_error", "The page returned nothing.", { tab: tab.id, origin });
+  if (!out) throw new OpError("script_error", noResultMessage(res), { tab: tab.id, origin });
+  if (out.ok === false) throw new OpError(out.code || "script_error", out.message || "The page script failed.", { tab: tab.id, origin });
   // The page may have navigated while we read: re-check before handing anything back.
   const st = await getPolicyState();
   if (originOf(out.url) !== origin || denied(out.url, st.active)) {
@@ -580,7 +604,9 @@ async function tabOpen(args, req) {
   const { origin, level } = await checkDestination(url);
   const reasons = gateReasons("open", null, { allowlisted: !!level });
   let confirmedInBrowser = false;
-  if (reasons.length) {
+  const g = reasons.length && canSkip(reasons) ? await findGrant("open", { origin, url }) : {};
+  if (g.used) await grantUsedSideEffects(g.used, { op: "open", name: url, origin, tab: null });
+  if (reasons.length && !g.used) {
     await confirmOrThrow({ op: "open", origin, url, reasons, title: null }, req, { origin });
     confirmedInBrowser = true;
     await checkDestination(url); // the policy may have changed while Kevin looked
@@ -599,7 +625,7 @@ async function tabOpen(args, req) {
   const share = await autoShare(tab.id, url);
   return { tab: tab.id, op: "open", url, origin, windowId: tab.windowId, active: !!args.active, botOpened: true,
     share: share.level, ...(share.skipped ? { shareSkipped: share.skipped } : {}),
-    gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true, verified: true };
+    gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true, verified: true };
 }
 
 async function tabFocus(args) {
@@ -638,7 +664,9 @@ async function tabNavigate(args, req) {
   const sameOriginAct = originOf(tab.url || "") === origin && (await tabKind(tab)) === "act";
   const reasons = gateReasons("navigate", null, { allowlisted: !!level || sameOriginAct });
   let confirmedInBrowser = false;
-  if (reasons.length) {
+  const g = reasons.length && canSkip(reasons) ? await findGrant("navigate", { origin, url }) : {};
+  if (g.used) await grantUsedSideEffects(g.used, { op: "navigate", name: url, origin, tab: tab.id });
+  if (reasons.length && !g.used) {
     await confirmOrThrow({ op: "navigate", origin, url, reasons, title: tab.title || "", from: originOf(tab.url || "") },
       req, { tab: tab.id, origin });
     confirmedInBrowser = true;
@@ -664,7 +692,7 @@ async function tabNavigate(args, req) {
   }
   return { tab: tab.id, op: "navigate", url, origin, crossOrigin: cross, share: share.level,
     ...(share.skipped ? { shareSkipped: share.skipped } : {}), botOpened: cross || !!(await getBotTabs())[tab.id],
-    gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true, verified: true };
+    gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true, verified: true };
 }
 
 // ---- page actions (P3)
@@ -689,6 +717,13 @@ async function pagePre(args, need = "act") {
   return { tab, origin, level };
 }
 
+// executeScript resolved without a value: the frame went away, or the page script threw before returning.
+function noResultMessage(res) {
+  const e = res?.error;
+  const m = e ? String(e.message || e).slice(0, 300) : "";
+  return m ? `In-page error: ${m}` : "The page returned nothing (it navigated or reloaded during the call, or the page script was blocked).";
+}
+
 async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
   let res;
   try {
@@ -702,7 +737,7 @@ async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
   const out = res?.result;
   if (!out) {
     if (afterDispatch) return { ok: true, dispatched: true, lost: "no result" };
-    throw new OpError("script_error", "The page returned nothing.", { tab: tab.id, origin });
+    throw new OpError("script_error", noResultMessage(res), { tab: tab.id, origin });
   }
   if (!out.ok) throw new OpError(out.code || "script_error", out.message || "Page action failed.", { tab: tab.id, origin, ...out, ok: undefined, code: undefined, message: undefined });
   return out;
@@ -761,18 +796,27 @@ async function pageOp(op, args, req) {
   const reasons = mergeReasons(gateReasons(op, element, { key: args.key }), extra);
   const where = { tab: tab.id, origin, element, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
   let confirmedInBrowser = false;
-  if (reasons.length) {
+  // A pre-approval grant can answer the gate, unless a reason is never skippable (secret / payment fields, eval).
+  const g = reasons.length && canSkip(reasons)
+    ? await findGrant(op, { tab, origin, element, value: args.value, key: args.key, spec, fingerprint: d.fingerprint }) : {};
+  if (g.used) {
+    if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
+    await grantUsedSideEffects(g.used, { op, name: element?.name || element?.tag || "", origin, tab: tab.id });
+  }
+  if (reasons.length && !g.used) {
     const value = ["type", "fill", "select"].includes(op) ? displayValue(args.value, element) : null;
     await confirmOrThrow({ op, origin, url: tab.url, title: tab.title || "", element, reasons, value,
-      key: op === "press" ? String(args.key) : null }, req, where);
+      key: op === "press" ? String(args.key) : null, ...(g.near ? { grant: g.near } : {}) }, req, where);
     confirmedInBrowser = true;
     // Re-check every precondition after the confirm (spec 6.6).
     if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
     await pagePre(args);
   }
+  if (op === "click" || op === "press") noteAction(tab.id);
+  const t0 = Date.now();
   const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
     { afterDispatch: true });
-  const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true,
+  const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true,
     verified: null, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}), ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
   // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
   if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
@@ -797,6 +841,7 @@ async function pageOp(op, args, req) {
   }
   if (checks.length) out.verified = failed.length === 0;
   out.checks = checks;
+  if (op === "click" || op === "press") out.openedTabs = await collectOpened(tab.id, t0);
   if (failed.length) {
     throw new OpError("sent_unverified", `The ${op} was dispatched but its check failed (${failed.join(", ")}). Don't repeat it blindly; read the page first.`, { ...out, failed });
   }
@@ -885,6 +930,7 @@ async function jevTest() {
 
 async function pageWait(args) {
   const { tab, origin } = await pagePre(args, "read");
+  checkExpect(tab, args.expect, false);
   const ms = Math.min(Math.max(100, Number(args.timeoutMs) || 15000), 120000);
   const probe = args.selector ? { selector: String(args.selector) } : args.text != null ? { text: String(args.text) } : null;
   if (!probe && !args.urlPrefix) throw new OpError("bad_target", "wait needs selector, text, or urlPrefix.");
@@ -901,6 +947,240 @@ async function pageWait(args) {
   if (lastErr) throw new OpError(lastErr.code || "bad_target", lastErr.message || "Bad probe.", { tab: tab.id, origin });
   if (!ok) throw new OpError("timeout", `Waited ${ms / 1000}s; the condition didn't hold.`, { tab: tab.id, origin });
   return { tab: tab.id, origin, found: true, waitedMs: Date.now() - start };
+}
+
+// ---- pre-approval grants (0.10.0)
+// Live grants for (op, origin); expired ones are pruned on the way.
+async function liveGrants() {
+  const now = Date.now();
+  const all = await getGrants();
+  const live = Object.values(all).filter((g) => isLive(g, now));
+  if (live.length !== Object.keys(all).length) {
+    await withLock(async () => {
+      const cur = await getGrants();
+      for (const [id, g] of Object.entries(cur)) if (!isLive(g, Date.now())) delete cur[id];
+      await setGrants(cur);
+    });
+  }
+  return live;
+}
+
+// The grant that answers this gate, if any: {used} (already consumed) or {near} (scope matched, amount didn't).
+async function findGrant(op, c) {
+  if (!(await getGrantsEnabled())) return {};
+  const now = Date.now();
+  const cands = (await liveGrants()).filter((g) => g.op === op && g.origin === c.origin);
+  if (!cands.length) return {};
+  let insp = {};
+  if (PAGE_GRANT_OPS.includes(op)) {
+    const selectors = [...new Set(cands.map((g) => g.target?.selector).filter(Boolean))];
+    const amountSelectors = [...new Set(cands.map((g) => g.amountSelector).filter(Boolean))];
+    const autoAmount = cands.some((g) => g.maxAmount != null && !g.amountSelector);
+    if (selectors.length || amountSelectors.length || autoAmount) {
+      try {
+        insp = await inject(c.tab, c.origin, pageAction, { ...c.spec, mode: "inspect", selectors, amountSelectors, autoAmount });
+      } catch { return {}; } // can't inspect: no grant, Kevin confirms
+      if (c.fingerprint && insp.fingerprint && insp.fingerprint !== c.fingerprint) return {}; // the page changed
+    }
+  }
+  let near = null;
+  for (const g of cands) {
+    const m = grantMatches(g, { op, origin: c.origin, now, element: c.element, value: c.value, key: c.key, url: c.url,
+      selectorHit: g.target?.selector ? insp.selectorHits?.[g.target.selector] === true : undefined });
+    if (!m.ok) continue;
+    const texts = g.maxAmount == null ? [] : (insp.amountTexts?.[g.amountSelector || "_auto"] || []);
+    const amt = amountCheck(g, texts);
+    if (!amt.ok) {
+      near = near || { id: g.id, quote: g.quote, maxAmount: g.maxAmount, currency: g.currency, amount: amt.amount,
+        why: amt.why === "over_cap" ? "The amount on the page is over the pre-approved cap." : "chromecli couldn't read an amount on the page." };
+      continue;
+    }
+    const usesLeft = await consumeGrant(g.id);
+    if (usesLeft != null) return { used: { ...g, usesLeft, amount: amt.amount } };
+  }
+  return near ? { near } : {};
+}
+
+// Decrement a grant's uses (deleting it at 0). Returns uses left, or null if it was gone / spent meanwhile.
+function consumeGrant(id) {
+  return withLock(async () => {
+    const grants = await getGrants();
+    const g = grants[id];
+    if (!isLive(g)) return null;
+    g.usesLeft -= 1;
+    if (g.usesLeft <= 0) delete grants[id]; else grants[id] = g;
+    await setGrants(grants);
+    return Math.max(0, g.usesLeft);
+  });
+}
+
+function grantResult(g) {
+  if (!g) return {};
+  return { confirmedBy: `grant:${g.id}`, grant: { id: g.id, quote: g.quote, usesLeft: g.usesLeft,
+    ...(g.amount != null ? { amount: g.amount, currency: g.currency, maxAmount: g.maxAmount } : {}) } };
+}
+
+async function grantUsedSideEffects(g, { op, name, origin, tab }) {
+  const amount = g.amount != null ? fmtAmount(g.amount, g.currency) : "";
+  await auditAdd({ op: `${op} (pre-approved)`, tab, origin, outcome: `grant:${g.id}` });
+  try {
+    await chrome.notifications?.create(`chromecli-grant-${g.id}-${Date.now()}`, {
+      type: "basic", iconUrl: "icons/icon128.png", title: "chromecli",
+      message: `Agent used your pre-approval: ${op} ${String(name).slice(0, 80)} on ${String(origin).replace(/^https?:\/\//, "")}${amount ? ` (${amount})` : ""}`,
+      contextMessage: `“${g.quote.slice(0, 120)}”`, priority: 1 });
+  } catch { /* notifications unavailable */ }
+}
+
+async function grantAdd(args) {
+  if (!(await getGrantsEnabled())) {
+    throw new OpError("grants_disabled", "Pre-approvals are off. Only Kevin can turn on “Allow agent pre-approvals” in the chromecli popup.",
+      { hint: "Ask Kevin to confirm in the browser instead, or to turn the toggle on himself." });
+  }
+  let g;
+  try { g = validateGrant(args); } catch (e) {
+    if (e instanceof GrantError) throw new OpError(e.code, e.message);
+    throw e;
+  }
+  const st = await getPolicyState();
+  const why = denied(`${g.origin}/`, st.active);
+  if (why) throw new OpError("origin_blocked", `${g.origin} is denied (${why}); no grant can cover it.`, { origin: g.origin });
+  await withLock(async () => {
+    const grants = await getGrants();
+    if (Object.keys(grants).length >= 50) throw new OpError("bad_request", "Too many active pre-approvals (50); revoke some first.");
+    grants[g.id] = g;
+    await setGrants(grants);
+  });
+  await auditAdd({ op: `grant-${g.op}`, tab: null, origin: g.origin, outcome: g.id });
+  return { op: "grant.add", added: true, grant: grantView(g), confirmedInBrowser: false };
+}
+
+async function grantList() {
+  const enabled = await getGrantsEnabled();
+  return { enabled, grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
+}
+
+async function grantRevoke(args) {
+  if (args.all === true) return { op: "grant.revoke", revoked: await clearGrants("revoked by agent"), all: true };
+  const id = String(args.id || "");
+  if (!id) throw new OpError("bad_request", "grant.revoke needs an id or all: true.");
+  let hit = false;
+  await withLock(async () => {
+    const grants = await getGrants();
+    hit = !!grants[id];
+    delete grants[id];
+    await setGrants(grants);
+  });
+  if (!hit) throw new OpError("bad_target", `No active pre-approval ${id}.`);
+  await auditAdd({ op: "grant-revoke", tab: null, origin: null, outcome: id });
+  return { op: "grant.revoke", revoked: 1, id };
+}
+
+// ---- preview probe (0.10.0): read-only "would this target be found, and would it ask Kevin?" for --confirm-less
+// previews. Never dispatches, never calls Jev, never consumes a grant.
+async function pageProbeOp(args) {
+  const op = String(args.op || "");
+  if (!["click", "type", "fill", "select", "press"].includes(op)) throw new OpError("bad_request", "page.probe op must be click/type/fill/select/press.");
+  const { tab, origin } = await pagePre(args, "read");
+  const kind = await tabKind(tab);
+  const base = { tab: tab.id, origin, op, tabKind: kind, share: (await getShares())[tab.id]?.level ?? null };
+  try { checkExpect(tab, args.expect, false); } catch (e) {
+    if (e instanceof OpError) return { ...base, found: null, wouldFail: e.code, message: e.message };
+    throw e;
+  }
+  if (kind === "read") return { ...base, found: null, wouldFail: "not_act_shared", message: `Tab ${tab.id} isn't Share-act'd or bot-opened.` };
+  let target;
+  try { target = normTarget(args.target, op === "press"); } catch (e) { return { ...base, found: false, wouldFail: e.code, message: e.message }; }
+  if (target?.find != null) {
+    const r = await locate(tab, origin, String(target.find), { use: false, mode: "off" });
+    if (!r.pick) return { ...base, found: false, wouldFail: "ambiguous_target", candidates: r.list.slice(0, 5) };
+    target = { ref: r.pick };
+  }
+  let d;
+  try {
+    d = await inject(tab, origin, pageAction, { mode: "describe", op, target, key: args.key });
+  } catch (e) {
+    if (!(e instanceof OpError)) throw e;
+    return { ...base, found: false, wouldFail: e.code, message: e.message,
+      ...(e.extra?.candidates ? { candidates: e.extra.candidates } : {}) };
+  }
+  const heuristic = gateReasons(op, d.element, { key: args.key });
+  const jev = await getJev();
+  const jevApplies = jev.configured && (op === "click" || op === "press") && args.jev !== "off";
+  const bar = kind === "act" ? jev.actSafeFloor : jev.floor;
+  return { ...base, found: true, element: d.element, gateEstimate: {
+    heuristic, wouldPrompt: heuristic.length ? true : jevApplies ? "depends_on_jev" : false,
+    ...(jevApplies ? { jev: `Jev classifies at run time: no Jev prompt if it is >= ${bar} sure the ${op} is safe (${kind} tab).` } : {}),
+    grantSkippable: heuristic.length ? canSkip(heuristic) : null } };
+}
+
+// ---- tabs opened by an action (0.10.0): a click/press on an act-shared tab that opens a tab (openerTabId) shares
+// the new tab too: act if it's on the opener's origin, read otherwise, never on a denied origin.
+const actionWindows = new Map(); // opener tabId -> until (ms)
+const inheriting = new Map(); // new tabId -> { opener, openerOrigin, until, at, last }
+const OPEN_WAIT_MS = () => (globalThis.__chromecliOpenWaitMs ?? 600);
+function noteAction(tabId) { actionWindows.set(tabId, Date.now() + 15000); }
+
+async function inheritShare(tabId, url) {
+  const inh = inheriting.get(tabId);
+  if (!inh) return;
+  if (inh.until < Date.now()) { inheriting.delete(tabId); return; }
+  if (await getPaused()) { inh.last = { share: null, why: "paused" }; return; }
+  const st = await getPolicyState();
+  const origin = originOf(url || "");
+  if (!origin) return; // about:blank first; wait for the real URL
+  if (denied(url, st.active)) { inh.last = { share: null, why: "origin_blocked" }; return; }
+  const level = origin === inh.openerOrigin ? "act" : "read";
+  if (!(await hasHostPermission(origin))) { inh.last = { share: null, why: "permission_needed" }; return; }
+  let changed = false;
+  await withLock(async () => {
+    const shares = await getShares();
+    const cur = shares[tabId];
+    if (cur && cur.origin === origin && cur.level === level) return;
+    shares[tabId] = { origin, level, at: Date.now(), inheritedFrom: inh.opener };
+    await setShares(shares);
+    changed = true;
+  });
+  inh.last = { share: level };
+  if (changed) {
+    post({ event: "share_changed", tab: tabId, origin, level, reason: `opened from tab ${inh.opener}` });
+    await auditAdd({ op: `inherit-share-${level}`, tab: tabId, origin, outcome: `from tab ${inh.opener}` });
+    await updateBadge(tabId);
+  }
+}
+
+async function onTabCreated(tab) {
+  const opener = tab?.openerTabId;
+  if (opener == null || !((actionWindows.get(opener) || 0) > Date.now())) return;
+  const s = (await getShares())[opener];
+  if (!s || s.level !== "act") return;
+  inheriting.set(tab.id, { opener, openerOrigin: s.origin, until: Date.now() + 20000, at: Date.now(), last: null });
+  // The URL may have landed while we looked up the opener: use the tab's current one.
+  const now = await chrome.tabs.get(tab.id).catch(() => tab);
+  await inheritShare(tab.id, now.pendingUrl || now.url || "");
+}
+
+async function collectOpened(openerId, since) {
+  await new Promise((r) => setTimeout(r, OPEN_WAIT_MS()));
+  const mine = () => [...inheriting.entries()].filter(([, v]) => v.opener === openerId && v.at >= since);
+  if (!mine().length) return [];
+  // Give new tabs a moment to get a real URL (and their share).
+  await waitFor(async () => {
+    for (const [id] of mine()) {
+      const t = await chrome.tabs.get(id).catch(() => null);
+      if (t && !originOf(t.pendingUrl || t.url || "")) return false;
+    }
+    return true;
+  }, 1500, 150);
+  const shares = await getShares();
+  const out = [];
+  for (const [id, v] of mine()) {
+    const t = await chrome.tabs.get(id).catch(() => null);
+    const url = t ? (t.url || t.pendingUrl || "") : "";
+    if (url && !shares[id]) await inheritShare(id, url);
+    const share = (await getShares())[id]?.level ?? null;
+    out.push({ id, url, share, ...(share ? {} : v.last?.why ? { shareSkipped: v.last.why } : {}) });
+  }
+  return out;
 }
 
 // ---- popup messages (only from this extension's own pages, never from a tab)
@@ -938,7 +1218,8 @@ async function popupMessage(msg) {
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
         shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION,
-        confirms: pendingConfirms(), jevConfigured: (await getJev()).configured };
+        confirms: pendingConfirms(), jevConfigured: (await getJev()).configured,
+        grantsEnabled: await getGrantsEnabled(), grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
     }
     case "jevStatus": { const j = await getJev(); return { ok: true, configured: j.configured, model: j.model, floor: j.floor }; }
     case "jevTest": return jevTest();
@@ -983,6 +1264,21 @@ async function popupMessage(msg) {
       return { ok: true };
     }
     case "pause": await setPaused(!!msg.paused); return { ok: true };
+    // Only Kevin, in the popup, turns pre-approvals on (config.toml / the host can't). Turning them off drops all grants.
+    case "setGrantsEnabled": {
+      const on = msg.enabled === true;
+      await chrome.storage.local.set({ grantsEnabled: on });
+      if (!on) await clearGrants("pre-approvals turned off");
+      post({ event: "grants_enabled", enabled: on });
+      await auditAdd({ op: on ? "pre-approvals-on" : "pre-approvals-off", tab: null, origin: null, outcome: "ok" });
+      return { ok: true };
+    }
+    case "revokeGrant": {
+      await withLock(async () => { const g = await getGrants(); delete g[String(msg.id)]; await setGrants(g); });
+      await auditAdd({ op: "grant-revoke", tab: null, origin: null, outcome: String(msg.id) });
+      return { ok: true };
+    }
+    case "revokeAllGrants": await clearGrants("revoked by Kevin"); return { ok: true };
     case "acceptPolicy":
     case "rejectPolicy": {
       let hash = null;
@@ -1014,10 +1310,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       const why = revokeReason(shares[tabId], changeInfo.url, active);
       if (why) await revoke(tabId, why);
     }
+    if (inheriting.has(tabId)) await inheritShare(tabId, changeInfo.url);
   }
   if (changeInfo.url || changeInfo.status) await updateBadge(tabId);
 });
+chrome.tabs.onCreated?.addListener((tab) => { onTabCreated(tab).catch(() => {}); });
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  inheriting.delete(tabId);
+  actionWindows.delete(tabId);
   await revoke(tabId, "closed");
   if ((await getBotTabs())[tabId]) await markBot(tabId, false);
 });
