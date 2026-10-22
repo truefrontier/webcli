@@ -122,6 +122,14 @@ test("heuristics rank the email field and the delete button", () => {
   assert.equal(heuristicPick(heuristicRank("something vague", SNAP)), null);
 });
 
+test("the worker reads every Jev setting (JEV_STORAGE_KEYS covers what jevConfig uses)", async () => {
+  const { JEV_STORAGE_KEYS } = await import("../jev.js");
+  const src = (await import("node:fs")).readFileSync(new URL("../jev.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("export function jevConfig"), src.indexOf("export function jevMode"));
+  const used = [...body.matchAll(/stored\?\.(\w+)/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(used)].sort(), [...JEV_STORAGE_KEYS].sort());
+});
+
 test("config: key presence, model and floor defaults", () => {
   assert.deepEqual(jevConfig({}), { configured: false, key: "", model: "jev-latest", floor: 0.9, actSafeFloor: 0.7 });
   assert.equal(jevConfig({ jevActSafeFloor: 0.8 }).actSafeFloor, 0.8);

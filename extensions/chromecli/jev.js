@@ -35,6 +35,9 @@ export class JevError extends Error {
 }
 
 // ---- config (from chrome.storage.local; the key is only ever tested for presence outside the worker's fetch)
+// Every setting jevConfig reads; the worker must fetch all of them.
+export const JEV_STORAGE_KEYS = ["typesafeApiKey", "jevModel", "jevFloor", "jevActSafeFloor"];
+
 export function jevConfig(stored) {
   const key = typeof stored?.typesafeApiKey === "string" ? stored.typesafeApiKey.trim() : "";
   const model = typeof stored?.jevModel === "string" && stored.jevModel.trim() ? stored.jevModel.trim() : DEFAULT_MODEL;

@@ -10,7 +10,7 @@ import { displayValue, gateReasons } from "./gate.js";
 import { pageAction, pageProbe } from "./page/actions.js";
 import { pageSnapshot } from "./page/snapshot.js";
 import {
-  JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor, heuristicPick, heuristicRank, jevConfig,
+  JEV_STORAGE_KEYS, JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor, heuristicPick, heuristicRank, jevConfig,
   jevMode, locateBody, mergeReasons, parseClassify, parseLocate,
 } from "./jev.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
@@ -109,7 +109,7 @@ function connect() {
 
 // Jev settings from chrome.storage.local. The key stays in this worker: only `configured` is ever reported.
 async function getJev() {
-  return jevConfig(await chrome.storage.local.get(["typesafeApiKey", "jevModel", "jevFloor"]));
+  return jevConfig(await chrome.storage.local.get(JEV_STORAGE_KEYS));
 }
 
 async function sendHello() {
