@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { auditRow, hostOf, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "../popup-view.js";
+import { auditRow, hostOf, jevView, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "../popup-view.js";
 
 test("status pill: paused wins, then connected, else disconnected", () => {
   assert.equal(statusOf({ paused: true, host: { connected: true } }).key, "paused");
@@ -55,4 +55,11 @@ test("confirmsLabel", async () => {
   assert.equal(confirmsLabel(0), "");
   assert.equal(confirmsLabel(1), "1 agent action waits for your OK");
   assert.equal(confirmsLabel(3), "3 agent actions wait for your OK");
+});
+
+test("Jev row: on/off from jevConfigured only", () => {
+  assert.equal(jevView(true).chip, "On");
+  assert.equal(jevView(true).on, true);
+  assert.equal(jevView(false).chip, "Off");
+  assert.match(jevView(false).sub, /TypeSafe key/);
 });

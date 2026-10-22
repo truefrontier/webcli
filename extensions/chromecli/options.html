@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>chromecli · Options</title>
+<link rel="stylesheet" href="popup.css">
+<link rel="stylesheet" href="options.css">
+</head>
+<body class="options">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5 13.9 9l5.6 1.9-5.6 1.9L12 18.5l-1.9-5.7L4.5 10.9 10.1 9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M18.5 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7Z" fill="currentColor"/></symbol>
+  </svg>
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+        <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3A3F4B"/><stop offset="1" stop-color="#111318"/></linearGradient></defs>
+        <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="url(#mk)" stroke="rgba(255,255,255,.12)"/>
+        <path d="m7 8 4 4-4 4" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="12.5" y="14.9" width="5" height="2.1" rx="1.05" fill="#5B9BFF"/>
+      </svg>
+      <span class="name">chromecli</span>
+      <span id="version" class="ver"></span>
+    </div>
+    <span id="jev-pill" class="pill" data-status="disconnected"><span class="dot" aria-hidden="true"></span><span id="jev-pill-label">Jev off</span></span>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <span class="fav intro-ic" aria-hidden="true"><svg class="op-ic"><use href="#i-spark"/></svg></span>
+      <div>
+        <h1>Jev element finder</h1>
+        <p>Optional. With your TypeSafe key, chromecli asks Jev to find the element an agent describes
+          (<code>chromecli find</code>, <code>--find</code>) and to classify what a click does. Jev can only
+          <strong>add</strong> confirm prompts, never remove one.</p>
+      </div>
+    </section>
+
+    <form id="form" class="card form" autocomplete="off">
+      <label class="field">
+        <span class="field-label">Jev (TypeSafe) API key</span>
+        <span class="key-row">
+          <input id="key" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your key">
+          <button id="reveal" type="button" class="btn btn-sm" aria-pressed="false">Show</button>
+        </span>
+        <span id="key-state" class="field-hint"></span>
+      </label>
+      <div class="row2">
+        <label class="field">
+          <span class="field-label">Model</span>
+          <input id="model" type="text" spellcheck="false" placeholder="jev-latest">
+        </label>
+        <label class="field">
+          <span class="field-label">Confidence floor</span>
+          <input id="floor" type="number" min="0.5" max="0.99" step="0.01" placeholder="0.9">
+        </label>
+      </div>
+      <div class="form-actions">
+        <button id="remove" type="button" class="btn-text danger">Remove key</button>
+        <span class="grow"></span>
+        <button id="test" type="button" class="btn">Test key</button>
+        <button id="save" type="submit" class="btn btn-primary">Save</button>
+      </div>
+      <p id="msg" class="msg" role="status" aria-live="polite" hidden></p>
+    </form>
+
+    <section class="card privacy">
+      <svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg>
+      <p>The key stays in this browser (<code>chrome.storage.local</code>). Only chromecli's service worker sends it, and
+        only to <code>api.typesafe.ai</code>. It never goes to the <code>chromecli</code> command, its logs, or web pages;
+        <code>chromecli status</code> shows only <code>jevConfigured</code>. Jev sees element names and labels, never
+        field values. Saving asks Chrome for access to <code>https://api.typesafe.ai/*</code>.</p>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+/* chromecli options: popup.css variables and components on a full page. */
+body.options { width: auto; min-height: 100vh; }
+.options .top { position: sticky; top: 0; z-index: 1; padding: 0 24px; }
+.wrap { max-width: 560px; margin: 0 auto; padding: 28px 20px 40px; gap: 14px; }
+.intro { display: flex; gap: 14px; align-items: flex-start; }
+.intro-ic { width: 44px; height: 44px; border-radius: 12px; background: var(--read-tint); color: var(--read-text);
+  border-color: color-mix(in srgb, var(--read) 30%, transparent); }
+.op-ic { width: 24px; height: 24px; }
+.intro h1 { margin: 0; font-size: 20px; font-weight: 680; letter-spacing: -.015em; }
+.intro p { margin-top: 4px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.intro code { color: var(--text); }
+.form { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field-label { font-size: 12.5px; font-weight: 600; }
+.field-hint { font-size: 11.5px; color: var(--muted); }
+.field-hint.on { color: var(--ok); }
+.key-row { display: flex; gap: 8px; }
+.options input[type=password], .options input[type=text], .options input[type=number] {
+  flex: none; width: 100%; box-sizing: border-box; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--r-ctl);
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text);
+  font: 13px var(--mono);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background-color .15s var(--ease);
+}
+.options input:focus-visible { outline: none; background: var(--surface); border-color: color-mix(in srgb, var(--read) 60%, transparent);
+  box-shadow: 0 0 0 3px var(--read-tint); }
+.options .key-row input[type] { flex: 1 1 0; width: 0; }
+.key-row .btn { height: 34px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-actions { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.form-actions .grow { flex: 1; }
+.form-actions .btn-text { margin-right: 0; }
+.privacy { display: flex; gap: 10px; padding: 12px 14px; background: var(--surface-2); box-shadow: none; }
+.privacy .ic { color: var(--muted); margin-top: 2px; }
+.privacy p { font-size: 12px; color: var(--muted); line-height: 1.55; }
+.privacy code { color: var(--text); }
+.pill[data-status="on"] { background: var(--ok-tint); color: var(--ok); }
+.pill[data-status="off"] { background: var(--paused-tint); color: var(--paused); }
+.options .btn:disabled { opacity: .45; cursor: default; }

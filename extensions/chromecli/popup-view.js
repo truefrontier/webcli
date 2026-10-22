@@ -18,6 +18,13 @@ export const LEVEL_HINT = {
   act: "Agents can read and act here (badge A). Risky actions ask you first.",
 };
 
+// The Jev row: on when a TypeSafe key is saved in options (the key itself never reaches the popup).
+export function jevView(configured) {
+  return configured
+    ? { on: true, chip: "On", sub: "Finds elements and classifies clicks; can only add prompts" }
+    : { on: false, chip: "Off", sub: "Heuristics only. Add a TypeSafe key for smarter finding" };
+}
+
 // Agent actions waiting for Kevin's Allow / Deny in the confirm window.
 export function confirmsLabel(n) {
   const k = Number(n) || 0;

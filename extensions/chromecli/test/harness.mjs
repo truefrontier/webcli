@@ -32,7 +32,7 @@ export async function loadBackground({ page } = {}) {
   const chrome = {
     runtime: { id: EXT_ID, getManifest: () => ({ version: "0.8.0" }), getURL: (p) => EXT + p,
       connectNative: () => h.port, onMessage: event(), onStartup: event(), onInstalled: event(), lastError: null },
-    storage: { session: area(), local: area() },
+    storage: { session: area(), local: area(), onChanged: event() },
     tabs: {
       query: async (q) => [...h.tabs.values()].filter((t) => !q.active || t.active),
       get: async (id) => { if (!h.tabs.has(id)) throw new Error("No tab"); return { ...h.tabs.get(id) }; },

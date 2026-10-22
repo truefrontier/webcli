@@ -1,4 +1,4 @@
-# chromecli (P1 read, P2 tab actions, P3 page actions)
+# chromecli (P1 read, P2 tab actions, P3 page actions, P4 Jev)
 
 `chromecli` lets Kevin's agents read, and act in, the Chrome tabs he explicitly shares, in his real, signed-in Chrome (Default
 profile), through an MV3 extension and a native messaging host. It is its own command, built from the webcli repo and
@@ -53,7 +53,11 @@ chromecli fill   --tab TAB TARGET (--value V | --value-file F|-) --expect-origin
 chromecli select --tab TAB TARGET --value VALUE_OR_LABEL --expect-origin O --confirm
 chromecli press KEY --tab TAB [TARGET] --expect-origin O --confirm   # no TARGET: the focused element
 chromecli eval   --tab TAB (--code JS | --file F) --expect-origin O --confirm   # DISABLED: exit 7 eval_disabled
-#   TARGET = --selector CSS | --ref eN (from read --elements) | --text NAME [--role ROLE]   (--find: P4, exit 2)
+#   TARGET = --selector CSS | --ref eN (from read --elements / find) | --text NAME [--role ROLE] | --find INTENT
+#   every page action also takes --jev auto|on|off (default auto)
+
+# P4 Jev (BYOK): read-only finder; Share-read is enough
+chromecli find --tab TAB 'the email field' [--jev auto|on|off] [--limit 5]   # rows: ref score source tag role name
 
 chromecli install-host [--extension-id ID] [--confirm]    # dry run without --confirm
 chromecli uninstall-host [--confirm]
@@ -123,6 +127,34 @@ chromecli agent-help [--format json]
   `confirmed=...`, `confirm=declined|confirm_timeout`, outcome, and exit. The extension's popup ring buffer gets the
   op, reasons, and outcome; never values.
 
+## Jev (P4, bring your own key)
+
+Jev is TypeSafe's judgment API (`POST https://api.typesafe.ai/v1/systemone`, Bearer key). It is optional: without a key
+everything works as in P3, with heuristics for `find`/`--find`.
+
+- **Key**: Kevin pastes it in the extension's options (popup → Jev → Options, or `chrome://extensions` → chromecli →
+  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9). Saving
+  asks Chrome for the optional host permission `https://api.typesafe.ai/*`. The key lives in
+  `chrome.storage.local.typesafeApiKey` and is used only by the service worker's `fetch` to TypeSafe; it is never sent
+  to the host, the CLI, logs, or pages, and the options page never shows it again (Remove key / Test key only).
+  `chromecli status` reports only `jevConfigured`.
+- **Snapshot** sent to Jev: up to 60 visible interactive elements (≤ 24 KB) with ref, tag, role, type, name, label,
+  autocomplete, `valueKind` (empty/filled), inForm, formAction, visible, rect. Never field values, never page text
+  beyond names/labels.
+- **Locate** (`find`, `--find`): heuristics rank the elements; Jev gets one `noul` question per candidate (top 12).
+  It picks the best when it is ≥ the floor and ≥ 0.2 above the runner-up; otherwise `--find` exits 3
+  `ambiguous_target` with the candidates (use one with `--ref`). Rows say `source: jev` or `heuristic`.
+- **Classify**: for `click` and `press`, Jev answers one `choice` question (safe / submit / purchase / destructive /
+  send_publish / credential / uncertain). Anything but a confident `safe` adds the gate `jev:<choice>`. Jev only adds
+  gates; the heuristic gates from `gate.js` always stay.
+- **Modes**: `--jev auto` (default) uses Jev when a key is set; no key means heuristics and P3 gating. If a Jev call
+  fails (network, HTTP error, malformed or incomplete answer) auto falls back to heuristics with *stricter* gating
+  (`jev_unavailable`: every button, submit input, or element in a form asks Kevin) and reports `jev.used: false`;
+  `find` also warns on stderr. `--jev on`: exit 7 `jev_not_configured` without a key, exit 5 `jev_error` on failure,
+  nothing dispatched. `--jev off`: never calls Jev.
+- **Audit**: the host logs `intent=<N chars sha256:8>` / `target=find:<...>`, `jev=MODE`, and `jev_used=`; never the
+  key, never the intent text.
+
 ## Config
 
 ```toml
@@ -144,7 +176,7 @@ Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME
 2 bad_request/too_large/bad_target/missing_expect; 3 tab_not_found/element_not_found/ambiguous_target/no_history;
 4 not_shared/not_act_shared/origin_blocked/paused/declined/confirm_timeout/not_visible/permission_needed/
 policy_pending; 5 bridge_down/host_busy/timeout/url_mismatch/script_error; 7 config_error/host_not_installed/
-history_disabled/eval_disabled; 8 sent_unverified.
+history_disabled/eval_disabled/jev_not_configured; 8 sent_unverified. jev_error is 5.
 
 ## Install (Kevin)
 
@@ -162,4 +194,4 @@ and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
 
 ## Not yet
 
-Jev (`find`, `--find`, `--jev`; P4), chtabs retirement (P5). `chtabs` (press-chrome) is untouched.
+`page.elements` (a Jev-ranked element list op), chtabs retirement (P5). `chtabs` (press-chrome) is untouched.

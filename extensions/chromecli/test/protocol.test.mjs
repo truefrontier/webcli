@@ -161,7 +161,7 @@ test("history filters denied origins", async () => {
 });
 
 test("unknown and later-phase ops are bad_request", async () => {
-  assert.equal((await call("page.find", {})).error.code, "bad_request");
+  assert.equal((await call("page.elements", {})).error.code, "bad_request");
   assert.equal((await call("page.click", {})).error.code, "bad_request"); // no confirm: true
   assert.equal((await call("nope", {})).error.code, "bad_request");
 });
