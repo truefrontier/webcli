@@ -40,7 +40,8 @@ function makeChrome() {
       captureVisibleTab: async () => "data:image/png;base64,iVBORw0KGgo=",
       onUpdated: event(), onRemoved: event(), onReplaced: event(),
     },
-    windows: { getLastFocused: async () => ({ id: 10, state: "normal", focused: true }) },
+    windows: { getLastFocused: async () => ({ id: 10, state: "normal", focused: true }), create: async () => ({ id: 77 }),
+      remove: async () => {}, update: async () => ({}), onRemoved: event() },
     permissions: { contains: async ({ origins }) => origins.every((o) => granted.has(o)) },
     scripting: { executeScript: async ({ target }) => [{ result: { title: tabs.get(target.tabId).title,
       url: tabs.get(target.tabId).url, as: "text", content: "hello", chars: 5, truncated: false } }] },
@@ -160,7 +161,8 @@ test("history filters denied origins", async () => {
 });
 
 test("unknown and later-phase ops are bad_request", async () => {
-  assert.equal((await call("page.click", {})).error.code, "bad_request");
+  assert.equal((await call("page.find", {})).error.code, "bad_request");
+  assert.equal((await call("page.click", {})).error.code, "bad_request"); // no confirm: true
   assert.equal((await call("nope", {})).error.code, "bad_request");
 });
 

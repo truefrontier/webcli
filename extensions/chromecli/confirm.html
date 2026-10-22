@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>chromecli · Allow this action?</title>
+<link rel="stylesheet" href="popup.css">
+<link rel="stylesheet" href="confirm.css">
+</head>
+<body class="confirm">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2.2 14.2 13H1.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".9" fill="currentColor"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-click" viewBox="0 0 24 24"><path d="M9 3.5v2M4.6 5.6l1.4 1.4M3 10h2M14.4 5.6 13 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="m9.5 9.5 10 3.6-4.3 1.5-1.6 4.4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-keys" viewBox="0 0 24 24"><rect x="2.8" y="6" width="18.4" height="12" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 10h1M10 10h1M13.5 10h1M17 10h.5M8 14h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 9.5h7M7 14.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="m16 13 1.5 1.6L19 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.6 12h16.8M12 3.4c2.3 2.4 3.4 5.3 3.4 8.6s-1.1 6.2-3.4 8.6c-2.3-2.4-3.4-5.3-3.4-8.6S9.7 5.8 12 3.4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 7.5-4.5 4.5 4.5 4.5M15.5 7.5l4.5 4.5-4.5 4.5M13.4 5.5l-2.8 13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8 13 3.6v4.1c0 3.1-2.1 5.5-5 6.5-2.9-1-5-3.4-5-6.5V3.6Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m5.8 8 1.6 1.6 2.9-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+        <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3A3F4B"/><stop offset="1" stop-color="#111318"/></linearGradient></defs>
+        <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="url(#mk)" stroke="rgba(255,255,255,.12)"/>
+        <path d="m7 8 4 4-4 4" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="12.5" y="14.9" width="5" height="2.1" rx="1.05" fill="#5B9BFF"/>
+      </svg>
+      <span class="name">chromecli</span>
+    </div>
+    <span id="timer" class="pill timer" role="timer" aria-live="off"><span class="dot" aria-hidden="true"></span><span id="timer-label">60s</span></span>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="headline">
+      <span id="fav" class="fav hero-fav" aria-hidden="true"><svg class="op-ic"><use id="op-use" href="#i-click"/></svg></span>
+      <div class="hero-text">
+        <p class="eyebrow">An agent wants to</p>
+        <h1 id="headline">…</h1>
+        <p id="site" class="site"></p>
+      </div>
+    </section>
+
+    <section class="card reasons-card" aria-labelledby="reasons-title">
+      <h2 id="reasons-title"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>Gated because</h2>
+      <ul id="reasons" class="reasons"></ul>
+    </section>
+
+    <section class="card details" aria-label="Details">
+      <dl id="details"></dl>
+      <div id="html-wrap" class="html-wrap" hidden>
+        <div class="html-label">Element HTML</div>
+        <pre id="html" class="html"></pre>
+      </div>
+    </section>
+
+    <p id="error" class="msg err" hidden></p>
+  </main>
+
+  <footer class="actions">
+    <div class="bar" aria-hidden="true"><span id="bar-fill"></span></div>
+    <div class="actions-row">
+      <span id="queue" class="queue"></span>
+      <button id="deny" class="btn btn-lg" autofocus>Deny</button>
+      <button id="allow" class="btn btn-lg btn-allow" disabled>Allow once</button>
+    </div>
+    <p class="fine"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Closing or ignoring this window denies. Nothing runs until you choose.</p>
+  </footer>
+  <script type="module" src="confirm.js"></script>
+</body>
+</html>

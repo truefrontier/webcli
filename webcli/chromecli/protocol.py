@@ -24,10 +24,14 @@ HOST_TO_EXT_MAX = 1 * 2**20
 EXT_TO_HOST_MAX = 64 * 2**20
 CLI_REQUEST_MAX = 1 * 2**20
 
-# P1 (read-only). Later phases add tab.* and page.* ops; until then they are bad_request.
-OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search")
-FUTURE_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate", "page.click", "page.type", "page.fill",
-              "page.select", "page.press", "page.wait", "page.eval", "page.find", "page.elements")
+READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait")
+TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
+PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
+OPS = READ_OPS + TAB_OPS + PAGE_OPS
+# Ops that change a tab or page: sent only with --confirm (confirm: true); the extension refuses them otherwise.
+MUTATING_OPS = TAB_OPS + PAGE_OPS
+# P4 (Jev) adds these; until then they are bad_request.
+FUTURE_OPS = ("page.find", "page.elements")
 EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "error")
 
 # Spec section 4: one table, every error code the host or extension can answer with.
@@ -42,7 +46,7 @@ ERROR_EXIT: dict[str, int] = {
     # 5: bridge / page
     "bridge_down": 5, "host_busy": 5, "timeout": 5, "url_mismatch": 5, "script_error": 5, "jev_error": 5,
     # 7: config
-    "config_error": 7, "host_not_installed": 7, "jev_not_configured": 7, "history_disabled": 7,
+    "config_error": 7, "host_not_installed": 7, "jev_not_configured": 7, "history_disabled": 7, "eval_disabled": 7,
     # 8: dispatched, not verified
     "sent_unverified": 8,
 }
@@ -58,6 +62,14 @@ ERROR_HINTS: dict[str, str] = {
     "host_busy": "Another chromecli-host is already serving (two Chrome profiles with the extension?).",
     "history_disabled": "history = false in [chromecli] of ~/.webcli/config.toml.",
     "config_error": "Fix [chromecli] in ~/.webcli/config.toml.",
+    "declined": "Kevin clicked Deny in the browser. Don't retry the same action without asking him.",
+    "confirm_timeout": "Nobody answered the in-browser confirm in time. Ask Kevin before retrying.",
+    "missing_expect": "Add --expect-origin ORIGIN or --expect-url PREFIX (the page you think the tab is on).",
+    "url_mismatch": "The tab isn't where --expect-* says. Re-check it with `chromecli show TAB` before acting.",
+    "sent_unverified": "The action went out but its check failed. Don't repeat it; read the page first.",
+    "eval_disabled": "Chrome's MV3 isolated-world CSP forbids running code strings; use click/type/fill/select/press.",
+    "ambiguous_target": "Narrow the target: a more specific --selector, a --ref from `read --elements`, or --role.",
+    "element_not_found": "Refs die on navigation; run `chromecli read TAB --elements` again.",
 }
 
 

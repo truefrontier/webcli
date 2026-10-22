@@ -1,7 +1,7 @@
 [project]
 name = "truefrontier-chromecli"
-version = "0.7.1"
-description = "Installs truefrontier-webcli, which provides the chromecli command (read the Chrome tabs you share with agents)."
+version = "0.8.0"
+description = "Installs truefrontier-webcli, which provides the chromecli command (read and act in the Chrome tabs you share with agents)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Utilities",
 ]
-dependencies = ["truefrontier-webcli==0.7.1"]
+dependencies = ["truefrontier-webcli==0.8.0"]
 
 [project.urls]
 Homepage = "https://github.com/truefrontier/webcli"

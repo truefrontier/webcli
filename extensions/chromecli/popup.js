@@ -1,5 +1,5 @@
 import { allowToPermission, permissionPattern } from "./policy.js";
-import { auditRow, hostOf, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
+import { auditRow, confirmsLabel, hostOf, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
 let tab = null;
@@ -60,6 +60,10 @@ function render() {
   const h = state.host || {};
   $("host-alert").hidden = !!h.connected;
   $("host-error").textContent = h.lastError || "Waiting for chromecli-host. Run chromecli doctor.";
+
+  // agent actions waiting in the confirm window
+  $("confirms").hidden = !state.confirms;
+  $("confirms-label").textContent = confirmsLabel(state.confirms);
 
   // current tab
   $("title").textContent = tab ? tab.title || "(untitled)" : "No tab";
@@ -181,6 +185,7 @@ $("seg").addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 
+$("confirms").addEventListener("click", async () => { await send({ type: "showConfirm" }); window.close(); });
 $("unshare-all").addEventListener("click", async () => { await send({ type: "unshareAll" }); msg("All tabs unshared."); await load(); });
 $("pause").addEventListener("click", async () => { await send({ type: "pause", paused: !state.paused }); await load(); });
 $("retry").addEventListener("click", async () => {

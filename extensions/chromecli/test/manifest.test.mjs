@@ -35,24 +35,34 @@ test("permissions: no blanket host access, no debugger", () => {
 test("every referenced file exists", () => {
   for (const f of [manifest.background.service_worker, manifest.action.default_popup,
     ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon), "policy.js", "shares.js",
-    "page/extract.js", "popup.js", "popup-view.js", "popup.css"]) {
+    "page/extract.js", "page/actions.js", "gate.js", "popup.js", "popup-view.js", "popup.css", "confirm.html", "confirm.js",
+    "confirm-view.js", "confirm.css"]) {
     assert.ok(existsSync(here(f)), f);
   }
 });
 
 test("no remote code or eval in extension scripts", () => {
-  for (const f of ["background.js", "policy.js", "shares.js", "page/extract.js", "popup.js", "popup-view.js", "popup.html", "popup.css"]) {
+  for (const f of ["background.js", "policy.js", "shares.js", "page/extract.js", "page/actions.js", "gate.js", "popup.js",
+    "popup-view.js", "popup.html", "popup.css", "confirm.html", "confirm.js", "confirm-view.js", "confirm.css"]) {
     const src = readFileSync(here(f), "utf8");
     assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), `${f}: eval/new Function`);
     assert.ok(!/import\s*\(\s*["']https?:/.test(src) && !/<script[^>]+src=["']https?:/.test(src), `${f}: remote code`);
   }
 });
 
-test("popup loads no remote assets and no inline script", () => {
-  const html = readFileSync(here("popup.html"), "utf8");
-  const css = readFileSync(here("popup.css"), "utf8");
-  assert.ok(!/(?:src|href)=["']https?:/i.test(html), "popup.html: remote src/href");
-  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "popup.html: inline <script> (blocked by the MV3 CSP)");
-  assert.ok(!/\son[a-z]+=/i.test(html), "popup.html: inline event handler");
-  assert.ok(!/@import|url\(\s*["']?https?:/i.test(css), "popup.css: remote import/url");
+for (const [page, sheet] of [["popup.html", "popup.css"], ["confirm.html", "confirm.css"]]) test(`${page} loads no remote assets and no inline script`, () => {
+  const html = readFileSync(here(page), "utf8");
+  const css = readFileSync(here(sheet), "utf8");
+  assert.ok(!/(?:src|href)=["']https?:/i.test(html), `${page}: remote src/href`);
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), `${page}: inline <script> (blocked by the MV3 CSP)`);
+  assert.ok(!/\son[a-z]+=/i.test(html), `${page}: inline event handler`);
+  assert.ok(!/@import|url\(\s*["']?https?:/i.test(css), `${sheet}: remote import/url`);
+});
+
+test("the confirm window is not web-accessible and Deny is the default focus", () => {
+  assert.ok(!("web_accessible_resources" in manifest));
+  const html = readFileSync(here("confirm.html"), "utf8");
+  assert.match(html, /<button id="deny"[^>]*autofocus/);
+  assert.match(html, /<button id="allow"[^>]*disabled/);
+  assert.match(html, /Gated because/);
 });
