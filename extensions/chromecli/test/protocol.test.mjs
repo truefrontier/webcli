@@ -130,6 +130,19 @@ test("unshare all", async () => {
   assert.deepEqual((await call("tabs.list")).result, []);
 });
 
+test("popup state lists every shared tab with its title and level", async () => {
+  granted.add("https://example.com/*");
+  granted.add("https://news.example.org/*");
+  await popup({ type: "share", tabId: 1, origin: "https://example.com", level: "read" });
+  await popup({ type: "share", tabId: 3, origin: "https://news.example.org", level: "act" });
+  const st = await popup({ type: "state", tabId: 1 });
+  assert.equal(st.shareCount, 2);
+  assert.deepEqual(st.shared.map((s) => [s.tabId, s.origin, s.level, s.title]).sort(),
+    [[1, "https://example.com", "read", "Example"], [3, "https://news.example.org", "act", "News"]]);
+  assert.equal(st.share.level, "read");
+  assert.equal(st.tab.origin, "https://example.com");
+});
+
 test("screenshot of a background tab -> not_visible; of the front tab -> data", async () => {
   granted.add("https://example.com/*");
   granted.add("https://news.example.org/*");

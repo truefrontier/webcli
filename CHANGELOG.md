@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1 (2026-10-22)
+
+### Changed
+
+- chromecli extension 0.7.1: redesigned toolbar popup (same behavior, permissions, protocol, and safety rules). Header with the status pill (Connected / Disconnected / Paused), current-tab card with favicon and an Off / Read / Act switch, a clear "can't be shared" panel with the deny reason, Pause agents as a switch showing its shortcut, the pending policy as a banner with Accept / Reject, a list of every shared tab (level chip, unshare x, click to switch to it), Unshare all, and a collapsible activity log. Light and dark follow the system; keyboard and screen-reader friendly. New icons (16/32/48/128). The popup's `state` reply gains `shared` (the shared tabs) for the list.
+
 ## 0.7.0 (2026-10-22)
 
 ### Added

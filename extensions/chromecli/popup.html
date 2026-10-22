@@ -1,57 +1,110 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
 <title>chromecli</title>
-<style>
-  body { font: 13px -apple-system, BlinkMacSystemFont, sans-serif; width: 340px; margin: 10px; color: #202124; }
-  h1 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; }
-  .muted { color: #5f6368; font-size: 12px; }
-  .box { border: 1px solid #dadce0; border-radius: 6px; padding: 8px; margin: 8px 0; }
-  .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
-  button { font: inherit; padding: 4px 10px; border-radius: 4px; border: 1px solid #dadce0; background: #fff; cursor: pointer; }
-  button:disabled { opacity: .45; cursor: default; }
-  button.read { border-color: #1a73e8; color: #1a73e8; }
-  button.act { border-color: #e8710a; color: #e8710a; }
-  button.on { color: #fff; }
-  button.read.on { background: #1a73e8; }
-  button.act.on { background: #e8710a; }
-  button.warn { border-color: #c5221f; color: #c5221f; }
-  .err { color: #c5221f; }
-  .ok { color: #188038; }
-  ul { margin: 4px 0 0; padding-left: 16px; }
-  #audit li { font-size: 11px; color: #5f6368; }
-  .origin { word-break: break-all; }
-</style>
+<link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h1><span>chromecli</span><span id="version" class="muted"></span></h1>
-  <div id="host" class="muted"></div>
-  <div class="box">
-    <div id="title"></div>
-    <div id="origin" class="muted origin"></div>
-    <div id="denied" class="err"></div>
-    <div class="row">
-      <button id="share-read" class="read" title="Agents may read this tab (badge R)">Share-read</button>
-      <button id="share-act" class="act" title="Reserved for actions in a later version (badge A); reading works">Share-act</button>
-      <button id="unshare">Unshare</button>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2.2 14.2 13H1.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".9" fill="currentColor"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 16 16"><path d="M6 2v3m4-3v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+        <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3A3F4B"/><stop offset="1" stop-color="#111318"/></linearGradient></defs>
+        <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="url(#mk)" stroke="rgba(255,255,255,.12)"/>
+        <path d="m7 8 4 4-4 4" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="12.5" y="14.9" width="5" height="2.1" rx="1.05" fill="#5B9BFF"/>
+      </svg>
+      <span class="name">chromecli</span>
+      <span id="version" class="ver"></span>
     </div>
-    <div id="msg" class="muted"></div>
-  </div>
-  <div class="row">
-    <button id="pause" class="warn">Pause agents</button>
-    <button id="unshare-all">Unshare all</button>
-  </div>
-  <div id="pending" class="box" hidden>
-    <b>Policy change waiting for you</b>
-    <div class="muted">A [chromecli] edit in ~/.webcli/config.toml widens access:</div>
-    <ul id="pending-list"></ul>
-    <div class="row"><button id="accept" class="act">Accept</button><button id="reject">Reject</button></div>
-  </div>
-  <div class="box">
-    <div class="muted">Recent activity</div>
-    <ul id="audit"></ul>
-  </div>
+    <span id="status" class="pill" data-status="disconnected" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="status-label">Connecting…</span></span>
+  </header>
+
+  <main>
+    <div id="host-alert" class="alert" hidden>
+      <svg class="ic" aria-hidden="true"><use href="#i-plug"/></svg>
+      <div class="alert-body">
+        <strong>Native host not connected</strong>
+        <span id="host-error" class="alert-detail"></span>
+      </div>
+      <button id="retry" class="btn btn-sm">Retry</button>
+    </div>
+
+    <section id="pending" class="banner" hidden aria-labelledby="pending-title">
+      <div class="banner-head">
+        <svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>
+        <div>
+          <h2 id="pending-title">Policy change needs your OK</h2>
+          <p>A <code>[chromecli]</code> config edit widens access:</p>
+        </div>
+      </div>
+      <ul id="pending-list" class="pending-list"></ul>
+      <div class="banner-actions">
+        <button id="reject" class="btn btn-sm">Reject</button>
+        <button id="accept" class="btn btn-sm btn-primary">Accept</button>
+      </div>
+    </section>
+
+    <section class="card tab-card" aria-label="Current tab">
+      <div class="tab-head">
+        <span id="fav" class="fav" aria-hidden="true"></span>
+        <div class="tab-meta">
+          <div id="title" class="tab-title"></div>
+          <div id="origin" class="tab-origin"></div>
+        </div>
+      </div>
+
+      <div id="denied" class="denied" hidden>
+        <svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg>
+        <div>
+          <strong>This page can't be shared</strong>
+          <span id="denied-reason" class="denied-reason"></span>
+          <p id="denied-why"></p>
+        </div>
+      </div>
+
+      <div id="seg" class="seg" role="group" aria-label="Share level for this tab" data-level="off">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button id="lvl-off" class="seg-btn" data-level="off" aria-pressed="true" title="Unshare this tab">Off</button>
+        <button id="share-read" class="seg-btn" data-level="read" aria-pressed="false" title="Agents may read this tab (badge R)"><span class="seg-dot" aria-hidden="true"></span>Read</button>
+        <button id="share-act" class="seg-btn" data-level="act" aria-pressed="false" title="Reserved for actions in a later version (badge A); reading works"><span class="seg-dot" aria-hidden="true"></span>Act</button>
+      </div>
+      <p id="hint" class="hint"></p>
+      <div id="msg" class="msg" role="status" aria-live="polite" hidden></div>
+    </section>
+
+    <section class="card pause-card">
+      <div class="pause-text">
+        <span class="label-row"><span id="pause-label" class="label">Pause agents</span><span id="shortcut" class="keys" aria-label="Shortcut"></span></span>
+        <span id="pause-sub" class="sub">Every command but <code>status</code> exits 4</span>
+      </div>
+      <button id="pause" class="switch" role="switch" aria-checked="false" aria-labelledby="pause-label"><span class="knob" aria-hidden="true"></span></button>
+    </section>
+
+    <section class="shared" aria-labelledby="shared-title">
+      <div class="section-head">
+        <h2 id="shared-title">Shared tabs <span id="shared-count" class="count"></span></h2>
+        <button id="unshare-all" class="btn-text danger">Unshare all</button>
+      </div>
+      <ul id="shared" class="shared-list"></ul>
+      <p id="shared-empty" class="empty">No tabs shared. Agents only see tabs you share.</p>
+    </section>
+
+    <details id="audit-wrap" class="audit">
+      <summary><svg class="ic chev" aria-hidden="true"><use href="#i-chev"/></svg>Recent activity <span id="audit-count" class="count"></span></summary>
+      <ol id="audit" class="audit-list"></ol>
+      <p id="audit-empty" class="empty mono" hidden>Nothing yet.</p>
+    </details>
+  </main>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

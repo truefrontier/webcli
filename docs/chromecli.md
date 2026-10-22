@@ -46,8 +46,9 @@ chromecli agent-help [--format json]
 
 ## Safety model (P1)
 
-- Kevin shares a tab from the toolbar popup: **Share-read** (badge R, blue) or **Share-act** (badge A, orange; acting
-  is P3, reading works). Sharing asks Chrome for host access to that origin (`optional_host_permissions`; no blanket
+- Kevin shares a tab from the toolbar popup's Off / Read / Act switch: **Read** (Share-read, badge R, blue) or **Act**
+  (Share-act, badge A, orange; acting is P3, reading works); **Off** unshares. The popup also lists every shared tab
+  (unshare one with its x). Sharing asks Chrome for host access to that origin (`optional_host_permissions`; no blanket
   host permission). Shares are (tab, origin, level) in `chrome.storage.session`: cleared when Chrome restarts, revoked
   when the tab navigates to another origin or a denied URL, or is replaced/closed.
 - **Pause agents** (popup or Cmd+Shift+Period): badge II; every op but `status` exits 4 `paused`. Persists across restarts
