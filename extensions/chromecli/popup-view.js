@@ -87,9 +87,20 @@ export function grantMeta(g, now = Date.now()) {
   return `${g.usesLeft} use${g.usesLeft === 1 ? "" : "s"} left · ${left} left`;
 }
 
-export function grantsSub(enabled, count) {
-  if (!enabled) return "Off: every risky action asks you here";
-  return count ? `${count} active · Pause revokes all` : "On: agents may record a “yes” you give in chat";
+// 0.10.1: no toggle. The subtitle says what's active (or how one gets added).
+export function grantsSub(count) {
+  return count ? `${count} active · Pause revokes all` : "None. Agents add one only from your words in chat";
+}
+
+// Jev's scope verdict on a grant: "Jev ✓ 0.94" (+ "· narrowed").
+export function grantJev(g) {
+  const j = g?.jev;
+  if (!j?.verdict) return null;
+  const c = typeof j.confidence === "number" ? j.confidence.toFixed(2) : "";
+  const narrowed = (j.narrowed || []).map((n) => ({ maxAmount: "cap", ttlSec: "time" })[n.field] || n.field);
+  if (j.verdict !== "authorized") return { tone: "bad", label: `Jev ${j.verdict}`, title: "Jev didn't authorize this grant" };
+  return { tone: "ok", label: `Jev ✓ ${c}${narrowed.length ? " · narrowed" : ""}`.replace(/\s+·/, " ·").trim(),
+    title: `Jev: your words authorize this grant (${c})${narrowed.length ? `; narrowed ${narrowed.join(", ")} to what you said` : ""}` };
 }
 
 // "https://www.example.com:8443" -> "www.example.com:8443"; non-URLs pass through.

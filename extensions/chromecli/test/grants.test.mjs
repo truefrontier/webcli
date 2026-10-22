@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { amountCheck, canSkip, grantMatches, nameMatches, parseAmounts, validateGrant, grantView, DEFAULT_TTL_SEC, MAX_TTL_SEC } from "../grants.js";
 
-const base = { op: "click", origin: "https://shop.example.com", target: { text: "Place order" }, quote: "go ahead and buy it if it's under $50" };
+const base = { op: "click", origin: "https://shop.example.com", target: { text: "Place order" }, quote: "go ahead and buy it if it's under $50", userApproved: true };
 const now = 1_700_000_000_000;
 
 test("validateGrant: defaults (1 use, 30m), normalizes the origin, keeps the quote", () => {
@@ -17,7 +17,8 @@ test("validateGrant: defaults (1 use, 30m), normalizes the origin, keeps the quo
 
 test("validateGrant: refusals", () => {
   const bad = (x, re) => assert.throws(() => validateGrant({ ...base, ...x }, { now }), (e) => e.code === "bad_request" && re.test(e.message));
-  bad({ op: "eval" }, /op must be/);
+  bad({ op: "eval" }, /eval can never/);
+  bad({ op: "drag" }, /op must be/);
   bad({ origin: "chrome://settings" }, /origin/);
   bad({ quote: "   " }, /quote is required/);
   bad({ quote: "x".repeat(501) }, /over 500/);
@@ -36,7 +37,7 @@ test("validateGrant: refusals", () => {
 });
 
 test("validateGrant: tab ops match on origin (+ url prefix)", () => {
-  const g = validateGrant({ op: "open", origin: "https://shop.example.com", quote: "open the shop", urlPrefix: "https://shop.example.com/admin" }, { now });
+  const g = validateGrant({ userApproved: true, op: "open", origin: "https://shop.example.com", quote: "open the shop", urlPrefix: "https://shop.example.com/admin" }, { now });
   assert.equal(g.target, null);
   assert.ok(grantMatches(g, { op: "open", origin: g.origin, url: "https://shop.example.com/admin/orders", now }).ok);
   assert.equal(grantMatches(g, { op: "open", origin: g.origin, url: "https://shop.example.com/other", now }).ok, false);
@@ -66,11 +67,11 @@ test("grantMatches: op, origin, name, role, value, selector, expiry, uses", () =
   const s = validateGrant({ ...base, target: { selector: "#place" } }, { now });
   assert.ok(grantMatches(s, { ...ctx, selectorHit: true }).ok);
   assert.equal(grantMatches(s, { ...ctx, selectorHit: false }).why, "selector");
-  const f = validateGrant({ op: "fill", origin: base.origin, target: { text: "Store name" }, value: "as-described-review", quote: "type as-described-review to confirm" }, { now });
+  const f = validateGrant({ userApproved: true, op: "fill", origin: base.origin, target: { text: "Store name" }, value: "as-described-review", quote: "type as-described-review to confirm" }, { now });
   const fctx = { op: "fill", origin: base.origin, element: { name: "Store name" }, now };
   assert.ok(grantMatches(f, { ...fctx, value: "as-described-review" }).ok);
   assert.equal(grantMatches(f, { ...fctx, value: "other" }).why, "value");
-  const p = validateGrant({ op: "press", origin: base.origin, target: { text: "Search" }, value: "Enter", quote: "hit enter" }, { now });
+  const p = validateGrant({ userApproved: true, op: "press", origin: base.origin, target: { text: "Search" }, value: "Enter", quote: "hit enter" }, { now });
   assert.ok(grantMatches(p, { op: "press", origin: base.origin, element: { name: "Search" }, key: "Enter", now }).ok);
 });
 
@@ -105,8 +106,47 @@ test("amountCheck: largest amount in the grant's currency must be <= cap; none f
 });
 
 test("grantView never echoes a --value, only its length", () => {
-  const f = validateGrant({ op: "fill", origin: base.origin, target: { text: "Store name" }, value: "abc", quote: "q" }, { now });
+  const f = validateGrant({ userApproved: true, op: "fill", origin: base.origin, target: { text: "Store name" }, value: "abc", quote: "q" }, { now });
   const v = grantView(f, now);
   assert.equal(v.value, "<3 chars>");
   assert.equal(v.expiresInSec, DEFAULT_TTL_SEC);
+});
+
+test("0.10.1: validateGrant needs userApproved === true; eval is refused", async () => {
+  const { GrantError } = await import("../grants.js");
+  for (const userApproved of [undefined, false, "yes", 1]) {
+    assert.throws(() => validateGrant({ ...base, userApproved }), (e) => e instanceof GrantError && e.code === "missing_user_approval");
+  }
+  assert.throws(() => validateGrant({ ...base, op: "eval" }), (e) => e.code === "bad_request" && /eval/.test(e.message));
+  assert.equal(validateGrant(base).ttlSec, 30 * 60);
+});
+
+test("0.10.1 scope check: body, verdicts, the 0.8 floor, narrowing candidates", async () => {
+  const { scopeBody, parseScope, narrowCandidates, quoteUses, quoteTtlSec, quoteAmounts, AUTHORIZED_FLOOR } = await import("../grants.js");
+  assert.equal(AUTHORIZED_FLOOR, 0.8);
+  const now = 1_000_000;
+  const g = validateGrant({ ...base, maxAmount: 100, uses: 3, ttlSec: 3600, quote: "buy it once if it's under $50, in the next 10 minutes" }, { now });
+  assert.deepEqual(narrowCandidates(g), [{ field: "maxAmount", value: 50 }, { field: "uses", value: 1 }, { field: "ttlSec", value: 600 }]);
+  const b = scopeBody({ model: "jev-latest", grant: g });
+  assert.equal(b.state.instruction, g.quote);
+  assert.equal(b.state.grant.spendingCap, "$100.00");
+  assert.equal(b.state.grant.uses, 3);
+  assert.equal(b.state.grant.expiresAfterMinutes, 60);
+  assert.deepEqual(Object.keys(b.questions).sort(), ["narrow_maxAmount", "narrow_ttlSec", "narrow_uses", "scope"]);
+  const ans = (choice, confidence, noul = 0.9) => ({ answers: { scope: { type: "choice", choice, confidence },
+    narrow_maxAmount: { noul }, narrow_uses: { noul }, narrow_ttlSec: { noul: 0.2 } } });
+  const ok = parseScope(ans("authorized", 0.85), g);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.grant.maxAmount, 50);
+  assert.equal(ok.grant.usesLeft, 1);
+  assert.equal(ok.grant.expiresAt, g.expiresAt, "ttl narrowing below 0.8 isn't applied");
+  assert.equal(parseScope(ans("authorized", 0.79), g).verdict, "unclear");
+  assert.equal(parseScope(ans("overreach", 0.99), g).verdict, "overreach");
+  assert.equal(parseScope(ans("unclear", 0.99), g).ok, false);
+  assert.throws(() => parseScope({ answers: {} }, g), (e) => e.code === "jev_error");
+  assert.equal(quoteUses("do it twice"), 2);
+  assert.equal(quoteTtlSec("for 2 hours"), 7200);
+  assert.deepEqual(quoteAmounts("under $1,250.50 or 40 dollars"), [1250.5, 40]);
+  // two amounts in the quote: no cap narrowing
+  assert.equal(narrowCandidates({ ...g, quote: "between $20 and $50" }).some((c) => c.field === "maxAmount"), false);
 });

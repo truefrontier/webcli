@@ -107,18 +107,13 @@
     <section class="card grants-card" aria-labelledby="grants-label">
       <div class="grants-head">
         <div class="pause-text">
-          <span class="label-row"><span id="grants-label" class="label">Allow agent pre-approvals</span></span>
-          <span id="grants-sub" class="sub">Off: every risky action asks you here</span>
+          <span class="label-row"><span id="grants-label" class="label">Pre-approvals</span><span id="grants-count" class="count"></span></span>
+          <span id="grants-sub" class="sub">None. Agents add one only from your words in chat</span>
         </div>
-        <button id="grants-toggle" class="switch" role="switch" aria-checked="false" aria-labelledby="grants-label" title="Only you can turn this on. Pause or turning it off revokes every pre-approval."><span class="knob" aria-hidden="true"></span></button>
+        <button id="revoke-all-grants" class="btn-text danger" title="Revoke every pre-approval">Revoke all</button>
       </div>
       <div id="grants-wrap" class="grants-wrap" hidden>
-        <div class="section-head">
-          <h2 id="grants-title">Pre-approvals <span id="grants-count" class="count"></span></h2>
-          <button id="revoke-all-grants" class="btn-text danger">Revoke all</button>
-        </div>
-        <ul id="grants" class="grant-list" aria-labelledby="grants-title"></ul>
-        <p id="grants-empty" class="empty">None active. Agents add one only when you say “yes, do X” in chat.</p>
+        <ul id="grants" class="grant-list" aria-labelledby="grants-label"></ul>
       </div>
     </section>
 

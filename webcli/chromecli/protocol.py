@@ -28,30 +28,33 @@ READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", 
             "page.find", "page.probe", "grant.list")
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
-# 0.10.0 pre-approval grants (stored in the extension; accepted only while Kevin's popup toggle is on).
+# Pre-approval grants (stored in the extension; 0.10.1: grant.add needs userApproved and Jev's scope check).
 GRANT_OPS = ("grant.add", "grant.revoke")
 OPS = READ_OPS + TAB_OPS + PAGE_OPS + GRANT_OPS
 # Ops that change something: sent only with --confirm (confirm: true); the extension refuses them otherwise.
 MUTATING_OPS = TAB_OPS + PAGE_OPS + GRANT_OPS
 # Not in this version: bad_request.
 FUTURE_OPS = ("page.elements",)
-EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "grants_cleared", "grants_enabled", "error")
+EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "grants_cleared", "grant_added",
+                   "grant_refused", "error")
 
 # Spec section 4: one table, every error code the host or extension can answer with.
 ERROR_EXIT: dict[str, int] = {
     # 2: the request itself is wrong
-    "bad_request": 2, "too_large": 2, "bad_target": 2, "missing_expect": 2, "confirm_conflict": 2,
+    "bad_request": 2, "too_large": 2, "bad_target": 2, "missing_expect": 2, "confirm_conflict": 2, "missing_user_approval": 2,
     # 3: not found
     "tab_not_found": 3, "element_not_found": 3, "ambiguous_target": 3, "no_history": 3,
     # 4: a person must act
     "not_shared": 4, "not_act_shared": 4, "origin_blocked": 4, "paused": 4, "declined": 4, "confirm_timeout": 4,
-    "not_visible": 4, "permission_needed": 4, "policy_pending": 4, "grants_disabled": 4,
+    "not_visible": 4, "permission_needed": 4, "policy_pending": 4,
     # 5: bridge / page
     "bridge_down": 5, "host_busy": 5, "timeout": 5, "url_mismatch": 5, "script_error": 5, "jev_error": 5,
     # 7: config
     "config_error": 7, "host_not_installed": 7, "jev_not_configured": 7, "history_disabled": 7, "eval_disabled": 7,
     # 8: dispatched, not verified
     "sent_unverified": 8,
+    # 9: Jev refused a pre-approval (the grant goes beyond Kevin's quote)
+    "grant_overreach": 9, "grant_unclear": 9,
 }
 ERROR_HINTS: dict[str, str] = {
     "not_shared": "Kevin: click the chromecli icon on that tab and choose Share-read.",
@@ -74,8 +77,11 @@ ERROR_HINTS: dict[str, str] = {
     "ambiguous_target": "Narrow the target: a more specific --selector, a --ref from `read --elements`, or --role.",
     "element_not_found": "Refs die on navigation; run `chromecli read TAB --elements` again.",
     "jev_not_configured": "Kevin: open chromecli's options (popup → Jev → Options) and save a TypeSafe API key, or use --jev auto.",
-    "grants_disabled": "Pre-approvals are off; only Kevin can turn on “Allow agent pre-approvals” in the chromecli popup. "
-                       "Let the action ask him in the browser instead.",
+    "missing_user_approval": "grant add needs --user-approved with --quote (Kevin's own words, said to you). "
+                             "Otherwise let the action ask him in the browser.",
+    "grant_overreach": "Jev: the grant goes beyond Kevin's words (another item/site, higher cap, more uses, longer). "
+                       "Nothing was stored; ask Kevin, or let the action ask him in the browser.",
+    "grant_unclear": "Jev: Kevin's words don't clearly approve this grant. Nothing was stored; ask Kevin.",
     "jev_error": "Jev failed. --jev auto falls back to heuristics (stricter gating in bot-opened tabs).",
 }
 

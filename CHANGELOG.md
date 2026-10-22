@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.10.1 (2026-10-22)
+
+### Changed
+
+Kevin's call on pre-approvals: "Assume a quote that arrives through the CLI came from the user." No popup toggle;
+`--user-approved` plus a Jev scope check instead. Grant matching, limits, notifications, the popup list and the 0.10.0
+test-drive fixes are unchanged.
+
+- Removed the popup toggle *Allow agent pre-approvals*, `chrome.storage.local.grantsEnabled`, the `setGrantsEnabled`
+  popup message and exit 4 `grants_disabled`. The popup's *Pre-approvals* card is always there (count, "Revoke all",
+  each grant with Jev's verdict chip).
+- `grant add` requires `--user-approved` with `--quote`; without it: exit 2 `missing_user_approval` (preview included;
+  nothing is sent). The CLI trusts the flag: it is the agent's statement that the quote is Kevin's own words.
+- **Jev scope check** before a grant is stored (Jev only checks the grant against the quote, never who said it). The
+  quote is the instruction; target names, URLs, selectors and page text are untrusted evidence; fill/type values are
+  never sent. `authorized` at ≥ 0.8 stores the grant; lower counts as `unclear`. `overreach` / `unclear` refuse with new
+  **exit 9** `grant_overreach` / `grant_unclear`, Jev's reason in `message` and `jevCheck` in the error. Jev may narrow
+  the grant to a tighter single amount, use count or duration stated in the quote (`noul` ≥ 0.8;
+  `jevCheck.narrowed`). Fail closed: no key → exit 7 `jev_not_configured`; Jev down → exit 5 `jev_error`.
+- Logged: `user_approved=`, `jev_verdict=`, `jev_confidence=`, `narrowed=`, `jev_reason=` on the `grant.add` line, and
+  `grant_added` / `grant_refused` events with the quote. `grant list` shows each grant's `jev` verdict; the result of
+  `grant list` no longer has `enabled`. `eval` grants are refused explicitly. `grant add` waits up to 45s (Jev).
+- agent-help: exit 9 in chromecli's exit-code table; the grant notes describe the trust model.
+
 ## 0.10.0 (2026-10-22)
 
 ### Added

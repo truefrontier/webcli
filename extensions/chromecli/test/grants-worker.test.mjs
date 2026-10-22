@@ -1,4 +1,5 @@
-// 0.10.0 pre-approval grants in the service worker: toggle, add/list/revoke, matching right before dispatch.
+// Pre-approval grants in the service worker: --user-approved + Jev scope check (0.10.1), add/list/revoke, matching
+// right before dispatch.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadBackground } from "./harness.mjs";
@@ -32,25 +33,116 @@ function fakePage(opts = {}) {
   };
 }
 
-async function setup(opts = {}, { enable = true } = {}) {
+const KEY = "tsk_test_grants_worker_0123456789";
+const AUTH = { type: "choice", choice: "authorized", confidence: 0.93, probabilities: { authorized: 0.93, overreach: 0.05, unclear: 0.02 } };
+// Mock Jev: the grant scope question gets `scope`, narrowing questions get `narrow` (default: no narrowing).
+// Any other Jev call (click classification) fails, so page actions fall back to the heuristics in act tabs.
+function mockJev(h, scope = AUTH, narrow = 0) {
+  h.scopeCalls = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (!body.questions?.scope) return { ok: false, status: 503, json: async () => ({}) };
+    h.scopeCalls.push(body);
+    if (scope instanceof Error) throw scope;
+    if (typeof scope === "number") return { ok: false, status: scope, json: async () => ({}) };
+    const answers = {};
+    for (const [id, q] of Object.entries(body.questions)) answers[id] = q.type === "choice" ? scope : { type: "noul", noul: narrow };
+    return { ok: true, status: 200, json: async () => ({ answers }) };
+  };
+}
+
+async function setup(opts = {}, { key = KEY, scope = AUTH, narrow = 0 } = {}) {
   const h = await loadBackground({ page: fakePage(opts) });
+  if (key) await h.chrome.storage.local.set({ typesafeApiKey: key });
   assert.deepEqual(await h.share(1, "act"), { ok: true });
-  if (enable) assert.deepEqual(await h.message({ type: "setGrantsEnabled", enabled: true }), { ok: true });
+  mockJev(h, scope, narrow);
   return h;
 }
-const add = (h, g) => h.call("grant.add", { quote: QUOTE, origin: FORM, ...g });
+const add = (h, g) => h.call("grant.add", { quote: QUOTE, origin: FORM, userApproved: true, ...g });
 const dos = (h) => h.injected.filter((i) => i.spec?.mode === "do").length;
 const popups = (h) => h.windowsCreated.filter((w) => w.type === "popup").length;
 
-test("grant.add is refused (grants_disabled) until Kevin turns the popup toggle on; it defaults off", async () => {
-  const h = await setup({}, { enable: false });
-  assert.equal((await h.message({ type: "state", tabId: 1 })).grantsEnabled, false);
-  const r = await add(h, { op: "click", target: { text: "Place order" } });
-  assert.equal(r.error.code, "grants_disabled");
-  // not from the host, the options page, or a confirm window: only the popup can flip it
-  assert.equal(await h.message({ type: "setGrantsEnabled", enabled: true }, "options.html"), undefined);
-  assert.equal(await h.message({ type: "setGrantsEnabled", enabled: true }, "popup.html", { id: 5 }), undefined);
+test("0.10.1: no toggle; grant.add needs userApproved: true (else missing_user_approval) and --confirm", async () => {
+  const h = await setup();
+  assert.equal((await h.message({ type: "state", tabId: 1 })).grantsEnabled, undefined);
+  for (const userApproved of [undefined, false, "true", 1]) {
+    const r = await add(h, { op: "click", target: { text: "Place order" }, userApproved });
+    assert.equal(r.error.code, "missing_user_approval");
+  }
+  assert.equal(h.scopeCalls.length, 0, "Jev isn't asked without --user-approved");
   assert.equal((await h.call("grant.add", { op: "click" }, { confirm: false })).error.code, "bad_request", "grant.add needs --confirm");
+  // the old popup message does nothing now
+  assert.equal((await h.message({ type: "setGrantsEnabled", enabled: true })).ok, false);
+  const ok = await add(h, { op: "click", target: { text: "Place order" } });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.result.jevCheck.verdict, "authorized");
+  assert.equal(ok.result.grant.jev.verdict, "authorized");
+  assert.equal(h.scopeCalls.length, 1);
+});
+
+test("Jev scope check: the quote is the instruction; the grant (not the page) is what's judged", async () => {
+  const h = await setup();
+  await add(h, { op: "click", target: { text: "Place order" } });
+  const body = h.scopeCalls[0];
+  assert.equal(body.state.instruction, QUOTE);
+  assert.equal(body.state.grant.target, 'the element named "Place order"');
+  assert.equal(body.state.grant.site, FORM);
+  assert.deepEqual(Object.keys(body.questions.scope.criteria), ["authorized", "overreach", "unclear"]);
+  assert.match(body.questions.scope.instructions, /untrusted evidence/);
+  assert.equal(JSON.stringify(body).includes(KEY), false);
+  // a fill value is never shown to Jev
+  await add(h, { op: "fill", target: { selector: "#sn" }, value: "secret-store-name", quote: "type secret-store-name in the store name box" });
+  assert.equal(JSON.stringify(h.scopeCalls[1].state.grant).includes("secret-store-name"), false);
+});
+
+test("Jev refuses overreach / unclear (exit-9 codes), low confidence counts as unclear; nothing stored", async () => {
+  for (const [scope, code] of [
+    [{ type: "choice", choice: "overreach", confidence: 0.9 }, "grant_overreach"],
+    [{ type: "choice", choice: "unclear", confidence: 0.7 }, "grant_unclear"],
+    [{ type: "choice", choice: "authorized", confidence: 0.79 }, "grant_unclear"],
+  ]) {
+    const h = await setup({}, { scope });
+    const r = await add(h, { op: "click", target: { text: "Place order" }, maxAmount: 100 });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, code);
+    assert.match(r.error.message, /^Jev/);
+    assert.equal(r.error.jevCheck.verdict, code.slice(6));
+    assert.deepEqual((await h.call("grant.list")).result.grants, []);
+    assert.ok(h.posted.some((m) => m.event === "grant_refused" && m.verdict === code.slice(6) && m.quote === QUOTE));
+  }
+});
+
+test("Jev narrows the grant to the quote's cap / uses / time when it agrees (>= 0.8)", async () => {
+  const h = await setup({}, { narrow: 0.95 });
+  const r = await add(h, { op: "click", target: { text: "Place order" }, maxAmount: 100, uses: 5, ttlSec: 3600,
+    quote: "place the order once if it's under $50, within 10 minutes" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.result.grant.maxAmount, 50);
+  assert.equal(r.result.grant.uses, 1);
+  assert.equal(r.result.grant.usesLeft, 1);
+  assert.ok(r.result.grant.expiresInSec <= 600);
+  assert.deepEqual(r.result.jevCheck.narrowed.map((n) => n.field).sort(), ["maxAmount", "ttlSec", "uses"]);
+  const h2 = await setup({}, { narrow: 0.5 });
+  const r2 = await add(h2, { op: "click", target: { text: "Place order" }, maxAmount: 100, quote: "place it if it's under $50" });
+  assert.equal(r2.result.grant.maxAmount, 100, "Jev unsure about narrowing: unchanged");
+});
+
+test("fail closed: no Jev key (jev_not_configured), Jev down or erroring (jev_error); nothing granted", async () => {
+  const h = await setup({}, { key: null });
+  assert.equal((await add(h, { op: "click", target: { text: "Place order" } })).error.code, "jev_not_configured");
+  for (const scope of [new TypeError("fetch failed"), 503, { type: "choice", choice: "maybe" }]) {
+    const h2 = await setup({}, { scope });
+    const r = await add(h2, { op: "click", target: { text: "Place order" } });
+    assert.equal(r.error.code, "jev_error", JSON.stringify(r));
+    assert.deepEqual((await h2.call("grant.list")).result.grants, []);
+  }
+});
+
+test("eval can never be pre-approved", async () => {
+  const h = await setup();
+  const r = await add(h, { op: "eval", target: { selector: "body" } });
+  assert.equal(r.error.code, "bad_request");
+  assert.match(r.error.message, /eval/);
 });
 
 test("a matching grant skips the confirm once, reports confirmedBy, notifies, then is used up", async () => {
@@ -183,7 +275,7 @@ test("grants for denied origins are refused; tab-op grants cover open/navigate",
   assert.equal((await h.call("tab.open", { url: "https://bank.chase.com/" })).error.code, "origin_blocked");
 });
 
-test("Pause revokes every grant; turning the toggle off does too; revoke by id / all", async () => {
+test("Pause revokes every grant; revoke by id / all", async () => {
   let h = await setup();
   await add(h, { op: "click", target: { text: "Place order" } });
   await add(h, { op: "click", target: { text: "Delete store" } });
@@ -191,11 +283,6 @@ test("Pause revokes every grant; turning the toggle off does too; revoke by id /
   await h.message({ type: "pause", paused: false });
   assert.equal((await h.call("grant.list")).result.grants.length, 0);
   assert.ok(h.posted.some((m) => m.event === "grants_cleared" && m.reason === "paused"));
-
-  await add(h, { op: "click", target: { text: "Place order" } });
-  await h.message({ type: "setGrantsEnabled", enabled: false });
-  const l = (await h.call("grant.list")).result;
-  assert.equal(l.enabled, false); assert.equal(l.grants.length, 0);
 
   h = await setup();
   const a = await add(h, { op: "click", target: { text: "Place order" } });
@@ -211,10 +298,10 @@ test("Pause revokes every grant; turning the toggle off does too; revoke by id /
   assert.equal((await h.call("grant.revoke", { all: true })).result.revoked, 1);
 });
 
-test("grants live in storage.session (gone on browser restart); the toggle in storage.local", async () => {
+test("grants live in storage.session (gone on browser restart); nothing in storage.local", async () => {
   const h = await setup();
   await add(h, { op: "click", target: { text: "Place order" } });
   assert.equal(Object.keys(h.chrome.storage.session._data().grants).length, 1);
   assert.equal(h.chrome.storage.local._data().grants, undefined);
-  assert.equal(h.chrome.storage.local._data().grantsEnabled, true);
+  assert.equal(h.chrome.storage.local._data().grantsEnabled, undefined);
 });
