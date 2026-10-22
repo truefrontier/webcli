@@ -9,6 +9,7 @@ import {
 import { displayValue, gateReasons } from "./gate.js";
 import { pageAction, pageProbe } from "./page/actions.js";
 import { pageSnapshot } from "./page/snapshot.js";
+import { pageScroll } from "./page/scroll.js";
 import {
   JEV_STORAGE_KEYS, JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor, heuristicPick, heuristicRank, jevConfig,
   jevMode, locateBody, mergeReasons, parseClassify, parseLocate,
@@ -23,8 +24,9 @@ import {
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
 const AUDIT_MAX = 200;
+// page.scroll (0.10.2) is a read op: it moves a scroll position on a Read or Act tab, never prompts, never gated.
 const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-  "page.find", "page.probe", "grant.list"];
+  "page.find", "page.probe", "page.scroll", "grant.list"];
 const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
 const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
 const GRANT_WRITE_OPS = ["grant.add", "grant.revoke"];
@@ -335,6 +337,7 @@ async function dispatch(op, args, req = {}) {
     case "page.wait": return pageWait(args);
     case "page.find": return pageFind(args);
     case "page.probe": return pageProbeOp(args);
+    case "page.scroll": return pageScrollOp(args);
     case "grant.add": return grantAdd(args);
     case "grant.list": return grantList();
     case "grant.revoke": return grantRevoke(args);
@@ -419,7 +422,7 @@ async function screenshot(args) {
   const opts = format === "jpeg" ? { format, quality: Math.min(Math.max(1, Number(args.quality) || 80), 100) } : { format };
   let dataUrl;
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, opts);
+    dataUrl = await captureVisible(tab.windowId, opts);
   } catch (e) {
     const m = String(e?.message || e);
     if (/permission|activeTab|all_urls/i.test(m)) {
@@ -434,6 +437,81 @@ async function screenshot(args) {
   }
   return { tab: tab.id, url: tab.url, title: tab.title, origin, share: level, format,
     data: dataUrl.slice(dataUrl.indexOf(",") + 1) };
+}
+
+// captureVisibleTab allows about 2 calls a second (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND): space captures out
+// (0.10.2: `screenshot --full-page` takes one per viewport) and retry once after a second if Chrome still refuses.
+let lastCapture = 0;
+const CAPTURE_GAP_MS = () => (globalThis.__chromecliCaptureGapMs ?? 550);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function captureVisible(windowId, opts) {
+  const wait = lastCapture + CAPTURE_GAP_MS() - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCapture = Date.now();
+  try {
+    return await chrome.tabs.captureVisibleTab(windowId, opts);
+  } catch (e) {
+    if (!/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND|quota/i.test(String(e?.message || e))) throw e;
+    await sleep(1000);
+    lastCapture = Date.now();
+    return chrome.tabs.captureVisibleTab(windowId, opts);
+  }
+}
+
+// ---- scroll (0.10.2): a read op on Read or Act tabs (never Off / denied / paused: the same checks and errors as read).
+function scrollSpec(args) {
+  const spec = {};
+  const actions = ["measure", "to", "by", "into"].filter((k) => args[k] != null && args[k] !== false && args[k] !== "");
+  if (actions.length > 1) throw new OpError("bad_request", "Give at most one of measure, to, by, into.");
+  if (args.measure === true) spec.measure = true;
+  if (args.to != null) {
+    const t = args.to;
+    if (t === "top" || t === "bottom") spec.to = t;
+    else if (t && typeof t === "object" && Number.isFinite(Number(t.top)) && Number(t.top) >= 0) {
+      spec.to = { top: Number(t.top), ...(Number.isFinite(Number(t.left)) ? { left: Math.max(0, Number(t.left)) } : {}) };
+    } else throw new OpError("bad_request", "to must be top, bottom, or {top: px}.");
+  }
+  if (args.by != null) {
+    if (args.by === "page") spec.by = "page";
+    else if (Number.isFinite(Number(args.by)) && Number(args.by) > 0 && Number(args.by) <= 1e6) spec.by = Number(args.by);
+    else throw new OpError("bad_request", "by must be page or a pixel count (1..1000000).");
+  }
+  if (args.dir != null) {
+    if (args.dir !== 1 && args.dir !== -1) throw new OpError("bad_request", "dir must be 1 (down) or -1 (up).");
+    spec.dir = args.dir;
+  }
+  for (const k of ["into", "container"]) {
+    if (args[k] == null || args[k] === "") continue;
+    if (typeof args[k] !== "string" || args[k].length > 1000) throw new OpError("bad_target", `${k} must be a CSS selector (<= 1000 chars).`);
+    spec[k] = args[k];
+  }
+  if (args.path != null) {
+    const ok = args.path === "document" || (Array.isArray(args.path) && args.path.length > 0 && args.path.length <= 32 &&
+      args.path.every((seg) => Array.isArray(seg) && seg.length > 0 && seg.length <= 500 && seg.every((i) => Number.isInteger(i) && i >= 0)));
+    if (!ok) throw new OpError("bad_request", "path must be \"document\" or the target.path of an earlier scroll reply.");
+    spec.path = args.path;
+  }
+  if (args.overlap != null) spec.overlap = Math.min(Math.max(0, Number(args.overlap) || 0), 400);
+  spec.settleMs = Math.min(Math.max(0, Number(args.settleMs) || 0), 3000);
+  return spec;
+}
+
+async function pageScrollOp(args) {
+  const spec = scrollSpec(args);
+  const tab = await resolveTab(args);
+  const level = await access(tab); // not_shared / origin_blocked / policy_pending, like read
+  const origin = originOf(tab.url || "");
+  if (!(await hasHostPermission(origin))) {
+    throw new OpError("permission_needed", `chromecli has no host access to ${origin}.`, { tab: tab.id, origin });
+  }
+  const out = await inject(tab, origin, pageScroll, spec);
+  const st = await getPolicyState();
+  if (originOf(out.url) !== origin || denied(out.url, st.active)) {
+    await revoke(tab.id, "origin changed during scroll");
+    throw new OpError("not_shared", `Tab ${tab.id} navigated away during the scroll.`, { tab: tab.id });
+  }
+  const { ok, ...rest } = out;
+  return { tab: tab.id, origin, share: level, op: "scroll", ...rest };
 }
 
 async function historySearch(args) {

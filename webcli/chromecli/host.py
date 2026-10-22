@@ -135,6 +135,23 @@ def _summary(op: str, args: dict) -> str:
                     parts.append(f"{k}={digest(str(args[k]))}")
             if args.get("urlPrefix"):
                 parts.append(f"urlPrefix={redact_url(str(args['urlPrefix']))}")
+    if op == "page.scroll":  # 0.10.2
+        if args.get("measure"):
+            parts.append("measure=1")
+        to = args.get("to")
+        if isinstance(to, dict):
+            parts.append(f"to={redact_text(str(to.get('top')))[:12]}px")
+        elif to is not None:
+            parts.append(f"to={redact_text(str(to))[:8]}")
+        if args.get("by") is not None:
+            parts.append(f"by={redact_text(str(args['by']))[:12]}{' up' if args.get('dir') == -1 else ''}")
+        for k in ("into", "container"):
+            if args.get(k):
+                parts.append(f"{k}={redact_text(str(args[k]))[:120]}")
+        if args.get("path") is not None:
+            parts.append("path=1")
+    if op == "tabs.screenshot" and args.get("part"):  # one viewport of `screenshot --full-page`
+        parts.append(f"full_page_part={redact_text(str(args['part']))[:4]}")
     if op == "tabs.list" and args.get("all"):
         parts.append("all=1")
     if op == "page.probe" and args.get("op"):

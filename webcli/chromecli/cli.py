@@ -1,6 +1,6 @@
 """`chromecli`: read and act in the Chrome tabs Kevin shares, through the chromecli extension.
 
-Read: status, list, show, read, screenshot, history, wait, find (Jev or heuristics). Tab actions (P2): open, focus, close, navigate. Page actions
+Read: status, list, show, read, scroll, screenshot [--full-page], history, wait, find (Jev or heuristics). Tab actions (P2): open, focus, close, navigate. Page actions
 (P3): click, type, fill, select, press, eval (disabled). Pre-approvals (0.10.0, 0.10.1): grant add|list|revoke. Management:
 install-host, uninstall-host, doctor, agent-help.
 Every action previews unless --confirm; risky ones also wait for Kevin's Allow in Chrome.
@@ -127,6 +127,22 @@ NOTES = [
     "`screenshot` needs the tab to be the active tab of a focused window (else exit 4 `not_visible`); chromecli never "
     "focuses a tab itself. Without -o it writes ~/.webcli/chromecli/screenshots/tab<ID>-<YYYYmmdd-HHMMSS>.png and "
     "prints the path.",
+    "`scroll TAB [--by page|N|Npx] [--up] [--to top|bottom] [--into SELECTOR] [--container SELECTOR]` (0.10.2) scrolls "
+    "a Read or Act tab (a read op: no --confirm, never prompts; Off/denied/paused: the same exit 4 errors as read). "
+    "Default: one page down (clientHeight - 40px). Without --container it scrolls the largest visible scrollable "
+    "element (overflow-y auto/scroll, also in open shadow roots; it must cover >= 30% of the viewport to beat the "
+    "window), else the document. JSON: {tab, url, title, origin, share, op: scroll, target {description, kind "
+    "document|element, auto, inShadow}, scrollTop, scrollLeft, scrollHeight, clientHeight, atTop, atEnd, moved, "
+    "devicePixelRatio}.",
+    "Pages that render as images (read returns ~0 chars, e.g. e-sign viewers): `screenshot TAB --full-page [--pages N "
+    "(<= 50, default 50)] [--container SELECTOR] [--out DIR] [--jpeg]` scrolls the target to the top, captures a "
+    "viewport, scrolls by clientHeight - 40px, and repeats until the end or N shots (~2 captures/s: Chrome's limit), "
+    "then restores the scroll position (also on errors). Files: page-01.png, page-02.png ... in DIR, else a new "
+    "~/.webcli/chromecli/screenshots/tab<ID>-<YYYYmmdd-HHMMSS>-full/. JSON: {tab, url, title, origin, share, fullPage, "
+    "format, dir, files, count, atEnd, pages [{file, scrollTop, bytes}], target, scrollHeight, clientHeight, "
+    "overlapPx, devicePixelRatio, restored, restoredTo}. On an error the files already written stay; the error JSON "
+    "has partial {count, files (names)} and restored. No --stitch (no image library in webcli): read the pages in "
+    "order; neighbours overlap by ~40px.",
     "`read` JSON has url and title; text output starts with `Title:` and `URL:` lines, then a blank line.",
     "`wait` takes --expect-origin / --expect-url like the page actions (exit 5 url_mismatch when the tab is elsewhere).",
     "Not yet: which Google/site account is signed in to a tab (future work).",
@@ -149,7 +165,9 @@ WRITES = [
     "`install-host --confirm` writes ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/"
     f"{HOST_NAME}.json; `uninstall-host --confirm` removes it. Without --confirm both print the plan and write "
     "nothing.",
-    "`screenshot [-o PATH]` writes that image file (default ~/.webcli/chromecli/screenshots/).",
+    "`screenshot [-o PATH]` writes that image file (default ~/.webcli/chromecli/screenshots/); `screenshot --full-page "
+    "[--out DIR]` writes page-NN images into DIR (default a new folder there).",
+    "`scroll` and `screenshot --full-page` move the page's scroll position (a read op; --full-page puts it back).",
 ]
 TAB_FIELDS = ["id", "title", "url", "origin", "share", "active", "windowId", "botOpened"]
 HISTORY_FIELDS = ["title", "url", "lastVisit", "visitCount"]
@@ -274,35 +292,198 @@ def read_cmd(tab, active, as_, max_chars, elements, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
-@group.command("screenshot")
-@tab_options
-@click.option("-o", "--output", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
-              help="Image file to write (default ~/.webcli/chromecli/screenshots/tab<ID>-<time>.png).")
-@click.option("--jpeg", is_flag=True, help="JPEG instead of PNG.")
-@click.option("--quality", type=click.IntRange(1, 100), default=80, show_default=True, help="JPEG quality.")
-@agent_output_options(rows=False)
-def screenshot_cmd(tab, active, out, jpeg, quality, fmt, quiet) -> None:
-    """The visible part of a shared tab. The tab must be the active tab of a focused window (else exit 4
-    not_visible); nothing is focused for you."""
-    args = {**_target(tab, active), "format": "jpeg" if jpeg else "png", "quality": quality}
-    res = dict(bridge.request("tabs.screenshot", args, timeout=max(bridge.timeout_seconds(), 30)) or {})
-    data = res.pop("data", None)
+FULL_PAGE_MAX = 50
+FULL_PAGE_OVERLAP = 40  # px each viewport shares with the previous one
+FULL_PAGE_SETTLE_MS = 300  # after each scroll: two animation frames, this, one more frame
+
+
+def _write_image(path: Path, data) -> int:
     if not isinstance(data, str):
         die("The extension sent no image.", protocol.exit_code("script_error"), error="script_error")
     try:
         raw = base64.b64decode(data, validate=True)
     except ValueError:
         die("The extension sent an invalid image.", protocol.exit_code("script_error"), error="script_error")
-    if out is None:
-        ext = "jpg" if jpeg else "png"
-        out = config.home() / "chromecli" / "screenshots" / f"tab{res.get('tab')}-{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
-    path = out.expanduser()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
     except OSError as exc:
         die(f"Can't write {path}: {exc}", EXIT_USAGE)
-    emit_json({**res, "path": str(path.resolve()), "bytes": len(raw)})
+    return len(raw)
+
+
+@group.command("screenshot")
+@tab_options
+@click.option("-o", "--output", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
+              help="Image file to write (default ~/.webcli/chromecli/screenshots/tab<ID>-<time>.png).")
+@click.option("--jpeg", is_flag=True, help="JPEG instead of PNG.")
+@click.option("--quality", type=click.IntRange(1, 100), default=80, show_default=True, help="JPEG quality.")
+@click.option("--full-page", "full_page", is_flag=True,
+              help="Every viewport of the page, top to bottom (page-01.png, ...), scrolling the window or the inner "
+                   "scroll container; the scroll position is restored afterwards.")
+@click.option("--pages", type=click.IntRange(1, FULL_PAGE_MAX), default=FULL_PAGE_MAX, show_default=True,
+              help="With --full-page: at most this many viewports.")
+@click.option("--container", default=None, help="With --full-page: the scroll container (CSS selector; open shadow "
+              "roots searched). Default: auto-detected like `scroll`.")
+@click.option("--out", "out_dir", type=click.Path(path_type=Path, file_okay=False), default=None,
+              help="With --full-page: the folder to write into (default ~/.webcli/chromecli/screenshots/"
+                   "tab<ID>-<time>-full/).")
+@agent_output_options(rows=False)
+def screenshot_cmd(tab, active, out, jpeg, quality, full_page, pages, container, out_dir, fmt, quiet) -> None:
+    """The visible part of a shared tab (Share-read is enough), or with --full-page every viewport of it. The tab
+    must be the active tab of a focused window (else exit 4 not_visible); nothing is focused for you."""
+    target = _target(tab, active)
+    if not full_page:
+        given = [n for n, v in (("--out", out_dir), ("--container", container)) if v not in (None, "")]
+        if given or pages != FULL_PAGE_MAX:
+            die(f"{', '.join(given) or '--pages'} goes with --full-page.", EXIT_USAGE, error="bad_request")
+        args = {**target, "format": "jpeg" if jpeg else "png", "quality": quality}
+        res = dict(bridge.request("tabs.screenshot", args, timeout=max(bridge.timeout_seconds(), 30)) or {})
+        data = res.pop("data", None)
+        if out is None:
+            ext = "jpg" if jpeg else "png"
+            out = config.home() / "chromecli" / "screenshots" / f"tab{res.get('tab')}-{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
+        path = out.expanduser()
+        size = _write_image(path, data)
+        emit_json({**res, "path": str(path.resolve()), "bytes": size})
+        raise SystemExit(EXIT_OK)
+    if out is not None:
+        die("-o/--output is one file; with --full-page use --out DIR.", EXIT_USAGE, error="bad_request")
+    emit_json(_full_page(target, pages, container, out_dir, jpeg, quality))
+    raise SystemExit(EXIT_OK)
+
+
+class _Failed(Exception):
+    def __init__(self, reply: dict | None = None, down: str | None = None) -> None:
+        super().__init__(down or "failed")
+        self.reply, self.down = reply, down
+
+
+def _ask(op: str, args: dict, timeout: float | None = None) -> dict:
+    try:
+        reply = bridge.call(op, args, timeout=timeout)
+    except bridge.BridgeDown as exc:
+        raise _Failed(down=str(exc)) from None
+    if not reply.get("ok"):
+        raise _Failed(reply)
+    return dict(reply.get("result") or {})
+
+
+def _full_page(target: dict, pages: int, container: str | None, out_dir: Path | None, jpeg: bool, quality: int) -> dict:
+    """Save the scroll position, scroll the target to the top, then capture a viewport and scroll by clientHeight - 40px
+    until the end (or --pages). The original position is restored in every case (errors and Ctrl-C included)."""
+    ext = "jpg" if jpeg else "png"
+    try:
+        first = _ask("page.scroll", {**target, "measure": True, **({"container": container} if container else {})})
+    except _Failed as f:
+        bridge.die_down(f.down) if f.down else bridge.die_reply(f.reply)
+    tab, tgt = first.get("tab"), dict(first.get("target") or {})
+    path = tgt.pop("path", None)
+    if path is None:
+        die("The extension didn't identify the scroll target.", protocol.exit_code("script_error"), error="script_error")
+    original = {"top": first.get("scrollTop") or 0, "left": first.get("scrollLeft") or 0}
+    folder = (out_dir.expanduser() if out_dir else
+              config.home() / "chromecli" / "screenshots" / f"tab{tab}-{time.strftime('%Y%m%d-%H%M%S')}-full")
+    shots: list[dict] = []
+    at_end = False
+    meta: dict = {}
+    failure: _Failed | None = None
+
+    def restore() -> dict:
+        try:
+            r = _ask("page.scroll", {"tab": tab, "path": path, "to": original}, timeout=min(bridge.timeout_seconds(), 10))
+            return {"restored": abs((r.get("scrollTop") or 0) - original["top"]) <= 2, "restoredTo": original}
+        except _Failed as f:
+            err = (f.reply or {}).get("error") or {}
+            return {"restored": False, "restoredTo": original,
+                    "restoreError": err.get("code") or ("bridge_down" if f.down else "error")}
+
+    try:
+        st = _ask("page.scroll", {"tab": tab, "path": path, "to": "top", "settleMs": FULL_PAGE_SETTLE_MS})
+        for i in range(1, pages + 1):
+            res = _ask("tabs.screenshot", {"tab": tab, "format": "jpeg" if jpeg else "png", "quality": quality, "part": i},
+                       timeout=max(bridge.timeout_seconds(), 30))
+            data = res.pop("data", None)
+            meta = meta or res
+            file = folder / f"page-{i:02d}.{ext}"
+            size = _write_image(file, data)
+            shots.append({"file": str(file.resolve()), "scrollTop": st.get("scrollTop"), "bytes": size})
+            if st.get("atEnd"):
+                at_end = True
+                break
+            if i == pages:
+                break
+            step = max(1, int(st.get("clientHeight") or 0) - FULL_PAGE_OVERLAP)
+            nxt = _ask("page.scroll", {"tab": tab, "path": path, "by": step, "settleMs": FULL_PAGE_SETTLE_MS})
+            if (nxt.get("moved") or 0) <= 0:  # it didn't move: that's the end, whatever atEnd says
+                at_end = True
+                break
+            st = nxt
+    except _Failed as f:
+        failure = f
+    finally:
+        back = restore()
+    if failure is not None:
+        # File names only: error output is redacted, and a whole path looks like a token to the redactor. The
+        # folder is --out DIR when given (else the default per-run folder).
+        partial = {"partial": {"count": len(shots), "files": [Path(s["file"]).name for s in shots]}, **back}
+        if failure.down:
+            die(failure.down, protocol.exit_code("bridge_down"), error="bridge_down", **partial)
+        err = dict((failure.reply or {}).get("error") or {})
+        code = str(err.pop("code", None) or "script_error")
+        msg = str(err.pop("message", None) or code)
+        hint = err.pop("hint", None) or protocol.ERROR_HINTS.get(code)
+        die(msg, protocol.exit_code(code), hint, error=code, **{k: v for k, v in err.items() if k != "exit"}, **partial)
+    return {"tab": tab, "url": meta.get("url"), "title": meta.get("title"), "origin": meta.get("origin") or first.get("origin"),
+            "share": first.get("share"), "fullPage": True, "format": "jpeg" if jpeg else "png",
+            "dir": str(folder.resolve()), "files": [s["file"] for s in shots], "count": len(shots), "atEnd": at_end,
+            "pages": shots, "target": tgt, "scrollHeight": st.get("scrollHeight"), "clientHeight": st.get("clientHeight"),
+            "overlapPx": FULL_PAGE_OVERLAP, "devicePixelRatio": first.get("devicePixelRatio"), **back}
+
+
+def _by(value: str | None) -> str | int | None:
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v == "page":
+        return "page"
+    v = v[:-2] if v.endswith("px") else v
+    if not v.isdigit() or not 0 < int(v) <= 1_000_000:
+        die(f"--by {value!r} isn't page or a pixel count like 600.", EXIT_USAGE, error="bad_request")
+    return int(v)
+
+
+@group.command("scroll")
+@tab_options
+@click.option("--by", "by", default=None, help="page (the target's height minus 40px; the default) or N pixels.")
+@click.option("--up", is_flag=True, help="Scroll up instead of down (with --by).")
+@click.option("--to", "to", type=click.Choice(["top", "bottom"]), default=None, help="Jump to the top or the bottom.")
+@click.option("--into", default=None, help="Scroll this element (CSS selector; open shadow roots searched) into view.")
+@click.option("--container", default=None, help="The scroll container (CSS selector). Default: the largest visible "
+              "scrollable element (inner viewers like signNow), else the window.")
+@agent_output_options(rows=False)
+def scroll_cmd(tab, active, by, up, to, into, container, fmt, quiet) -> None:
+    """Scroll a shared tab (Share-read is enough; never prompts). JSON: {tab, origin, share, op, url, title, target
+    {description, kind, auto, inShadow}, scrollTop, scrollLeft, scrollHeight, clientHeight, atTop, atEnd, moved}."""
+    target = _target(tab, active)
+    actions = [n for n, v in (("--by", by), ("--to", to), ("--into", into)) if v not in (None, "")]
+    if len(actions) > 1:
+        die(f"Give one of --by, --to, --into (not {' and '.join(actions)}).", EXIT_USAGE, error="bad_request")
+    if up and (to or into):
+        die("--up goes with --by (or no action, i.e. one page up).", EXIT_USAGE, error="bad_request")
+    args = {**target, "settleMs": 150, **({"container": container} if container else {})}
+    if to:
+        args["to"] = to
+    elif into:
+        args["into"] = into
+    else:
+        args["by"] = _by(by) or "page"
+        if up:
+            args["dir"] = -1
+    res = dict(bridge.request("page.scroll", args) or {})
+    if isinstance(res.get("target"), dict):
+        res["target"] = {k: v for k, v in res["target"].items() if k != "path"}
+    emit_json(res)
     raise SystemExit(EXIT_OK)
 
 
