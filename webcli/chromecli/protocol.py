@@ -72,7 +72,7 @@ ERROR_HINTS: dict[str, str] = {
     "ambiguous_target": "Narrow the target: a more specific --selector, a --ref from `read --elements`, or --role.",
     "element_not_found": "Refs die on navigation; run `chromecli read TAB --elements` again.",
     "jev_not_configured": "Kevin: open chromecli's options (popup → Jev → Options) and save a TypeSafe API key, or use --jev auto.",
-    "jev_error": "Jev failed. --jev auto falls back to heuristics (with stricter gating).",
+    "jev_error": "Jev failed. --jev auto falls back to heuristics (stricter gating in bot-opened tabs).",
 }
 
 

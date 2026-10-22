@@ -1,4 +1,4 @@
-import { DEFAULT_FLOOR, DEFAULT_MODEL, JEV_PERMISSION } from "./jev.js";
+import { DEFAULT_FLOOR, DEFAULT_MODEL, DEFAULT_RISK_FLOOR, JEV_PERMISSION } from "./jev.js";
 
 const $ = (id) => document.getElementById(id);
 let hasKey = false;
@@ -21,10 +21,11 @@ function renderState() {
 async function load() {
   $("version").textContent = `v${chrome.runtime.getManifest().version}`;
   // Read presence only; the saved key is never put back into the page.
-  const st = await chrome.storage.local.get(["typesafeApiKey", "jevModel", "jevFloor"]);
+  const st = await chrome.storage.local.get(["typesafeApiKey", "jevModel", "jevFloor", "jevRiskFloor"]);
   hasKey = typeof st.typesafeApiKey === "string" && !!st.typesafeApiKey.trim();
   $("model").value = st.jevModel || DEFAULT_MODEL;
   $("floor").value = st.jevFloor ?? DEFAULT_FLOOR;
+  $("risk-floor").value = st.jevRiskFloor ?? DEFAULT_RISK_FLOOR;
   renderState();
 }
 
@@ -33,13 +34,15 @@ $("form").addEventListener("submit", async (e) => {
   const key = $("key").value.trim();
   const model = $("model").value.trim() || DEFAULT_MODEL;
   const floor = Number($("floor").value);
+  const riskFloor = Number($("risk-floor").value);
   if (!(floor >= 0.5 && floor <= 0.99)) { msg("Confidence floor must be between 0.5 and 0.99.", true); return; }
+  if (!(riskFloor >= 0.5 && riskFloor <= 0.95)) { msg("Risk floor must be between 0.5 and 0.95.", true); return; }
   if (key || hasKey) {
     // Straight from the click (a user gesture): ask for the one host Jev needs.
     const granted = await chrome.permissions.request({ origins: [JEV_PERMISSION] }).catch(() => false);
     if (!granted) { msg("Chrome didn't grant access to api.typesafe.ai; nothing saved.", true); return; }
   }
-  const data = { jevModel: model, jevFloor: floor };
+  const data = { jevModel: model, jevFloor: floor, jevRiskFloor: riskFloor };
   if (key) data.typesafeApiKey = key;
   await chrome.storage.local.set(data);
   $("key").value = "";

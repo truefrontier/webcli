@@ -83,6 +83,42 @@ chromecli agent-help [--format json]
 - The host and CLI are untrusted callers; the extension enforces everything. Popup messages are accepted only from the
   extension's own pages, never from a tab.
 
+### Tabs Kevin Share-act'd vs bot-opened tabs (0.9.1)
+
+**What changed and why.** Kevin, after using 0.9.0 live: "if I give it Act permissions I don't want to be prompted on
+every click." There were two causes. First, a plain click on dev.shopify.com was gated `jev:safe`: Jev said safe, but
+below the 0.9 floor. Second, a same-origin navigate in an act-shared tab was gated `origin_not_allowlisted`.
+
+Kevin's own Share-act is now treated as consent to ordinary clicks and same-origin moves in that tab. Two things
+still prompt there: the risky actions the heuristics recognise, and actions Jev is fairly sure are risky. Tabs an agent
+opened keep the strict 0.9.0 rules, because nobody looked at them.
+
+The heuristic gates in `gate.js` and the deny list are unchanged.
+
+Tab kinds:
+- **act**: Kevin set Act in the popup himself. The result shows `tabKind: "act"`.
+- **bot**: opened by an agent with `open`, or moved cross-origin by `navigate`, even when it was auto-shared through
+  `act_allow`. The result shows `tabKind: "bot"`. The bot mark wins if a tab is both.
+
+| Tab kind | Op | Prompts (in-browser confirm) when |
+|---|---|---|
+| any | any | Denied origin: never prompts, always exit 4 `origin_blocked`. Paused: exit 4. Heuristic gates (`gate.js`, unchanged): submit-like click, Enter/Space on such a button, Enter in a form field, typing into password / `cc-*` / credential / card-like fields, `eval` (disabled, exit 7). |
+| act (Kevin) | click, press | Heuristic gates, **or** Jev's choice is purchase / destructive / send_publish / credential with confidence ≥ the **risk floor** (default 0.6). safe, submit, uncertain, or a low-confidence risky choice: no Jev gate. `jevInfo` reports Jev's answer either way. |
+| act (Kevin) | click/press, Jev failed (`--jev auto`) | Heuristic gates only (no stricter fallback). |
+| act (Kevin) | type, fill, select | Heuristic gates only (Jev doesn't classify these). |
+| act (Kevin) | navigate, same origin | Never (deny list still applies). |
+| act (Kevin) | navigate, other origin | Destination outside `read_allow ∪ act_allow`. |
+| bot | click, press | Heuristic gates, **or** anything Jev didn't call safe with ≥ the confidence floor (default 0.9): `jev:<choice>`. |
+| bot | click/press, Jev failed (`--jev auto`) | Heuristic gates **plus** `jev_unavailable` on every button, submit input, or element in a form. |
+| bot | type, fill, select | Heuristic gates only. |
+| bot | navigate (same or other origin) | Destination outside `read_allow ∪ act_allow`. |
+| — | open | Destination outside `read_allow ∪ act_allow`. |
+| — | close, focus | Never (needs Share-act or a bot-opened tab). |
+| any | `--jev on` | No key: exit 7 `jev_not_configured`. Jev fails: exit 5 `jev_error`. Nothing is dispatched in either case. |
+| any | no Jev key, or `--jev off` | Heuristic gates only (plus the navigate/open rules above). |
+
+Jev never removes a heuristic gate on any tab kind.
+
 ## Acting (P2, P3)
 
 - **Two confirm layers.** (a) CLI: without `--confirm` every action prints `{"dryRun": true, ...}` and sends nothing to
@@ -100,7 +136,8 @@ chromecli agent-help [--format json]
   `\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy)\b`);
   Enter (or Space) on such a button; `press Enter` in a form field; `type`/`fill`/`select` into `input[type=password]`,
   `autocomplete` `cc-*` / `current-password` / `new-password` / `one-time-code`, or name/id/label matching
-  `card|cvv|cvc|iban|routing|ssn`; `open`/`navigate` to an origin outside `read_allow ∪ act_allow`. Unknown ops fail
+  `card|cvv|cvc|iban|routing|ssn`; `open`/`navigate` to an origin outside `read_allow ∪ act_allow` (since 0.9.1 a
+  same-origin `navigate` in a tab Kevin Share-act'd isn't gated; see the table below). Unknown ops fail
   closed. Reasons: `submit_button`, `submit_input`, `submit_word:<w>`, `enter_in_form`, `password_field`,
   `payment_field`, `credential_field`, `sensitive_name`, `origin_not_allowlisted`, `eval`.
 - **Bot-opened tabs** (`open`, cross-origin `navigate`) are marked `botOpened`: auto Share-act if the origin is in
@@ -133,7 +170,8 @@ Jev is TypeSafe's judgment API (`POST https://api.typesafe.ai/v1/systemone`, Bea
 everything works as in P3, with heuristics for `find`/`--find`.
 
 - **Key**: Kevin pastes it in the extension's options (popup → Jev → Options, or `chrome://extensions` → chromecli →
-  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9). Saving
+  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9; bot-opened tabs), risk floor (default 0.6, 0.5-0.95;
+  tabs Kevin Share-act'd). Saving
   asks Chrome for the optional host permission `https://api.typesafe.ai/*`. The key lives in
   `chrome.storage.local.typesafeApiKey` and is used only by the service worker's `fetch` to TypeSafe; it is never sent
   to the host, the CLI, logs, or pages, and the options page never shows it again (Remove key / Test key only).
@@ -145,14 +183,18 @@ everything works as in P3, with heuristics for `find`/`--find`.
   It picks the best when it is ≥ the floor and ≥ 0.2 above the runner-up; otherwise `--find` exits 3
   `ambiguous_target` with the candidates (use one with `--ref`). Rows say `source: jev` or `heuristic`.
 - **Classify**: for `click` and `press`, Jev answers one `choice` question (safe / submit / purchase / destructive /
-  send_publish / credential / uncertain). Anything but a confident `safe` adds the gate `jev:<choice>`. Jev only adds
-  gates; the heuristic gates from `gate.js` always stay.
+  send_publish / credential / uncertain). In bot-opened tabs, anything but `safe` at ≥ the confidence floor adds
+  `jev:<choice>`. In tabs Kevin Share-act'd, only purchase / destructive / send_publish / credential at ≥ the risk floor
+  adds `jev:<choice>`. The result's `jevInfo` (`{reason, choice, confidence, gated, policy}`) shows Jev's answer even
+  when it isn't a gate. Jev only adds gates; the heuristic gates from `gate.js` always stay.
 - **Modes**: `--jev auto` (default) uses Jev when a key is set; no key means heuristics and P3 gating. If a Jev call
-  fails (network, HTTP error, malformed or incomplete answer) auto falls back to heuristics with *stricter* gating
-  (`jev_unavailable`: every button, submit input, or element in a form asks Kevin) and reports `jev.used: false`;
+  fails (network, HTTP error, malformed or incomplete answer), auto falls back to heuristics and reports
+  `jev.used: false`. In bot-opened tabs the fallback gates more strictly (`jev_unavailable`: every button, submit input,
+  or element in a form asks Kevin); in tabs Kevin Share-act'd it is heuristics only;
   `find` also warns on stderr. `--jev on`: exit 7 `jev_not_configured` without a key, exit 5 `jev_error` on failure,
   nothing dispatched. `--jev off`: never calls Jev.
-- **Audit**: the host logs `intent=<N chars sha256:8>` / `target=find:<...>`, `jev=MODE`, and `jev_used=`; never the
+- **Audit**: the host logs `intent=<N chars sha256:8>` / `target=find:<...>`, `jev=MODE`, `jev_used=`, `tab_kind=act|bot`, and
+  `jev_info=<choice>:gate|info`; never the
   key, never the intent text.
 
 ## Config

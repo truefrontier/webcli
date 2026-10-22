@@ -94,3 +94,24 @@ def test_protocol_find_is_read_only():
     assert protocol.validate_request({"v": 1, "op": "page.find"})["op"] == "page.find"
     assert "page.find" not in protocol.MUTATING_OPS
     assert protocol.exit_code("jev_not_configured") == 7 and protocol.exit_code("jev_error") == 5
+
+
+def test_091_navigate_preview_and_notes(ext):
+    ext(ok_ext).start()
+    r = run("navigate", "7", "https://example.org/x")
+    plan = json.loads(r.stdout)
+    assert plan["browserConfirm"] is True and "same-origin move in a tab Kevin Share-act'd" in plan["note"]
+    notes = " ".join(json.loads(run("agent-help", "--format", "json").stdout)["notes"])
+    for w in ("risk floor", "tabKind", "jevInfo", "bot tabs gate more strictly", "same-origin navigate"):
+        assert w in notes, w
+
+
+def test_091_audit_line_has_tab_kind_and_jev_info(ext, home):
+    def res(req):
+        out = ok_ext(req)
+        out["result"].update(tabKind="act", jevInfo={"choice": "safe", "confidence": 0.72, "gated": False})
+        return out
+    ext(res).start()
+    assert run("click", "--tab", "7", "--selector", "#plain", "--expect-origin", FORM, "--confirm").exit_code == 0
+    log = (home / "logs" / "chromecli.log").read_text()
+    assert "tab_kind=act" in log and "jev_info=safe:info" in log
