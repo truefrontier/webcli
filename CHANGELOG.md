@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.11.4 (2026-10-22)
+
+Hardening after 0.11.3: when `config.toml` gained `deny_except` and `frame_act_allow`, the still-running 0.10.2
+chromecli-host refused them (`configError` "[chromecli] has unknown keys") and every command but `status` exited 7
+until the extension was reloaded.
+
+### Changed
+
+- **Unknown `[chromecli]` keys are warnings, not errors.** They're ignored (the policy is built from the known keys
+  only, so ignoring one never loosens anything), logged by the host (`event=config_warning`, key names only, never
+  values) and listed in `chromecli status` as `configWarnings` (also in `chromecli doctor`). A known key with an
+  invalid value is still fatal (exit 7 `config_error`).
+
+### Added
+
+- **Version mismatch says what to do.** `chromecli status` (and `doctor`) report `versions` (`cli`, `host`,
+  `extension`) and `versionMismatch`; when they differ, a hint (also on stderr in table/text format) says "reload the
+  chromecli extension in chrome://extensions". Every exit-7 error says the same when the running host's version
+  differs from the installed CLI's or the extension's: 0.11.4+ hosts put `hostVersion` / `extVersion` in
+  `config_error`; for older hosts the CLI asks `status`.
+- Tests: `tests/test_chromecli_config_warnings.py` (warnings, never-loosening, invalid known keys stay fatal, no
+  values in warnings, the host's log and status, the reload wording for status and exit 7, including an older host)
+  and a node test that a pushed policy's unknown keys are dropped by the extension.
+
 ## 0.11.3 (2026-10-22)
 
 Two narrow, Kevin-accepted loosenings in chromecli: one URL shape through a path deny (the Shopify OAuth install

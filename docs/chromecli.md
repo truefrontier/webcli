@@ -32,7 +32,7 @@ stdin. No CDP, no TCP port, no launchd.
 ## Commands
 
 ```sh
-chromecli status                    # connected, ext version + ID, paused, shares, policy (exit 5 bridge_down if not)
+chromecli status                    # connected, ext version + ID, paused, shares, policy, versions, configWarnings (exit 5 bridge_down if not)
 chromecli list [--active] [--all]   # shared tabs: id,title,url,origin,share,active,windowId,botOpened
                                     #   --all: + unshared tabs as metadata (share null); denied origins never
 chromecli show TAB | --active
@@ -454,7 +454,10 @@ frame_act_allow = []      # 0.11.3: exact https origins whose iframes can be act
 ```
 
 Patterns: `host`, `*.host` (includes the bare host), `scheme://host[:port]`, `host/path` (path prefix),
-`path:/prefix` (any origin whose path contains `/prefix`). Invalid config: every op but `status` exits 7.
+`path:/prefix` (any origin whose path contains `/prefix`). A known key with an invalid value: every op but `status` exits 7
+(`configError` in `status`). An unknown key (0.11.4; a typo, or a key from a newer chromecli) is ignored with a warning:
+the host logs `event=config_warning` and `status` lists it in `configWarnings` (key names only, never values).
+Ignoring is always safe: the policy is built from the known keys only, so an unknown key never loosens anything.
 Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME`.
 
 ## Exit codes
@@ -472,6 +475,12 @@ pre-approval). jev_error is 5. 2 also covers missing_user_approval (0.10.1).
    Check the ID shown is `ileggcomhbnofnapippaanhimdhchhci`.
 3. `chromecli install-host` (preview), then `chromecli install-host --confirm`.
 4. Reload the extension (circular arrow on its card), then `chromecli status`.
+
+**After an upgrade** (0.11.4): Chrome keeps the old `chromecli-host` running (it was started with the extension), so
+the host and the extension can be older than the CLI `pipx` just installed. `chromecli status` then carries
+`versions` (`cli`, `host`, `extension`), `versionMismatch: true` and a hint, and every exit-7 error adds the same
+words: reload the chromecli extension in chrome://extensions (that restarts the host on the installed version).
+Hosts before 0.11.4 also refused unknown `[chromecli]` keys (exit 7 "has unknown keys"); the reload fixes that too.
 
 ## Test fixtures
 

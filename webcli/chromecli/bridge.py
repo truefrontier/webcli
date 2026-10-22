@@ -80,12 +80,53 @@ def call(op: str, args: dict | None = None, *, timeout: float | None = None, con
     return reply if isinstance(reply, dict) else protocol.reply_error(None, "bad_request", "Malformed reply.")
 
 
+RELOAD = "reload the chromecli extension in chrome://extensions"
+
+
+def version_check(host_version: Any, ext_version: Any) -> dict:
+    """{"versions": {cli, host, extension}, "versionMismatch": bool, "reloadHint"?}. A running chromecli-host keeps the
+    code it started with: after an upgrade it (and the extension) can be older than the installed CLI until the
+    extension is reloaded, which restarts the host."""
+    versions = {"cli": __version__, "host": host_version or None, "extension": ext_version or None}
+    known = [v for v in versions.values() if v]
+    out: dict = {"versions": versions, "versionMismatch": len(set(known)) > 1}
+    if out["versionMismatch"]:
+        out["reloadHint"] = (f"Versions differ (CLI {versions['cli']}, host {versions['host'] or '?'}, extension "
+                             f"{versions['extension'] or '?'}): {RELOAD} (that restarts chromecli-host on the "
+                             f"installed version), then run `chromecli status`.")
+    return out
+
+
+def _versions_for_error(err: dict) -> dict:
+    """The version check for an exit-7 reply: the reply's own hostVersion/extVersion (0.11.4+ hosts), else a status
+    call (status works even while the host refuses everything else)."""
+    if err.get("hostVersion"):
+        return version_check(err.get("hostVersion"), err.get("extVersion"))
+    try:
+        reply = call("status", timeout=3)
+    except BridgeDown:
+        return {}
+    res = reply.get("result") if reply.get("ok") and isinstance(reply.get("result"), dict) else {}
+    host = res.get("host") if isinstance(res.get("host"), dict) else {}
+    return version_check(host.get("version"), res.get("extVersion")) if host.get("version") else {}
+
+
 def die_reply(reply: dict) -> None:
     err = reply.get("error") if isinstance(reply.get("error"), dict) else {}
     code = str(err.get("code") or "script_error")
-    extra = {k: v for k, v in err.items() if k not in ("code", "message", "hint", "exit")}
-    die(str(err.get("message") or code), protocol.exit_code(code), err.get("hint") or protocol.ERROR_HINTS.get(code),
-        error=code, **extra)
+    exit_code = protocol.exit_code(code)
+    extra = {k: v for k, v in err.items() if k not in ("code", "message", "hint", "exit", "hostVersion", "extVersion")}
+    message = str(err.get("message") or code)
+    hint = err.get("hint") or protocol.ERROR_HINTS.get(code)
+    if exit_code == 7:
+        check = _versions_for_error(err)
+        if check.get("versionMismatch"):
+            # Say it plainly: a stale host (e.g. one that predates a new [chromecli] key) is fixed by a reload.
+            message = f"{message} The running chromecli-host is {check['versions']['host']} but the installed CLI is " \
+                      f"{__version__}: {RELOAD}."
+            hint = f"{check['reloadHint']} {hint or ''}".strip()
+            extra.update(versions=check["versions"], versionMismatch=True)
+    die(message, exit_code, hint, error=code, **extra)
 
 
 def die_down(message: str) -> None:

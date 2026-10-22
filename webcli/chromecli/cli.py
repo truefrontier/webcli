@@ -155,7 +155,9 @@ NOTES = [
     f"Config: [{CONFIG_SECTION}] in ~/.webcli/config.toml: implicit_active (\"off\"|\"read\"), history (bool), "
     "confirm_timeout, read_allow, act_allow, deny, deny_except (0.11.3: https URL patterns), frame_act_allow (0.11.3: "
     "exact https origins, no wildcards). Changes that widen access wait for Kevin to Accept in the popup "
-    "(ops on affected origins exit 4 `policy_pending`); tightening applies at once. Invalid config: exit 7.",
+    "(ops on affected origins exit 4 `policy_pending`); tightening applies at once. Invalid config: exit 7; unknown keys are ignored "
+    "(status.configWarnings). status.versionMismatch / an exit-7 hint saying reload the chromecli extension in "
+    "chrome://extensions: the running host is stale; ask Kevin to reload it.",
     "TAB is Chrome's integer tab id (from `list`); `--active` means the active tab of the last-focused window.",
     "`screenshot` needs the tab to be the active tab of a focused window (else exit 4 `not_visible`); chromecli never "
     "focuses a tab itself. Without -o it writes ~/.webcli/chromecli/screenshots/tab<ID>-<YYYYmmdd-HHMMSS>.png and "
@@ -255,7 +257,9 @@ def group() -> None:
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
-    """Bridge health: socket, host, extension version + ID, paused, shares, policy. Exit 5 when not connected."""
+    """Bridge health: socket, host, extension version + ID, paused, shares, policy, versions (CLI/host/extension;
+    versionMismatch + a reload hint when they differ), configWarnings (ignored unknown keys). Exit 5 when not
+    connected."""
     try:
         reply = bridge.call("status", timeout=min(bridge.timeout_seconds(), 10))
     except bridge.BridgeDown as exc:
@@ -265,13 +269,22 @@ def status_cmd(fmt, quiet) -> None:
     if not reply.get("ok"):
         bridge.die_reply(reply)
     res = dict(reply.get("result") or {})
+    host_info = res.get("host") if isinstance(res.get("host"), dict) else {}
+    check = bridge.version_check(host_info.get("version"), res.get("extVersion"))
     data = {"connected": True, "extensionIdMatches": res.get("extensionId") == EXTENSION_ID,
-            "expectedExtensionId": EXTENSION_ID, **res}
+            "expectedExtensionId": EXTENSION_ID, **res, "versions": check["versions"],
+            "versionMismatch": check["versionMismatch"],
+            # Unknown [chromecli] keys the host ignored (hosts before 0.11.4 don't report them: they refuse instead).
+            "configWarnings": list(host_info.get("configWarnings") or [])}
+    if check["versionMismatch"]:
+        data["hint"] = check["reloadHint"]
     if resolve_format(fmt) == "json":
         emit_json(data)
     else:
         flat = {k: (v if not isinstance(v, (dict, list)) else output.truncate(str(v), 200)) for k, v in data.items()}
         kv_table("chromecli status", flat, resolve_format(fmt))
+        if check["versionMismatch"]:
+            click.echo(check["reloadHint"], err=True)  # one unwrapped line, not only a table cell
     raise SystemExit(EXIT_OK)
 
 

@@ -336,16 +336,34 @@ def _hint() -> str:
             "scheme://host[:port], host/path, path:/prefix; deny_except: https://exact.host/path/with/*/segments; frame_act_allow: https://exact.host).")
 
 
+def unknown_key_warnings(section: Any) -> list[str]:
+    """One warning per key of a [chromecli] table that this chromecli doesn't know (key names only, never values)."""
+    if not isinstance(section, dict):
+        return []
+    unknown = sorted(str(k) for k in section if k not in KEYS)
+    return [f"[{CONFIG_SECTION}] {k[:60]!r} is not a key this chromecli knows; ignored (a typo, or a key from a newer "
+            f"chromecli: then reload the chromecli extension in chrome://extensions so the host runs the installed "
+            f"version)." for k in unknown]
+
+
+def parse_checked(section: Any) -> tuple[dict, list[str]]:
+    """(policy, warnings) for a [chromecli] table. Unknown keys are warnings and ignored (the policy is built from the
+    known keys only, so an unknown key can never loosen anything); a known key with an invalid value -> ConfigError."""
+    if section is None:
+        return default_policy(), []
+    if not isinstance(section, dict):
+        raise ConfigError(f"[{CONFIG_SECTION}] must be a table.", hint=_hint())
+    return parse(section), unknown_key_warnings(section)
+
+
 def parse(section: Any) -> dict:
-    """The policy for a [chromecli] table (None/absent = defaults). Invalid -> ConfigError (exit 7)."""
+    """The policy for a [chromecli] table (None/absent = defaults). Unknown keys are ignored (see parse_checked for
+    the warnings); a known key with an invalid value -> ConfigError (exit 7)."""
     if section is None:
         return default_policy()
     if not isinstance(section, dict):
         raise ConfigError(f"[{CONFIG_SECTION}] must be a table.", hint=_hint())
-    unknown = sorted(set(section) - set(KEYS))
-    if unknown:
-        raise ConfigError(f"[{CONFIG_SECTION}] has unknown keys: {', '.join(unknown)}.", hint=_hint())
-    merged = {**DEFAULTS, **section}
+    merged = {**DEFAULTS, **{k: v for k, v in section.items() if k in KEYS}}
     if merged["implicit_active"] not in ("off", "read"):
         raise ConfigError(f'[{CONFIG_SECTION}] implicit_active must be "off" or "read".', hint=_hint())
     if not isinstance(merged["history"], bool):
@@ -367,6 +385,13 @@ def load() -> dict:
     from webcli.core import config
 
     return parse(config.load().get(CONFIG_SECTION))
+
+
+def load_checked() -> tuple[dict, list[str]]:
+    """(policy, warnings) from ~/.webcli/config.toml ([chromecli]); ConfigError when a known key is invalid."""
+    from webcli.core import config
+
+    return parse_checked(config.load().get(CONFIG_SECTION))
 
 
 def loosening(old: dict, new: dict) -> list[dict]:

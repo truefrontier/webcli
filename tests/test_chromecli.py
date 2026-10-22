@@ -404,9 +404,11 @@ def test_tighten_and_config_validation(home):
     t = policy.tighten(old, new)
     assert "*.chase.com" in t["deny"] and "*.mybank.com" in t["deny"] and t["read_allow"] == []
     for bad in ({"implicit_active": "act"}, {"history": "yes"}, {"deny": ["chrome://*"]}, {"read_allow": ["path:/x"]},
-                {"confirm_timeout": 5}, {"nope": 1}, {"act_allow": "https://a.com"}):
+                {"confirm_timeout": 5}, {"act_allow": "https://a.com"}):
         with pytest.raises(ConfigError):
             policy.parse(bad)
+    # 0.11.4: an unknown key is a warning and ignored, not an error (tests/test_chromecli_config_warnings.py)
+    assert policy.parse_checked({"nope": 1}) == (policy.default_policy(), policy.unknown_key_warnings({"nope": 1}))
     assert policy.parse(None)["hash"] == policy.default_policy()["hash"]
     config.ensure_home()
     (home / "config.toml").write_text('[chromecli]\nread_allow = ["https://Docs.Python.org"]\n')
