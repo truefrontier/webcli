@@ -27,6 +27,7 @@ export async function loadBackground({ page } = {}) {
   const h = { posted: [], granted: new Set(), windowsCreated: [], windowsRemoved: [], tabsCreated: [], tabsRemoved: [],
     tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })) };
   globalThis.__chromecliOpenWaitMs = 40;
+  globalThis.__chromecliCaptureGapMs = 0;
   h.port = { onMessage: event(), onDisconnect: event(), postMessage: (m) => h.posted.push(structuredClone(m)) };
   h.tabs = new Map([
     [1, { id: 1, windowId: 10, active: true, url: "http://127.0.0.1:8765/form.html", title: "Form", status: "complete", index: 0 }],

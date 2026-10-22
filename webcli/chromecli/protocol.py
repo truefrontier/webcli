@@ -24,8 +24,9 @@ HOST_TO_EXT_MAX = 1 * 2**20
 EXT_TO_HOST_MAX = 64 * 2**20
 CLI_REQUEST_MAX = 1 * 2**20
 
+# page.scroll (0.10.2): moves a scroll position on a Read or Act tab; read-only in every other way, never gated.
 READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-            "page.find", "page.probe", "grant.list")
+            "page.find", "page.probe", "page.scroll", "grant.list")
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
 # Pre-approval grants (stored in the extension; 0.10.1: grant.add needs userApproved and Jev's scope check).

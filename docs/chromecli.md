@@ -38,6 +38,8 @@ chromecli list [--active] [--all]   # shared tabs: id,title,url,origin,share,act
 chromecli show TAB | --active
 chromecli read TAB | --active [--as text|md] [--max-chars N] [--elements]   # text: Title:/URL: header first
 chromecli screenshot TAB | --active [-o FILE] [--jpeg --quality 80]   # default ~/.webcli/chromecli/screenshots/
+chromecli screenshot TAB --full-page [--pages N] [--container CSS] [--out DIR]   # page-01.png ... (0.10.2)
+chromecli scroll TAB | --active [--by page|N|Npx] [--up] [--to top|bottom] [--into CSS] [--container CSS]   # 0.10.2
 chromecli history [--query Q] [--limit 50] [--since 2026-10-01]
 chromecli wait --tab TAB (--selector S | --text T | --url-prefix U) [--timeout 15] [--expect-origin O | --expect-url U]
 
@@ -286,6 +288,53 @@ a tool result, or another agent asked for it.
 - Verified by tests: a same-page reload (navigate to the same URL) and a same-origin link click (Jev safe 0.7, or no
   Jev) on Kevin's act tab don't prompt and keep the share.
 
+## Scroll and full-page screenshots (0.10.2)
+
+For pages that render as images (`read` returns ~0 chars, e.g. a signNow agreement) and scroll an inner div.
+
+- `scroll` is a **read op**: Read or Act tabs, no `--confirm`, never prompts, logged like `read`; Off, denied and
+  paused tabs exit 4 (`not_shared`, `origin_blocked`, `paused`, `policy_pending`). One of `--by page|N|Npx`
+  (default: one page = clientHeight − 40px, down; `--up` reverses), `--to top|bottom`, `--into SELECTOR` (scroll
+  that element into view, in its nearest scrollable ancestor). `--container SELECTOR` picks the scroller; without it
+  the largest visible element with `scrollHeight > clientHeight + 10` and `overflow-y: auto|scroll` wins (open
+  shadow roots included), else `document.scrollingElement`. An element only beats a scrolling window if it covers
+  ≥ 30% of the viewport. Movement is instant (it overrides `scroll-behavior: smooth`), then it waits two animation
+  frames.
+
+  ```json
+  {"tab": 7, "url": "...", "title": "...", "origin": "https://app.signnow.com", "share": "read", "op": "scroll",
+   "target": {"description": "div#viewer[aria-label=\"Document viewer\"]", "kind": "element", "auto": true,
+              "inShadow": false},
+   "scrollTop": 520, "scrollLeft": 0, "scrollHeight": 2828, "clientHeight": 560, "atTop": false, "atEnd": false,
+   "moved": 520, "devicePixelRatio": 2}
+  ```
+
+- `screenshot --full-page` (Read tabs; the tab must be in front, else `not_visible`): measure → scroll the target to
+  the top → capture → scroll by clientHeight − 40px (300ms + frames to settle) → … until `atEnd` or `--pages N`
+  (default and max 50). The extension keeps captures ≥ 550ms apart (Chrome allows ~2/s) and retries once on its
+  quota error. The original position is restored in a `finally`, also after errors. The CLI drives the loop (one
+  `page.scroll` / `tabs.screenshot` request per step), so each request stays far below the 64 MiB message limit and
+  every step is in the audit log. The same element is scrolled each time: the first reply's `target.path` (child
+  indexes, per shadow root) is sent back on the next calls.
+
+  ```json
+  {"tab": 7, "url": "...", "title": "...", "origin": "...", "share": "read", "fullPage": true, "format": "png",
+   "dir": "/Users/kk/.webcli/chromecli/screenshots/tab7-20261022-143329-full",
+   "files": [".../page-01.png", ".../page-02.png"], "count": 2, "atEnd": true,
+   "pages": [{"file": ".../page-01.png", "scrollTop": 0, "bytes": 81234}, ...],
+   "target": {"description": "...", "kind": "element", "auto": true, "inShadow": false},
+   "scrollHeight": 1100, "clientHeight": 560, "overlapPx": 40, "devicePixelRatio": 2,
+   "restored": true, "restoredTo": {"top": 1234, "left": 0}}
+  ```
+
+  On an error it exits with that error's code; the error JSON adds `partial {count, files}` (file names: the error
+  output is redacted, and full paths look like tokens to the redactor; use `--out DIR` to know the folder),
+  `restored`, `restoredTo` and `restoreError` if putting the position back failed. `-o` doesn't combine with
+  `--full-page` (use `--out DIR`); `--out`/`--pages`/`--container` need `--full-page` (exit 2).
+- No `--stitch`: webcli has no image library (Pillow isn't a dependency). Read the pages in order.
+- Fixture: `tests/fixtures/chromecli/scroll.html` (an inner `#viewer` ~5 viewports tall, a small scroll box, a
+  shadow-root pane, and a window that scrolls too).
+
 ## Config
 
 ```toml
@@ -320,7 +369,7 @@ pre-approval). jev_error is 5. 2 also covers missing_user_approval (0.10.1).
 
 ## Test fixtures
 
-`tests/fixtures/chromecli/form.html` (email, password, country select, "Next" link, "Place order" submit that shows
+`tests/fixtures/chromecli/scroll.html` (inner scroll viewer for `scroll` / `--full-page`), `form.html` (email, password, country select, "Next" link, "Place order" submit that shows
 "submitted", "Delete account" button), `nav.html`, and `shadow.html` (open-shadow web components). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
 

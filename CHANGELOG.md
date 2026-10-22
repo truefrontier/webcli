@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.10.2 (2026-10-22)
+
+### Added
+
+For pages that render as images (e-sign viewers such as signNow: `read` returns ~0 chars) and scroll an inner div,
+not the window.
+
+- **`chromecli scroll TAB|--active [--by page|N|Npx] [--up] [--to top|bottom] [--into SELECTOR] [--container
+  SELECTOR]`**: a read op on Read and Act tabs (no `--confirm`, never prompts; Off / denied / paused tabs get the same
+  exit 4 errors as `read`; logged like the other reads). Default: one page down (clientHeight − 40px). Without
+  `--container` it picks the largest visible element with `scrollHeight > clientHeight + 10` and `overflow-y`
+  auto/scroll (open shadow roots included), else `document.scrollingElement`; an element must cover ≥ 30% of the
+  viewport to beat a window that scrolls too (so a small code box doesn't win). JSON: `{tab, url, title, origin,
+  share, op: "scroll", target {description, kind, auto, inShadow}, scrollTop, scrollLeft, scrollHeight,
+  clientHeight, atTop, atEnd, moved, devicePixelRatio}`. Extension op `page.scroll` (new `page/scroll.js`).
+- **`chromecli screenshot TAB --full-page [--pages N (≤ 50)] [--container SELECTOR] [--out DIR] [--jpeg]`**: saves
+  the scroll position, scrolls the target to the top, captures a viewport, scrolls by clientHeight − 40px (300ms +
+  animation frames to settle) and repeats until the end or N shots, then restores the position, also after an error.
+  Writes `page-01.png`, `page-02.png` … into `DIR` or a new `~/.webcli/chromecli/screenshots/tab<ID>-<time>-full/`.
+  JSON: `{tab, url, title, origin, share, fullPage, format, dir, files, count, atEnd, pages [{file, scrollTop,
+  bytes}], target, scrollHeight, clientHeight, overlapPx, devicePixelRatio, restored, restoredTo}`; on an error the
+  error JSON has `partial {count, files}` and `restored`. Allowed on Read tabs; still needs the tab in front
+  (`not_visible`).
+- The extension spaces `captureVisibleTab` calls ≥ 550ms apart (Chrome allows ~2/s) and retries once after 1s on
+  Chrome's quota error.
+- The host log line for `page.scroll` has `to=` / `by=` / `measure=1` and the (redacted) `--into` / `--container`
+  selector; each full-page capture logs `full_page_part=N`.
+
+### Not done
+
+- `--stitch` (one tall image): webcli has no image library (Pillow isn't a dependency), so it was left out. Read the
+  pages in order; neighbours overlap by ~40px.
+
 ## 0.10.1 (2026-10-22)
 
 ### Changed

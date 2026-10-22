@@ -36,7 +36,7 @@ test("every referenced file exists", () => {
   for (const f of [manifest.background.service_worker, manifest.action.default_popup,
     ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon), "policy.js", "shares.js",
     "page/extract.js", "page/actions.js", "gate.js", "popup.js", "popup-view.js", "popup.css", "confirm.html", "confirm.js",
-    "confirm-view.js", "confirm.css", manifest.options_ui.page, "options.js", "options.css", "jev.js", "page/snapshot.js"]) {
+    "confirm-view.js", "confirm.css", manifest.options_ui.page, "options.js", "options.css", "jev.js", "page/snapshot.js", "page/scroll.js"]) {
     assert.ok(existsSync(here(f)), f);
   }
 });
@@ -44,7 +44,7 @@ test("every referenced file exists", () => {
 test("no remote code or eval in extension scripts", () => {
   for (const f of ["background.js", "policy.js", "shares.js", "page/extract.js", "page/actions.js", "gate.js", "popup.js",
     "popup-view.js", "popup.html", "popup.css", "confirm.html", "confirm.js", "confirm-view.js", "confirm.css",
-    "options.html", "options.js", "options.css", "jev.js", "page/snapshot.js"]) {
+    "options.html", "options.js", "options.css", "jev.js", "page/snapshot.js", "page/scroll.js"]) {
     const src = readFileSync(here(f), "utf8");
     assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), `${f}: eval/new Function`);
     assert.ok(!/import\s*\(\s*["']https?:/.test(src) && !/<script[^>]+src=["']https?:/.test(src), `${f}: remote code`);
@@ -79,7 +79,7 @@ test("Jev (BYOK): TypeSafe is an optional permission requested on Save; the key 
   const pop = readFileSync(here("popup.js"), "utf8");
   assert.ok(!/typesafeApiKey/.test(pop), "the popup reads the key");
   // Only the service worker's fetch uses the key.
-  for (const f of ["popup.js", "confirm.js", "page/actions.js", "page/extract.js", "page/snapshot.js", "gate.js"]) {
+  for (const f of ["popup.js", "confirm.js", "page/actions.js", "page/extract.js", "page/snapshot.js", "page/scroll.js", "gate.js"]) {
     assert.ok(!/typesafeApiKey|api\.typesafe\.ai/.test(readFileSync(here(f), "utf8")), f);
   }
 });
