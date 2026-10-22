@@ -4,7 +4,7 @@ Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hi
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
 - `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; `send` writes only with `--confirm`). Plus `identity`, `doctor`, `sites`, and `serve`.
-- `chromecli`: the tabs you share from your real, signed-in Chrome, read through the chromecli extension and a native messaging host (read-only; see [chromecli](#chromecli-tabs-you-share)).
+- `chromecli`: the tabs you share from your real, signed-in Chrome, through the chromecli extension and a native messaging host: read them, and act in them (open, navigate, click, fill, ...) with your OK in the browser for anything risky; see [chromecli](#chromecli-tabs-you-share).
 
 All three binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
@@ -120,6 +120,8 @@ Only five data-site verbs change anything on a site, and only with `--confirm` (
 
 Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin and messages, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; one DM or one post, bound to its thread, sender, text, and image; or one Google Messages send. See [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md).
 
+`chromecli` (a separate command) also writes, only with `--confirm` and only in tabs you share or it opened: `open`, `focus`, `close`, `navigate`, `click`, `type`, `fill`, `select`, `press` (`eval` is disabled). Without `--confirm`, or with `--dry-run`, each prints a preview and sends nothing to Chrome. Risky ones wait for your *Allow once* in a chromecli window in Chrome. See [chromecli](#chromecli-tabs-you-share).
+
 Google Messages encrypts each message end to end between the browser and your phone, so its guard can't read the conversation or the text. The guard can read each phone action's type. It passes listing calls and blocks everything else, mark-as-read and typing included. A confirmed send first checks, in the page, that the open conversation is the one it resolved and that the compose box holds exactly your text. Only then does the guard open one slot for a single `SEND_MESSAGE`, for 10 seconds after the click. Afterwards, `confirmed` says whether the conversation showed the text. See [docs/messages-site.md](https://github.com/truefrontier/webcli/blob/main/docs/messages-site.md).
 
 The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle matches the expected author. No author ships as a default: set yours with `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml`. Until one is configured, every LinkedIn write refuses. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md).
@@ -134,7 +136,7 @@ The LinkedIn writes also check who is signed in. LinkedIn's send and post calls 
 
 ## chromecli (tabs you share)
 
-`chromecli` reads the Chrome tabs you share with agents, in your everyday Chrome, through an MV3 extension ("chromecli", in `extensions/chromecli/` of this repo; Load unpacked) and a native messaging host (`chromecli-host`, host name `com.truefrontier.chromecli`). No CDP, no TCP port, no launchd: Chrome starts the host when the extension connects, and the host serves `~/.webcli/run/chromecli.sock` (0600).
+`chromecli` reads and acts in the Chrome tabs you share with agents, in your everyday Chrome, through an MV3 extension ("chromecli", in `extensions/chromecli/` of this repo; Load unpacked) and a native messaging host (`chromecli-host`, host name `com.truefrontier.chromecli`). No CDP, no TCP port, no launchd: Chrome starts the host when the extension connects, and the host serves `~/.webcli/run/chromecli.sock` (0600).
 
 ```sh
 chromecli install-host --confirm         # writes Chrome's NativeMessagingHosts/com.truefrontier.chromecli.json
@@ -144,9 +146,21 @@ chromecli read 123 --as md --elements
 chromecli screenshot --active -o ~/Downloads/t.png
 chromecli history --limit 20
 chromecli agent-help --format json
+
+# tab actions (preview unless --confirm)
+chromecli open https://docs.example.com --confirm        # background tab; auto-shared per act_allow / read_allow
+chromecli focus 123 --confirm | close 123 --confirm
+chromecli navigate 123 https://app.example.com/x --expect-origin https://app.example.com --confirm
+
+# page actions (Share-act + --tab + --expect-origin/--expect-url; preview unless --confirm)
+chromecli click  --tab 123 --text 'Next' --role link --expect-origin https://app.example.com --confirm
+chromecli fill   --tab 123 --selector '#email' --value-file ~/v.txt --expect-origin https://app.example.com --confirm
+chromecli select --tab 123 --selector '#country' --value US --expect-origin https://app.example.com --confirm
+chromecli press Enter --tab 123 --ref e7 --expect-origin https://app.example.com --confirm
+chromecli wait   --tab 123 --text 'Saved' --timeout 15
 ```
 
-Only tabs you share in the toolbar popup are visible; a share ends when the tab goes to another origin or Chrome restarts. *Pause agents* (popup, or Cmd+Shift+Period) makes everything but `status` exit 4. Banks, sign-in pages, password managers, and checkout/cart paths are denied by default (`[chromecli]` in `config.toml`); config changes that widen access wait for you to Accept them in the popup. chromecli changes nothing in Chrome (P1 is read-only). Exit 5 `bridge_down` means Chrome or the extension isn't connected. Full reference: [docs/chromecli.md](https://github.com/truefrontier/webcli/blob/main/docs/chromecli.md).
+Only tabs you share in the toolbar popup are visible; a share ends when the tab goes to another origin or Chrome restarts. *Pause agents* (popup, or Cmd+Shift+Period) makes everything but `status` exit 4. Banks, sign-in pages, password managers, and checkout/cart paths are denied by default (`[chromecli]` in `config.toml`); config changes that widen access wait for you to Accept them in the popup. **Writes:** every action prints a `{"dryRun": true, ...}` preview and sends nothing unless `--confirm` (and `--dry-run` wins). Risky ones (submit-like clicks such as Place order / Send / Delete, Enter in a form field, typing into password / payment / one-time-code fields, opening or navigating outside `read_allow`/`act_allow`) also open a chromecli window in Chrome where you click *Allow once* or *Deny* (60s; Deny is the default). Deny / timeout / Pause exit 4; a page not at `--expect-*` exits 5 `url_mismatch`; an action that went out but failed its read-back or `--verify-*` check exits 8 `sent_unverified`. `eval` is disabled (exit 7): Chrome's MV3 isolated-world CSP forbids running code strings. Typed values are logged only as `<N chars sha256:8>`. Exit 5 `bridge_down` means Chrome or the extension isn't connected. Full reference: [docs/chromecli.md](https://github.com/truefrontier/webcli/blob/main/docs/chromecli.md).
 
 ## Develop
 

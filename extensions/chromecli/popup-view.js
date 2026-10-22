@@ -15,8 +15,15 @@ export function levelOf(share) {
 export const LEVEL_HINT = {
   off: "Not shared. Agents can't see this tab.",
   read: "Agents can read this tab (badge R).",
-  act: "Agents can read this tab (badge A). Actions come later.",
+  act: "Agents can read and act here (badge A). Risky actions ask you first.",
 };
+
+// Agent actions waiting for Kevin's Allow / Deny in the confirm window.
+export function confirmsLabel(n) {
+  const k = Number(n) || 0;
+  if (k <= 0) return "";
+  return k === 1 ? "1 agent action waits for your OK" : `${k} agent actions wait for your OK`;
+}
 
 // "Command+Shift+Period" / "⌘⇧." / "Ctrl+Shift+Period" -> key caps for <kbd>.
 const KEY_NAMES = { Command: "⌘", MacCtrl: "⌃", Ctrl: "Ctrl", Alt: "⌥", Option: "⌥", Shift: "⇧", Period: ".",

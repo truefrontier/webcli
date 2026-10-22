@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chromecli fixture: form</title>
+<style>
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+  label { display: block; margin-top: 12px; font-weight: 600; }
+  input, select { font: inherit; padding: 6px 8px; width: 100%; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; margin-top: 18px; align-items: center; }
+  #status { margin-top: 18px; padding: 8px 10px; border-radius: 6px; background: #eef6ee; }
+  #status:empty { display: none; }
+</style>
+</head>
+<body>
+<!-- Safe local page for chromecli P3 E2E. Nothing leaves the page: submit is intercepted. -->
+<h1>Checkout test form</h1>
+<form id="order" action="/submit" method="post">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com">
+
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password">
+
+  <label for="country">Country</label>
+  <select id="country" name="country">
+    <option value="">Choose…</option>
+    <option value="US">United States</option>
+    <option value="CA">Canada</option>
+    <option value="MX">Mexico</option>
+  </select>
+
+  <div class="row">
+    <a id="next" href="nav.html">Next</a>
+    <button id="place" type="submit">Place order</button>
+    <button id="delete" type="button">Delete account</button>
+  </div>
+</form>
+<div id="status" role="status" aria-live="polite"></div>
+<script>
+  const status = document.getElementById("status");
+  document.getElementById("order").addEventListener("submit", (e) => {
+    e.preventDefault();
+    status.textContent = "submitted";
+  });
+  document.getElementById("delete").addEventListener("click", () => { status.textContent = "account deleted (not really)"; });
+</script>
+</body>
+</html>

@@ -29,7 +29,7 @@ from webcli.core.errors import ConfigError
 from webcli.core.redact import redact_text, redact_url
 
 DEFAULT_TIMEOUT = 30.0
-MAX_TIMEOUT = 300.0
+MAX_TIMEOUT = 900.0
 POLL_SECONDS = 2.0
 SUN_PATH_MAX = 104
 
@@ -85,7 +85,25 @@ def take_lock() -> Any | None:
     return handle
 
 
+def _target_summary(target: Any) -> str:
+    """How a page-action target is logged: selector / ref / role as given (redacted), text as a digest."""
+    if not isinstance(target, dict):
+        return ""
+    if target.get("ref"):
+        return f"target=ref:{redact_text(str(target['ref']))[:40]}"
+    if target.get("selector"):
+        return f"target=selector:{redact_text(str(target['selector']))[:120]}"
+    if target.get("text") is not None:
+        role = f" role={redact_text(str(target['role']))[:30]}" if target.get("role") else ""
+        return f"target=text:{digest(str(target['text']))}{role}"
+    if target.get("find") is not None:
+        return f"target=find:{digest(str(target['find']))}"
+    return ""
+
+
 def _summary(op: str, args: dict) -> str:
+    """The op's arguments for the audit line. Typed / filled / selected values and eval code appear only as
+    <N chars sha256:8>; URLs go through redact_url."""
     parts = []
     if "tab" in args:
         parts.append(f"tab={args.get('tab')}")
@@ -95,6 +113,30 @@ def _summary(op: str, args: dict) -> str:
         parts.append(f"as={args.get('as', 'text')} elements={bool(args.get('elements'))}")
     if op == "history.search" and args.get("query"):
         parts.append(f"query={digest(str(args['query']))}")
+    if op in ("tab.open", "tab.navigate") and args.get("url"):
+        parts.append(f"to={redact_url(str(args['url']))}")
+    if op.startswith("page."):
+        t = _target_summary(args.get("target"))
+        if t:
+            parts.append(t)
+        if args.get("value") is not None:
+            parts.append(f"value={digest(str(args['value']))}")
+        if args.get("code") is not None:
+            parts.append(f"code={digest(str(args['code']))}")
+        if args.get("key"):
+            parts.append(f"key={redact_text(str(args['key']))[:20]}")
+        if op == "page.wait":
+            for k in ("selector", "text"):
+                if args.get(k) is not None:
+                    parts.append(f"{k}={digest(str(args[k]))}")
+            if args.get("urlPrefix"):
+                parts.append(f"urlPrefix={redact_url(str(args['urlPrefix']))}")
+    expect = args.get("expect")
+    if isinstance(expect, dict):
+        if expect.get("origin"):
+            parts.append(f"expect_origin={redact_url(str(expect['origin']))}")
+        if expect.get("urlPrefix"):
+            parts.append(f"expect_url={redact_url(str(expect['urlPrefix']))}")
     return " ".join(parts)
 
 
@@ -220,12 +262,14 @@ class Host:
             timeout = DEFAULT_TIMEOUT
         timeout = min(max(timeout, 1.0), MAX_TIMEOUT)
         slot = {"done": threading.Event(), "reply": None}
+        # The extension drops a queued in-browser confirm once nobody waits for the answer (deadline, epoch ms).
+        deadline_ms = int((time.time() + timeout) * 1000)
         with self.pending_lock:
             self.pending[req_id] = slot
         try:
             try:
                 self.send({"v": protocol.VERSION, "id": req_id, "op": req["op"], "args": req["args"],
-                           "confirm": req["confirm"]})
+                           "confirm": req["confirm"], "deadlineMs": deadline_ms})
             except protocol.ProtocolError as exc:
                 return protocol.reply_error(req_id, exc.code, exc.message)
             except OSError as exc:
@@ -273,7 +317,14 @@ class Host:
         code = None if reply.get("ok") else str(err.get("code") or "error")
         where = " ".join(x for x in (f"origin={redact_url(str(origin))}" if origin else "",
                                      f"url={redact_url(str(url))}" if url else "") if x)
-        audit(f"op={op} {_summary(op, args)} {where} outcome={'ok' if code is None else code} "
+        info = result if reply.get("ok") else err
+        gate = ""
+        if isinstance(info.get("reasons"), list) and info.get("reasons"):
+            reasons = ",".join(redact_text(str(r))[:40] for r in info["reasons"][:10])
+            gate = f" gated={reasons} confirmed={bool(info.get('confirmedInBrowser'))}"
+        if code in ("declined", "confirm_timeout"):
+            gate += f" confirm={code}"
+        audit(f"op={op} {_summary(op, args)} {where}{gate} outcome={'ok' if code is None else code} "
               f"exit={0 if code is None else protocol.exit_code(code)} ms={ms:.0f}")
 
     def serve_client(self, conn: socket.socket) -> None:

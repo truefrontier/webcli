@@ -1,17 +1,25 @@
-// chromecli service worker: native port to chromecli-host, op dispatch (P1: read-only), shares, Pause, origin
-// policy with pending-accept for loosening, badges, and a 200-entry audit ring buffer for the popup.
+// chromecli service worker: native port to chromecli-host, op dispatch (read ops, tab actions, page actions), shares,
+// bot-opened tabs, Pause, origin policy with pending-accept for loosening, gate heuristics + the in-browser confirm
+// window (one at a time, others queue), badges, and a 200-entry audit ring buffer for the popup.
 // The extension is the authority: the host and CLI are untrusted callers.
 import {
-  DEFAULT_POLICY, acceptPending, applyIncoming, denied, originOf, pendingAffects, permissionPattern, rejectPending,
-  validPolicy,
+  DEFAULT_POLICY, acceptPending, applyIncoming, denied, matches, originOf, pendingAffects, permissionPattern,
+  rejectPending, validPolicy,
 } from "./policy.js";
+import { displayValue, gateReasons } from "./gate.js";
+import { pageAction, pageProbe } from "./page/actions.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
 import { extractPage } from "./page/extract.js";
 
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
 const AUDIT_MAX = 200;
-const OPS = new Set(["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search"]);
+const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait"];
+const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
+const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
+const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS]);
+// Ops that change something: the CLI sends them only with --confirm (confirm: true); anything else is refused.
+const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS]);
 
 let port = null;
 let backoff = 1000;
@@ -32,6 +40,14 @@ function withLock(fn) {
 const getShares = async () => (await chrome.storage.session.get("shares")).shares || {};
 const setShares = (shares) => chrome.storage.session.set({ shares });
 const getPaused = async () => !!(await chrome.storage.local.get("paused")).paused;
+const getBotTabs = async () => (await chrome.storage.session.get("botTabs")).botTabs || {};
+async function markBot(tabId, on = true) {
+  await withLock(async () => {
+    const bot = await getBotTabs();
+    if (on) bot[tabId] = { at: Date.now() }; else delete bot[tabId];
+    await chrome.storage.session.set({ botTabs: bot });
+  });
+}
 async function getPolicyState() {
   return (await chrome.storage.local.get("policyState")).policyState || { active: DEFAULT_POLICY, pending: null };
 }
@@ -107,7 +123,7 @@ async function handleRequest(req) {
   let reply;
   let origin = null;
   try {
-    const result = await dispatch(req.op, args);
+    const result = await dispatch(req.op, args, req);
     origin = result?.origin || null;
     reply = { v: 1, id: req.id, ok: true, result };
   } catch (e) {
@@ -118,8 +134,11 @@ async function handleRequest(req) {
   }
   post(reply);
   if (req.op !== "status") {
-    await auditAdd({ op: req.op, tab: args.tab ?? (args.active ? "active" : null), origin,
-      outcome: reply.ok ? "ok" : reply.error.code });
+    const info = reply.ok ? reply.result : reply.error;
+    const extra = info && Array.isArray(info.reasons) && info.reasons.length
+      ? { reasons: info.reasons, confirmedInBrowser: !!info.confirmedInBrowser } : {};
+    await auditAdd({ op: req.op, tab: args.tab ?? info?.tab ?? (args.active ? "active" : null), origin,
+      outcome: reply.ok ? "ok" : reply.error.code, ...extra });
   }
 }
 
@@ -182,10 +201,12 @@ async function updateBadge(tabId) {
 
 async function refreshBadges() {
   const [paused, st] = [await getPaused(), await getPolicyState()];
-  const text = paused ? "II" : st.pending ? "!" : "";
+  const waiting = typeof pendingConfirms === "function" ? pendingConfirms() : 0;
+  const text = paused ? "II" : waiting ? "?" : st.pending ? "!" : "";
   await chrome.action.setBadgeText({ text });
-  await chrome.action.setBadgeBackgroundColor({ color: paused ? "#777777" : "#C5221F" });
+  await chrome.action.setBadgeBackgroundColor({ color: paused ? "#777777" : waiting ? "#E8710A" : "#C5221F" });
   await chrome.action.setTitle({ title: paused ? "chromecli: agents paused"
+    : waiting ? "chromecli: an agent action is waiting for your OK"
     : st.pending ? "chromecli: a policy change is waiting for you" : "chromecli" });
   const shares = await getShares();
   for (const id of Object.keys(shares)) await updateBadge(Number(id));
@@ -193,6 +214,7 @@ async function refreshBadges() {
 
 async function setPaused(paused) {
   await chrome.storage.local.set({ paused: !!paused });
+  if (paused) cancelAllConfirms("paused");
   post({ event: "paused_changed", paused: !!paused });
   await auditAdd({ op: paused ? "pause" : "resume", tab: null, origin: null, outcome: "ok" });
   await refreshBadges();
@@ -250,29 +272,39 @@ async function resolveTab(args) {
   try { return await chrome.tabs.get(args.tab); } catch { throw new OpError("tab_not_found", `No tab ${args.tab}.`, { tab: args.tab }); }
 }
 
-function row(tab, level, focused) {
+function row(tab, level, focused, botOpened = false) {
   const url = tab.url || tab.pendingUrl || "";
   return { id: tab.id, title: tab.title || "", url, origin: originOf(url), share: level,
-    active: !!(focused && focused.id === tab.id), windowId: tab.windowId, botOpened: false };
+    active: !!(focused && focused.id === tab.id), windowId: tab.windowId, botOpened: !!botOpened };
 }
 
 // ---- ops
-async function dispatch(op, args) {
+async function dispatch(op, args, req = {}) {
   if (!OPS.has(op)) throw new OpError("bad_request", `Unknown op ${JSON.stringify(op)}.`);
   if (op === "status") return statusInfo();
   if (await getPaused()) throw new OpError("paused", "Agents are paused in the chromecli popup.");
+  if (MUTATING.has(op) && req.confirm !== true) {
+    throw new OpError("bad_request", `${op} changes something; it runs only with confirm: true (chromecli --confirm).`);
+  }
   switch (op) {
     case "tabs.list": return listTabs(args);
     case "tabs.show": {
       const tab = await resolveTab(args);
-      const level = await access(tab);
+      const bot = (await getBotTabs())[tab.id];
+      const level = await access(tab).catch((e) => { if (bot && e.code === "not_shared") return null; throw e; });
       const focused = await activeTab();
-      return { ...row(tab, level, focused), status: tab.status, pinned: tab.pinned, audible: !!tab.audible,
+      return { ...row(tab, level, focused, !!bot), status: tab.status, pinned: tab.pinned, audible: !!tab.audible,
         incognito: tab.incognito, index: tab.index, lastAccessed: tab.lastAccessed ? isoLocal(tab.lastAccessed) : null };
     }
     case "tabs.read": return readTab(args);
     case "tabs.screenshot": return screenshot(args);
     case "history.search": return historySearch(args);
+    case "tab.open": return tabOpen(args, req);
+    case "tab.focus": return tabFocus(args);
+    case "tab.close": return tabClose(args);
+    case "tab.navigate": return tabNavigate(args, req);
+    case "page.wait": return pageWait(args);
+    default: return pageOp(op.slice(5), args, req);
   }
   throw new OpError("bad_request", `Unknown op ${op}.`);
 }
@@ -280,7 +312,7 @@ async function dispatch(op, args) {
 async function statusInfo() {
   const [paused, shares, st] = [await getPaused(), await getShares(), await getPolicyState()];
   return {
-    extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: false,
+    extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: false, confirmsPending: pendingConfirms(),
     chromeVersion: (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || null,
     shares: Object.entries(shares).map(([tab, s]) => ({ tab: Number(tab), origin: s.origin, level: s.level })),
     policy: { hash: st.active.hash, pending: !!st.pending, pendingLoosening: st.pending?.loosening || [],
@@ -292,12 +324,20 @@ async function statusInfo() {
 async function listTabs(args) {
   const tabs = await chrome.tabs.query({});
   const focused = await activeTab();
+  const bot = await getBotTabs();
+  const st = await getPolicyState();
   const rows = [];
   for (const tab of tabs) {
     if (args.active && !(focused && focused.id === tab.id)) continue;
     let level;
-    try { level = await access(tab); } catch { continue; }
-    rows.push(row(tab, level, focused));
+    try {
+      level = await access(tab);
+    } catch (e) {
+      // Bot-opened tabs show as metadata (share null) even when unshared, unless they're on a denied origin.
+      if (!(bot[tab.id] && e.code === "not_shared" && !denied(tab.url || tab.pendingUrl || "", st.active))) continue;
+      level = null;
+    }
+    rows.push(row(tab, level, focused, !!bot[tab.id]));
   }
   return rows;
 }
@@ -375,9 +415,364 @@ async function historySearch(args) {
   }));
 }
 
+// ---- in-browser confirm (spec 6.7b): one window at a time, the rest queue; 60s (confirm_timeout) -> timeout;
+// closing the window = Deny; Pause cancels everything waiting.
+const confirmQueue = [];
+let confirmActive = null;
+
+const pendingConfirms = () => (confirmActive ? 1 : 0) + confirmQueue.length;
+
+function requestConfirm(info, deadline) {
+  return new Promise((resolve) => {
+    confirmQueue.push({ id: crypto.randomUUID(), info, resolve, deadline: Number(deadline) || 0, done: false });
+    refreshConfirmBadge();
+    pumpConfirm();
+  });
+}
+
+async function pumpConfirm() {
+  if (confirmActive || !confirmQueue.length) return;
+  const item = confirmQueue.shift();
+  // The CLI stops waiting at its deadline; never show (or act on) a confirm nobody waits for.
+  if (item.deadline && Date.now() > item.deadline - 3000) { item.done = true; item.resolve("timeout"); pumpConfirm(); return; }
+  confirmActive = item;
+  const { active } = await getPolicyState();
+  let ms = (Number(active.confirm_timeout) || 60) * 1000;
+  if (item.deadline) ms = Math.min(ms, item.deadline - Date.now() - 3000);
+  item.expiresAt = Date.now() + ms;
+  item.timer = setTimeout(() => finishConfirm(item, "timeout"), ms);
+  try {
+    const win = await chrome.windows.create({ url: chrome.runtime.getURL(`confirm.html?id=${item.id}`), type: "popup",
+      width: 460, height: 660, focused: true });
+    item.windowId = win?.id ?? null;
+    if (item.done && item.windowId != null) chrome.windows.remove(item.windowId).catch(() => {});
+  } catch (e) {
+    finishConfirm(item, "error");
+  }
+  refreshConfirmBadge();
+}
+
+function finishConfirm(item, answer) {
+  if (!item || item.done) return;
+  item.done = true;
+  clearTimeout(item.timer);
+  if (confirmActive === item) confirmActive = null;
+  if (item.windowId != null) chrome.windows.remove(item.windowId).catch(() => {});
+  item.resolve(answer);
+  refreshConfirmBadge();
+  pumpConfirm();
+}
+
+function cancelAllConfirms(answer) {
+  for (const item of confirmQueue.splice(0)) { item.done = true; item.resolve(answer); }
+  if (confirmActive) finishConfirm(confirmActive, answer);
+  refreshConfirmBadge();
+}
+
+function refreshConfirmBadge() {
+  // The global badge shows "?" while a confirm waits (tab badges R/A still win on their tabs).
+  refreshBadges().catch(() => {});
+}
+
+// Ask Kevin; resolves on Allow, else throws declined / confirm_timeout / paused (all exit 4).
+async function confirmOrThrow(info, req, where) {
+  const answer = await requestConfirm(info, req?.deadlineMs);
+  if (answer === "allow") return true;
+  if (answer === "paused") throw new OpError("paused", "Agents were paused while the action waited for confirmation; nothing was done.", where);
+  if (answer === "timeout") throw new OpError("confirm_timeout", "Nobody answered the in-browser confirm in time; nothing was done.", where);
+  if (answer === "error") throw new OpError("script_error", "Couldn't open the confirm window; nothing was done.", where);
+  throw new OpError("declined", "Kevin denied the action in the browser; nothing was done.", where);
+}
+
+// ---- tab actions (P2)
+function allowLevel(url, policy) {
+  if ((policy.act_allow || []).some((p) => matches(p, url))) return "act";
+  if ((policy.read_allow || []).some((p) => matches(p, url))) return "read";
+  return null;
+}
+
+// The destination of open / navigate: origin_blocked for denied URLs, policy_pending when a pending change decides it.
+async function checkDestination(url) {
+  const st = await getPolicyState();
+  const origin = originOf(url);
+  const why = denied(url, st.active);
+  if (why) {
+    if (pendingAffects(st, { url })) throw new OpError("policy_pending", "That URL waits on a pending policy change.", { origin });
+    throw new OpError("origin_blocked", `${origin || url.slice(0, 80)} is denied (${why}).`, { origin });
+  }
+  if (!origin) throw new OpError("bad_request", "Only http(s) URLs can be opened.");
+  if (pendingAffects(st, { url })) throw new OpError("policy_pending", "That URL waits on a pending policy change.", { origin });
+  return { origin, level: allowLevel(url, st.active) };
+}
+
+// Bot-opened auto-share (spec 6.4): act_allow -> act, read_allow -> read, else unshared (metadata only).
+async function autoShare(tabId, url) {
+  const st = await getPolicyState();
+  const origin = originOf(url);
+  if (!origin || denied(url, st.active)) return { level: null };
+  const level = allowLevel(url, st.active);
+  if (!level) return { level: null };
+  if (!(await hasHostPermission(origin))) return { level: null, skipped: "permission_needed" };
+  await withLock(async () => {
+    const shares = await getShares();
+    shares[tabId] = { origin, level, at: Date.now(), botOpened: true };
+    await setShares(shares);
+  });
+  post({ event: "share_changed", tab: tabId, origin, level, reason: "bot-opened" });
+  await auditAdd({ op: `auto-share-${level}`, tab: tabId, origin, outcome: "ok" });
+  await updateBadge(tabId);
+  return { level };
+}
+
+// close / focus / navigate need Share-act or a bot-opened tab (never a denied origin).
+async function requireActOrBot(tab) {
+  const st = await getPolicyState();
+  const url = tab.url || tab.pendingUrl || "";
+  const why = denied(url, st.active);
+  if (why) throw new OpError("origin_blocked", `Tab ${tab.id} is on a denied origin (${why}).`, { tab: tab.id, origin: originOf(url) });
+  if ((await getBotTabs())[tab.id]) return "bot";
+  return access(tab, "act");
+}
+
+function checkExpect(tab, expect, required) {
+  const e = expect && typeof expect === "object" ? expect : {};
+  if (!e.origin && !e.urlPrefix) {
+    if (required) throw new OpError("missing_expect", "Page actions need expect.origin or expect.urlPrefix (--expect-origin / --expect-url).", { tab: tab.id });
+    return;
+  }
+  const url = tab.url || "";
+  const origin = originOf(url);
+  if (e.origin) {
+    const want = originOf(String(e.origin));
+    if (!want) throw new OpError("bad_request", "expect.origin is not an http(s) origin.");
+    if (want !== origin) throw new OpError("url_mismatch", `Tab ${tab.id} is at ${origin}, not ${want}.`, { tab: tab.id, origin, url });
+  }
+  if (e.urlPrefix && !url.startsWith(String(e.urlPrefix))) {
+    throw new OpError("url_mismatch", `Tab ${tab.id}'s URL doesn't start with the expected prefix.`, { tab: tab.id, origin, url });
+  }
+}
+
+async function normalWindow() {
+  try { return await chrome.windows.getLastFocused({ windowTypes: ["normal"] }); } catch { return null; }
+}
+
+async function tabOpen(args, req) {
+  const url = String(args.url || "");
+  const { origin, level } = await checkDestination(url);
+  const reasons = gateReasons("open", null, { allowlisted: !!level });
+  let confirmedInBrowser = false;
+  if (reasons.length) {
+    await confirmOrThrow({ op: "open", origin, url, reasons, title: null }, req, { origin });
+    confirmedInBrowser = true;
+    await checkDestination(url); // the policy may have changed while Kevin looked
+    if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.");
+  }
+  let tab;
+  if (args.window === "new") {
+    const win = await chrome.windows.create({ url, focused: !!args.active, type: "normal" });
+    tab = win.tabs?.[0];
+  } else {
+    const win = await normalWindow();
+    tab = await chrome.tabs.create({ url, active: !!args.active, ...(win ? { windowId: win.id } : {}) });
+  }
+  if (!tab) throw new OpError("script_error", "Chrome didn't return the new tab.", { origin });
+  await markBot(tab.id);
+  const share = await autoShare(tab.id, url);
+  return { tab: tab.id, op: "open", url, origin, windowId: tab.windowId, active: !!args.active, botOpened: true,
+    share: share.level, ...(share.skipped ? { shareSkipped: share.skipped } : {}),
+    gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true, verified: true };
+}
+
+async function tabFocus(args) {
+  const tab = await resolveTab({ tab: args.tab });
+  const level = await requireActOrBot(tab);
+  await chrome.tabs.update(tab.id, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return { tab: tab.id, op: "focus", origin: originOf(tab.url || ""), share: level === "bot" ? null : level,
+    botOpened: level === "bot", gated: false, reasons: [], confirmedInBrowser: false, dispatched: true, verified: true };
+}
+
+async function tabClose(args) {
+  const tab = await resolveTab({ tab: args.tab });
+  const level = await requireActOrBot(tab);
+  await chrome.tabs.remove(tab.id);
+  return { tab: tab.id, op: "close", origin: originOf(tab.url || ""), title: tab.title || "", botOpened: level === "bot",
+    gated: false, reasons: [], confirmedInBrowser: false, dispatched: true, verified: true };
+}
+
+async function waitFor(check, ms, every = 150) {
+  const end = Date.now() + ms;
+  for (;;) {
+    try { if (await check()) return true; } catch { /* page in flux */ }
+    if (Date.now() >= end) return false;
+    await new Promise((r) => setTimeout(r, every));
+  }
+}
+
+async function tabNavigate(args, req) {
+  let tab = await resolveTab({ tab: args.tab });
+  await requireActOrBot(tab);
+  checkExpect(tab, args.expect, false);
+  const url = String(args.url || "");
+  const { origin, level } = await checkDestination(url);
+  const reasons = gateReasons("navigate", null, { allowlisted: !!level });
+  let confirmedInBrowser = false;
+  if (reasons.length) {
+    await confirmOrThrow({ op: "navigate", origin, url, reasons, title: tab.title || "", from: originOf(tab.url || "") },
+      req, { tab: tab.id, origin });
+    confirmedInBrowser = true;
+    tab = await resolveTab({ tab: tab.id });
+    await requireActOrBot(tab);
+    checkExpect(tab, args.expect, false);
+    await checkDestination(url);
+    if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.");
+  }
+  const cross = originOf(tab.url || "") !== origin;
+  if (cross) {
+    // A cross-origin navigate by the agent makes it a bot-opened tab on the new origin (spec 6.4).
+    await revoke(tab.id, "navigated by agent");
+    await markBot(tab.id);
+  }
+  await chrome.tabs.update(tab.id, { url });
+  let share = { level: null };
+  if (cross) {
+    await waitFor(async () => { const t = await chrome.tabs.get(tab.id); return originOf(t.pendingUrl || t.url || "") === origin; }, 10000);
+    share = await autoShare(tab.id, url);
+  } else {
+    share = { level: (await getShares())[tab.id]?.level ?? null };
+  }
+  return { tab: tab.id, op: "navigate", url, origin, crossOrigin: cross, share: share.level,
+    ...(share.skipped ? { shareSkipped: share.skipped } : {}), botOpened: cross || !!(await getBotTabs())[tab.id],
+    gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true, verified: true };
+}
+
+// ---- page actions (P3)
+function normTarget(t, optional) {
+  const tt = t && typeof t === "object" ? t : {};
+  if (tt.find != null) throw new OpError("bad_target", "--find needs Jev (P4), which this version doesn't have; use --selector, --ref, or --text.");
+  const given = ["selector", "ref", "text"].filter((k) => tt[k] != null && tt[k] !== "");
+  if (given.length === 0 && optional) return null;
+  if (given.length !== 1) throw new OpError("bad_target", "Give exactly one target: selector, ref, or text (+ role).");
+  const k = given[0];
+  return k === "text" ? { text: String(tt.text), ...(tt.role ? { role: String(tt.role) } : {}) } : { [k]: String(tt[k]) };
+}
+
+async function pagePre(args, need = "act") {
+  if (!Number.isInteger(args.tab)) throw new OpError("bad_target", "Page actions need a tab id (--tab).");
+  const tab = await resolveTab({ tab: args.tab });
+  const level = await access(tab, need);
+  const origin = originOf(tab.url || "");
+  if (!(await hasHostPermission(origin))) {
+    throw new OpError("permission_needed", `chromecli has no host access to ${origin}.`, { tab: tab.id, origin });
+  }
+  if (need === "act") checkExpect(tab, args.expect, true);
+  return { tab, origin, level };
+}
+
+async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
+  let res;
+  try {
+    [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func, args: [spec] });
+  } catch (e) {
+    const m = String(e?.message || e);
+    if (/permission|cannot access|must request/i.test(m)) throw new OpError("permission_needed", m, { tab: tab.id, origin });
+    if (afterDispatch) return { ok: true, dispatched: true, lost: m };
+    throw new OpError("script_error", m, { tab: tab.id, origin });
+  }
+  const out = res?.result;
+  if (!out) {
+    if (afterDispatch) return { ok: true, dispatched: true, lost: "no result" };
+    throw new OpError("script_error", "The page returned nothing.", { tab: tab.id, origin });
+  }
+  if (!out.ok) throw new OpError(out.code || "script_error", out.message || "Page action failed.", { tab: tab.id, origin, ...out, ok: undefined, code: undefined, message: undefined });
+  return out;
+}
+
+async function pageOp(op, args, req) {
+  if (op === "eval") {
+    await pagePre(args);
+    // Chrome's fixed CSP for extension isolated worlds forbids eval / new Function, so user code can't run there.
+    throw new OpError("eval_disabled", "eval is disabled: Chrome's MV3 isolated-world CSP blocks running code strings, and chromecli won't run them in the page's own world.", { tab: args.tab });
+  }
+  const target = normTarget(args.target, op === "press");
+  if (op === "press" && !String(args.key || "")) throw new OpError("bad_request", "press needs a key.");
+  const { tab, origin } = await pagePre(args);
+  const spec = { mode: "describe", op, target, key: args.key };
+  const d = await inject(tab, origin, pageAction, spec);
+  const element = d.element;
+  const reasons = gateReasons(op, element, { key: args.key });
+  const where = { tab: tab.id, origin, element, reasons };
+  let confirmedInBrowser = false;
+  if (reasons.length) {
+    const value = ["type", "fill", "select"].includes(op) ? displayValue(args.value, element) : null;
+    await confirmOrThrow({ op, origin, url: tab.url, title: tab.title || "", element, reasons, value,
+      key: op === "press" ? String(args.key) : null }, req, where);
+    confirmedInBrowser = true;
+    // Re-check every precondition after the confirm (spec 6.6).
+    if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
+    await pagePre(args);
+  }
+  const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
+    { afterDispatch: true });
+  const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true,
+    verified: null, ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
+  // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
+  if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
+  const failed = [];
+  const checks = [];
+  if (["fill", "type", "select"].includes(op)) { checks.push("read_back"); if (done.readBack !== true) failed.push("read_back"); }
+  const verify = args.verify && typeof args.verify === "object" ? args.verify : {};
+  if (verify.urlPrefix) {
+    checks.push("url_prefix");
+    const ok = await waitFor(async () => String((await chrome.tabs.get(tab.id)).url || "").startsWith(String(verify.urlPrefix)), 10000);
+    if (!ok) failed.push("url_prefix");
+  }
+  if (verify.text) {
+    checks.push("text");
+    const ok = await waitFor(async () => {
+      const t = await chrome.tabs.get(tab.id);
+      if (originOf(t.url || "") !== origin) return false;
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func: pageProbe, args: [{ text: String(verify.text) }] });
+      return !!r?.result?.found;
+    }, 10000, 250);
+    if (!ok) failed.push("text");
+  }
+  if (checks.length) out.verified = failed.length === 0;
+  out.checks = checks;
+  if (failed.length) {
+    throw new OpError("sent_unverified", `The ${op} was dispatched but its check failed (${failed.join(", ")}). Don't repeat it blindly; read the page first.`, { ...out, failed });
+  }
+  return out;
+}
+
+async function pageWait(args) {
+  const { tab, origin } = await pagePre(args, "read");
+  const ms = Math.min(Math.max(100, Number(args.timeoutMs) || 15000), 120000);
+  const probe = args.selector ? { selector: String(args.selector) } : args.text != null ? { text: String(args.text) } : null;
+  if (!probe && !args.urlPrefix) throw new OpError("bad_target", "wait needs selector, text, or urlPrefix.");
+  const start = Date.now();
+  let lastErr = null;
+  const ok = await waitFor(async () => {
+    const t = await chrome.tabs.get(tab.id);
+    await access(t, "read");
+    if (args.urlPrefix) return String(t.url || "").startsWith(String(args.urlPrefix));
+    const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func: pageProbe, args: [probe] });
+    if (r?.result && r.result.ok === false) { lastErr = r.result; return true; }
+    return !!r?.result?.found;
+  }, ms, 250);
+  if (lastErr) throw new OpError(lastErr.code || "bad_target", lastErr.message || "Bad probe.", { tab: tab.id, origin });
+  if (!ok) throw new OpError("timeout", `Waited ${ms / 1000}s; the condition didn't hold.`, { tab: tab.id, origin });
+  return { tab: tab.id, origin, found: true, waitedMs: Date.now() - start };
+}
+
 // ---- popup messages (only from this extension's own pages, never from a tab)
+// The confirm window is an extension page in a popup window (so it has sender.tab); it may only read and answer
+// its own confirm. No web page can load confirm.html (it is not web-accessible).
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || sender.tab || !String(sender.url || "").startsWith(chrome.runtime.getURL(""))) return false;
+  const url = String(sender.url || "");
+  if (sender.id !== chrome.runtime.id || !url.startsWith(chrome.runtime.getURL(""))) return false;
+  const fromConfirm = url.startsWith(chrome.runtime.getURL("confirm.html"));
+  if (fromConfirm ? !["confirmGet", "confirmAnswer"].includes(msg?.type) : !!sender.tab) return false;
   popupMessage(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e?.message || e) }));
   return true;
 });
@@ -402,7 +797,23 @@ async function popupMessage(msg) {
         shared,
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
-        shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION };
+        shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION,
+        confirms: pendingConfirms() };
+    }
+    case "showConfirm": {
+      if (confirmActive?.windowId != null) await chrome.windows.update(confirmActive.windowId, { focused: true }).catch(() => {});
+      return { ok: true };
+    }
+    case "confirmGet": {
+      const item = confirmActive && confirmActive.id === msg.id ? confirmActive : null;
+      if (!item) return { ok: false, error: "This request is no longer waiting." };
+      return { ok: true, id: item.id, info: item.info, expiresAt: item.expiresAt, queued: confirmQueue.length };
+    }
+    case "confirmAnswer": {
+      const item = confirmActive && confirmActive.id === msg.id ? confirmActive : null;
+      if (!item) return { ok: false, error: "This request is no longer waiting." };
+      finishConfirm(item, msg.answer === "allow" ? "allow" : "deny");
+      return { ok: true };
     }
     case "share": {
       if (!["read", "act"].includes(msg.level)) return { ok: false, error: "bad level" };
@@ -464,7 +875,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }
   if (changeInfo.url || changeInfo.status) await updateBadge(tabId);
 });
-chrome.tabs.onRemoved.addListener((tabId) => revoke(tabId, "closed"));
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await revoke(tabId, "closed");
+  if ((await getBotTabs())[tabId]) await markBot(tabId, false);
+});
+chrome.windows.onRemoved.addListener((windowId) => {
+  // Closing the confirm window is a Deny.
+  if (confirmActive && confirmActive.windowId === windowId) finishConfirm(confirmActive, "deny");
+});
 chrome.tabs.onReplaced.addListener((_added, removed) => revoke(removed, "replaced"));
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === "pause-agents") await setPaused(!(await getPaused()));

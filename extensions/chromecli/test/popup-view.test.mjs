@@ -49,3 +49,10 @@ test("pending labels, hosts, monograms, favicons", () => {
   assert.equal(safeFavicon("javascript:alert(1)"), null);
   assert.equal(safeFavicon(undefined), null);
 });
+
+test("confirmsLabel", async () => {
+  const { confirmsLabel } = await import("../popup-view.js");
+  assert.equal(confirmsLabel(0), "");
+  assert.equal(confirmsLabel(1), "1 agent action waits for your OK");
+  assert.equal(confirmsLabel(3), "3 agent actions wait for your OK");
+});

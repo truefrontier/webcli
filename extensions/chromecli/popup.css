@@ -151,6 +151,21 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .alert-detail { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
 .alert .btn { color: var(--text); }
 
+/* agent actions waiting for a confirm */
+.confirm-banner {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px 0 12px;
+  border-radius: var(--r-card); border: 1px solid color-mix(in srgb, var(--act) 38%, transparent);
+  background: var(--act-tint); color: var(--text); cursor: pointer; text-align: left;
+  font-size: 12.5px; font-weight: 600; animation: rise .25s var(--ease);
+  transition: background-color .15s var(--ease);
+}
+.confirm-banner:hover { background: color-mix(in srgb, var(--act) 20%, var(--surface)); }
+.cb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--act); flex: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--act) 25%, transparent); }
+.cb-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-go { display: inline-flex; align-items: center; gap: 2px; color: var(--act-text); font-size: 12px; flex: none; }
+.cb-go .ic { width: 14px; height: 14px; }
+
 /* pending policy banner */
 .banner {
   padding: 12px; border-radius: var(--r-card);

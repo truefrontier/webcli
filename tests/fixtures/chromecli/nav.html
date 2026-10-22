@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chromecli fixture: nav</title>
+<style>body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }</style>
+</head>
+<body>
+<!-- Safe local page for chromecli P2/P3 E2E: links and tabs, nothing gated. -->
+<h1>Navigation page</h1>
+<nav aria-label="Sections">
+  <a href="nav.html#one" id="tab-one" role="tab">One</a>
+  <a href="nav.html#two" id="tab-two" role="tab">Two</a>
+  <a href="form.html" id="back">Back to the form</a>
+</nav>
+<p id="where">You are on nav.html.</p>
+<button id="more" type="button">Show more</button>
+<p id="more-text" hidden>More text, shown by a plain button.</p>
+<script>
+  document.getElementById("more").addEventListener("click", () => { document.getElementById("more-text").hidden = false; });
+  addEventListener("hashchange", () => { document.getElementById("where").textContent = "Section " + location.hash.slice(1); });
+</script>
+</body>
+</html>

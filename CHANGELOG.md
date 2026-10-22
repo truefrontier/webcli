@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0 (2026-10-22)
+
+### Added
+
+- chromecli P2, tab actions: `chromecli open URL [--active] [--window new]`, `focus TAB`, `close TAB`, `navigate TAB URL [--expect-origin|--expect-url]`. Every one prints a `{"dryRun": true, ...}` preview and sends nothing to Chrome unless `--confirm` (alias `--yes`); `--dry-run --confirm` stays dry. Bot-opened tabs (`open`, cross-origin `navigate`) are auto-shared for act when the origin is in `act_allow`, for read when in `read_allow`, else left unshared (metadata only in `list`, `botOpened: true`). `close`/`focus`/`navigate` need Share-act or a bot-opened tab; `open`/`navigate` outside both allowlists waits for Kevin in the browser; denied origins exit 4 `origin_blocked`.
+- chromecli P3, page actions in act-shared tabs: `click`, `type`, `fill`, `select`, `press`, `wait` (read-only), `eval`. Targets `--selector`, `--ref` (from `read --elements`), `--text [--role]`; `--tab` and `--expect-origin`/`--expect-url` are required for every mutating action (exit 2 `missing_expect`; a tab elsewhere exits 5 `url_mismatch`). Post-checks: `fill`/`type`/`select` read the value back; `--verify-url-prefix`/`--verify-text` wait up to 10s; a failed check after dispatch exits 8 `sent_unverified`. Values can come from `--value-file FILE|-`.
+- In-browser confirm window (`confirm.html`, same design as the popup, light/dark): tab title, origin, op, element (tag, role, name, 200-char HTML), a "Gated because" list, and the value (masked for password/payment fields). Deny is the default; Allow once unlocks after 0.8s; closing the window denies; 60s (`confirm_timeout`) → exit 4 `confirm_timeout`; one at a time, others queue; Pause closes it (exit 4 `paused`). Preconditions are re-checked after Allow. Gates (pure `gate.js`, spec 6.7): eval; submit-like clicks (form submit buttons, `input[type=submit|image]`, buy/order/pay/send/post/delete/... labels); Enter in a form field; type/fill into password, `cc-*`, `current-password`/`new-password`/`one-time-code`, or card/CVV/IBAN/routing/SSN fields; open/navigate outside `read_allow ∪ act_allow`.
+- Popup: a "N agent actions wait for your OK" banner (click to bring the confirm window forward) and a global `?` badge while a confirm waits; the Act level's hint now says what it does.
+- Error codes: `eval_disabled` (exit 7). Test fixtures `tests/fixtures/chromecli/form.html` and `nav.html`.
+
+### Security
+
+- Typed / filled / selected values, `--text` targets, and eval code appear in `~/.webcli/logs/chromecli.log` only as `<N chars sha256:8>`; the extension never returns field values (read-back reports match / no match) and never puts them in its activity log.
+- `eval` ships disabled: Chrome's MV3 isolated-world CSP forbids `eval`/`new Function`, and chromecli won't run bot code in the page's own world.
+- The extension refuses any mutating op sent without `confirm: true`, accepts confirm answers only from its own `confirm.html` (not web-accessible) for the pending confirm's id, and drops queued confirms nobody waits for.
+
 ## 0.7.1 (2026-10-22)
 
 ### Changed

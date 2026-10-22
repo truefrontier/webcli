@@ -39,6 +39,12 @@
       <button id="retry" class="btn btn-sm">Retry</button>
     </div>
 
+    <button id="confirms" class="confirm-banner" hidden>
+      <span class="cb-dot" aria-hidden="true"></span>
+      <span id="confirms-label" class="cb-label"></span>
+      <span class="cb-go">Review<svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span>
+    </button>
+
     <section id="pending" class="banner" hidden aria-labelledby="pending-title">
       <div class="banner-head">
         <svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>
@@ -76,7 +82,7 @@
         <span class="seg-thumb" aria-hidden="true"></span>
         <button id="lvl-off" class="seg-btn" data-level="off" aria-pressed="true" title="Unshare this tab">Off</button>
         <button id="share-read" class="seg-btn" data-level="read" aria-pressed="false" title="Agents may read this tab (badge R)"><span class="seg-dot" aria-hidden="true"></span>Read</button>
-        <button id="share-act" class="seg-btn" data-level="act" aria-pressed="false" title="Reserved for actions in a later version (badge A); reading works"><span class="seg-dot" aria-hidden="true"></span>Act</button>
+        <button id="share-act" class="seg-btn" data-level="act" aria-pressed="false" title="Agents may read and act in this tab (badge A); risky actions ask you first"><span class="seg-dot" aria-hidden="true"></span>Act</button>
       </div>
       <p id="hint" class="hint"></p>
       <div id="msg" class="msg" role="status" aria-live="polite" hidden></div>
