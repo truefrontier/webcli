@@ -1,0 +1,378 @@
+"""chromecli-host: the native messaging host Chrome spawns for the chromecli extension.
+
+stdin/stdout: Chrome's native framing (protocol.read_frame / encode_frame). It refuses to run unless argv[1] is the
+extension's origin, takes flock(run/chromecli.lock) (a second host answers {"event":"error","code":"host_busy"} and
+exits), serves run/chromecli.sock (0600 in the 0700 run/ dir; one JSON line each way per connection), forwards each
+CLI request to the extension with an id and a timeout, pushes the [chromecli] policy on start and whenever
+config.toml changes (2s mtime poll), writes one redacted audit line per op to logs/chromecli.log, and exits on stdin
+EOF (Chrome closed the port), unlinking the socket. It never prints anything but frames on stdout.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import socket
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any, BinaryIO
+
+from webcli import __version__
+from webcli.chromecli import LOCK_NAME, LOG_NAME, SOCKET_NAME, install, policy, protocol
+from webcli.core import config
+from webcli.core.errors import ConfigError
+from webcli.core.redact import redact_text, redact_url
+
+DEFAULT_TIMEOUT = 30.0
+MAX_TIMEOUT = 300.0
+POLL_SECONDS = 2.0
+SUN_PATH_MAX = 104
+
+
+def audit(line: str) -> None:
+    """One redacted line in logs/chromecli.log (0600, rotated). Never raises."""
+    try:
+        from webcli.core.output import logger
+
+        logger(LOG_NAME).info(redact_text(line))
+    except Exception:
+        pass
+
+
+def digest(text: str) -> str:
+    """How a value the bot typed (a query, later typed text) appears in the log: its size and a short hash."""
+    return f"<{len(text)} chars sha256:{hashlib.sha256(text.encode()).hexdigest()[:8]}>"
+
+
+def socket_path() -> Path:
+    return config.run_dir() / SOCKET_NAME
+
+
+def listen(path: Path) -> socket.socket:
+    """The unix socket, created 0600 (umask 0177) in its 0700 directory (core/daemon.listen's pattern)."""
+    if len(str(path).encode()) >= SUN_PATH_MAX:
+        raise OSError(f"Socket path too long for macOS ({len(str(path))} bytes): {path}")
+    path.unlink(missing_ok=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old = os.umask(0o177)
+    try:
+        server.bind(str(path))
+    finally:
+        os.umask(old)
+    path.chmod(0o600)
+    server.listen(16)
+    return server
+
+
+def take_lock() -> Any | None:
+    """flock(run/chromecli.lock), non-blocking: the open file (keep it), or None when another host holds it."""
+    fd = os.open(config.run_dir() / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+    handle = os.fdopen(fd, "r+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
+def _summary(op: str, args: dict) -> str:
+    parts = []
+    if "tab" in args:
+        parts.append(f"tab={args.get('tab')}")
+    if args.get("active"):
+        parts.append("tab=active")
+    if op == "tabs.read":
+        parts.append(f"as={args.get('as', 'text')} elements={bool(args.get('elements'))}")
+    if op == "history.search" and args.get("query"):
+        parts.append(f"query={digest(str(args['query']))}")
+    return " ".join(parts)
+
+
+class Host:
+    def __init__(self, stdin: BinaryIO, stdout: BinaryIO) -> None:
+        self.stdin, self.stdout = stdin, stdout
+        self.write_lock = threading.Lock()
+        self.pending: dict[str, dict] = {}
+        self.pending_lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.hello: dict | None = None
+        self.last_event: dict | None = None
+        self.policy_ack: dict | None = None
+        self.started = time.time()
+        self.policy: dict | None = None
+        self.config_error: str | None = None
+        self.config_stamp: tuple | None = None
+        self.server: socket.socket | None = None
+        self.sock_path: Path | None = None
+
+    # extension side
+    def send(self, message: dict) -> None:
+        frame = protocol.encode_frame(message, protocol.HOST_TO_EXT_MAX)
+        with self.write_lock:
+            self.stdout.write(frame)
+            self.stdout.flush()
+
+    def read_loop(self) -> None:
+        try:
+            while not self.stopped.is_set():
+                try:
+                    msg = protocol.read_frame(self.stdin, protocol.EXT_TO_HOST_MAX)
+                except protocol.ProtocolError as exc:
+                    audit(f"event=bad_frame code={exc.code} {exc.message}")
+                    break
+                if msg is None:
+                    break
+                if isinstance(msg, dict) and "event" in msg:
+                    self.on_event(msg)
+                elif isinstance(msg, dict) and msg.get("id"):
+                    with self.pending_lock:
+                        slot = self.pending.get(str(msg["id"]))
+                    if slot is not None:
+                        slot["reply"] = msg
+                        slot["done"].set()
+        finally:
+            self.stop("stdin closed")
+
+    def on_event(self, msg: dict) -> None:
+        kind = msg.get("event")
+        if kind == "hello":
+            self.hello = {k: msg.get(k) for k in ("extVersion", "extensionId", "paused", "shares", "jevConfigured",
+                                                  "policyHash", "policyPending")}
+            shares = msg.get("shares") if isinstance(msg.get("shares"), list) else []
+            audit(f"event=hello ext={msg.get('extVersion')} paused={msg.get('paused')} shares={len(shares)} "
+                  f"policy {msg.get('policyHash')}")
+            if self.policy and msg.get("policyHash") != self.policy["hash"]:
+                self.push_policy()
+        elif kind == "policy_ack":
+            self.policy_ack = {"policyHash": msg.get("policyHash"), "accepted": msg.get("accepted"),
+                               "pending": msg.get("pending")}
+            audit(f"event=policy_ack policy {msg.get('policyHash')} accepted={msg.get('accepted')}")
+        elif kind in ("share_changed", "paused_changed"):
+            self.last_event = {"event": kind, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            if kind == "paused_changed" and self.hello is not None:
+                self.hello["paused"] = msg.get("paused")
+            origin = redact_url(str(msg.get("origin"))) if msg.get("origin") else ""
+            audit(f"event={kind} tab={msg.get('tab')} origin={origin} level={msg.get('level')} "
+                  f"paused={msg.get('paused')} reason={msg.get('reason')}")
+        else:
+            audit(f"event={redact_text(str(kind))}")
+
+    # config / policy
+    def _stamp(self) -> tuple | None:
+        try:
+            st = (config.home() / config.CONFIG_NAME).stat()
+            return (st.st_mtime_ns, st.st_size, st.st_ino)
+        except FileNotFoundError:
+            return None
+
+    def reload_policy(self) -> bool:
+        """Re-read [chromecli]; True when the policy changed."""
+        self.config_stamp = self._stamp()
+        try:
+            new = policy.load()
+        except ConfigError as exc:
+            if self.config_error != str(exc):
+                audit(f"event=config_error {exc}")
+            self.config_error = str(exc)
+            return False
+        self.config_error = None
+        if self.policy and new["hash"] == self.policy["hash"]:
+            return False
+        self.policy = new
+        return True
+
+    def push_policy(self) -> None:
+        if self.policy:
+            try:
+                self.send({"event": "policy", "policy": self.policy})
+                audit(f"event=policy_push policy {self.policy['hash']}")
+            except (OSError, protocol.ProtocolError) as exc:
+                audit(f"event=policy_push_failed {exc}")
+
+    def watch_config(self) -> None:
+        while not self.stopped.wait(POLL_SECONDS):
+            if self._stamp() != self.config_stamp and self.reload_policy():
+                self.push_policy()
+
+    # CLI side
+    def host_info(self) -> dict:
+        return {"pid": os.getpid(), "version": __version__, "socket": str(self.sock_path),
+                "since": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.started)),
+                "helloReceived": self.hello is not None,
+                "policyHash": (self.policy or {}).get("hash"), "configError": self.config_error,
+                "policyAck": self.policy_ack}
+
+    def forward(self, req: dict) -> dict:
+        req_id = uuid.uuid4().hex[:16]
+        try:
+            timeout = float(req["client"].get("timeoutMs") or DEFAULT_TIMEOUT * 1000) / 1000
+        except (TypeError, ValueError):
+            timeout = DEFAULT_TIMEOUT
+        timeout = min(max(timeout, 1.0), MAX_TIMEOUT)
+        slot = {"done": threading.Event(), "reply": None}
+        with self.pending_lock:
+            self.pending[req_id] = slot
+        try:
+            try:
+                self.send({"v": protocol.VERSION, "id": req_id, "op": req["op"], "args": req["args"],
+                           "confirm": req["confirm"]})
+            except protocol.ProtocolError as exc:
+                return protocol.reply_error(req_id, exc.code, exc.message)
+            except OSError as exc:
+                return protocol.reply_error(req_id, "bridge_down", f"Can't write to Chrome: {exc}")
+            deadline = time.monotonic() + timeout
+            while not slot["done"].wait(0.2):
+                if self.stopped.is_set():
+                    return protocol.reply_error(req_id, "bridge_down", "Chrome closed the connection.")
+                if time.monotonic() >= deadline:
+                    return protocol.reply_error(req_id, "timeout", f"The extension didn't answer {req['op']} "
+                                                                   f"within {timeout:g}s.")
+            reply = slot["reply"]
+        finally:
+            with self.pending_lock:
+                self.pending.pop(req_id, None)
+        if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
+            return protocol.reply_error(req_id, "bad_request", "The extension sent a malformed reply.")
+        return reply
+
+    def handle(self, line: bytes) -> dict:
+        start = time.monotonic()
+        op, args = "?", {}
+        try:
+            req = protocol.validate_request(json.loads(line.decode("utf-8")))
+            op, args = req["op"], req["args"]
+        except protocol.ProtocolError as exc:
+            reply = protocol.reply_error(None, exc.code, exc.message)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            reply = protocol.reply_error(None, "bad_request", "A request is one line of JSON.")
+        else:
+            if self.config_error and op != "status":
+                reply = protocol.reply_error(None, "config_error", self.config_error)
+            else:
+                reply = self.forward(req)
+            if op == "status" and reply.get("ok") and isinstance(reply.get("result"), dict):
+                reply["result"]["host"] = self.host_info()
+        self.audit_op(op, args, reply, (time.monotonic() - start) * 1000)
+        return reply
+
+    def audit_op(self, op: str, args: dict, reply: dict, ms: float) -> None:
+        result = reply.get("result") if isinstance(reply.get("result"), dict) else {}
+        err = reply.get("error") if isinstance(reply.get("error"), dict) else {}
+        url = result.get("url") or err.get("url")
+        origin = result.get("origin") or err.get("origin")
+        code = None if reply.get("ok") else str(err.get("code") or "error")
+        where = " ".join(x for x in (f"origin={redact_url(str(origin))}" if origin else "",
+                                     f"url={redact_url(str(url))}" if url else "") if x)
+        audit(f"op={op} {_summary(op, args)} {where} outcome={'ok' if code is None else code} "
+              f"exit={0 if code is None else protocol.exit_code(code)} ms={ms:.0f}")
+
+    def serve_client(self, conn: socket.socket) -> None:
+        with conn:
+            conn.settimeout(10)
+            buf = b""
+            try:
+                while b"\n" not in buf and len(buf) <= protocol.CLI_REQUEST_MAX:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+            except OSError:
+                return
+            if len(buf) > protocol.CLI_REQUEST_MAX:
+                reply = protocol.reply_error(None, "too_large", "Request over 1 MiB.")
+            else:
+                reply = self.handle(buf.split(b"\n", 1)[0])
+            try:
+                conn.settimeout(None)
+                conn.sendall(json.dumps(reply, separators=(",", ":")).encode() + b"\n")
+            except OSError:
+                pass
+
+    def accept_loop(self) -> None:
+        while not self.stopped.is_set():
+            try:
+                conn, _ = self.server.accept()
+            except OSError:
+                break
+            threading.Thread(target=self.serve_client, args=(conn,), daemon=True).start()
+
+    def stop(self, why: str) -> None:
+        if self.stopped.is_set():
+            return
+        self.stopped.set()
+        audit(f"event=host_stop reason={why}")
+        if self.server is not None:
+            try:
+                self.server.close()
+            except OSError:
+                pass
+        if self.sock_path is not None:
+            try:
+                self.sock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def run(self) -> int:
+        self.sock_path = socket_path()
+        self.server = listen(self.sock_path)
+        audit(f"event=host_start pid={os.getpid()} version={__version__}")
+        self.reload_policy()
+        self.push_policy()
+        threads = [threading.Thread(target=self.accept_loop, daemon=True),
+                   threading.Thread(target=self.watch_config, daemon=True)]
+        for t in threads:
+            t.start()
+        self.read_loop()
+        return 0
+
+
+def _refuse(stdout: BinaryIO, code: str, message: str) -> None:
+    try:
+        stdout.write(protocol.encode_frame({"event": "error", "code": code, "message": message}))
+        stdout.flush()
+    except OSError:
+        pass
+
+
+def main(argv: list[str] | None = None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> int:
+    argv = list(sys.argv if argv is None else argv)
+    stdin = stdin or sys.stdin.buffer
+    stdout = stdout or sys.stdout.buffer
+    origin = argv[1] if len(argv) > 1 else ""
+    if origin not in install.allowed_origins():
+        audit(f"event=refused reason=bad_origin origin={redact_text(origin)[:120]}")
+        _refuse(stdout, "bad_origin", "chromecli-host only talks to the chromecli extension.")
+        return 1
+    lock = take_lock()
+    if lock is None:
+        audit("event=refused reason=host_busy")
+        _refuse(stdout, "host_busy", "Another chromecli-host is already running.")
+        return 1
+    try:
+        return Host(stdin, stdout).run()
+    except OSError as exc:
+        audit(f"event=host_failed {exc}")
+        _refuse(stdout, "bridge_down", f"chromecli-host couldn't start: {exc}")
+        return 1
+    finally:
+        lock.close()
+
+
+def entry() -> None:
+    """The chromecli-host console script (Chrome runs it; never run it by hand)."""
+    os.umask(0o077)
+    raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    entry()

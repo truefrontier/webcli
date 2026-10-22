@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>chromecli</title>
+<style>
+  body { font: 13px -apple-system, BlinkMacSystemFont, sans-serif; width: 340px; margin: 10px; color: #202124; }
+  h1 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .muted { color: #5f6368; font-size: 12px; }
+  .box { border: 1px solid #dadce0; border-radius: 6px; padding: 8px; margin: 8px 0; }
+  .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  button { font: inherit; padding: 4px 10px; border-radius: 4px; border: 1px solid #dadce0; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.read { border-color: #1a73e8; color: #1a73e8; }
+  button.act { border-color: #e8710a; color: #e8710a; }
+  button.on { color: #fff; }
+  button.read.on { background: #1a73e8; }
+  button.act.on { background: #e8710a; }
+  button.warn { border-color: #c5221f; color: #c5221f; }
+  .err { color: #c5221f; }
+  .ok { color: #188038; }
+  ul { margin: 4px 0 0; padding-left: 16px; }
+  #audit li { font-size: 11px; color: #5f6368; }
+  .origin { word-break: break-all; }
+</style>
+</head>
+<body>
+  <h1><span>chromecli</span><span id="version" class="muted"></span></h1>
+  <div id="host" class="muted"></div>
+  <div class="box">
+    <div id="title"></div>
+    <div id="origin" class="muted origin"></div>
+    <div id="denied" class="err"></div>
+    <div class="row">
+      <button id="share-read" class="read" title="Agents may read this tab (badge R)">Share-read</button>
+      <button id="share-act" class="act" title="Reserved for actions in a later version (badge A); reading works">Share-act</button>
+      <button id="unshare">Unshare</button>
+    </div>
+    <div id="msg" class="muted"></div>
+  </div>
+  <div class="row">
+    <button id="pause" class="warn">Pause agents</button>
+    <button id="unshare-all">Unshare all</button>
+  </div>
+  <div id="pending" class="box" hidden>
+    <b>Policy change waiting for you</b>
+    <div class="muted">A [chromecli] edit in ~/.webcli/config.toml widens access:</div>
+    <ul id="pending-list"></ul>
+    <div class="row"><button id="accept" class="act">Accept</button><button id="reject">Reject</button></div>
+  </div>
+  <div class="box">
+    <div class="muted">Recent activity</div>
+    <ul id="audit"></ul>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
