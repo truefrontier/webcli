@@ -167,6 +167,105 @@ def test_message_text():
             parse.message_text(bad)
 
 
+# --- Live-shaped threads (sanitized captures of WhatsApp Web, Oct 2026) ---------------------------------------------
+
+LIVE_TODAY = date(2025, 10, 23)  # the captures' dates are shifted; "Today" in them is this day
+
+
+def live(name: str) -> str:
+    return fixture(f"thread_live_{name}.html")
+
+
+CHAT = "Placeholder Chat Name"  # the fake page shows the opened chat's name here
+
+
+def live_as_chat(name: str) -> str:
+    return live(name).replace("Direct Chat Placeholder", CHAT).replace("Group Chat Placeholder", CHAT)
+
+
+def live_with_rows(rows: str) -> str:
+    """A minimal live-shaped #main for CHAT whose message list holds `rows`."""
+    return (f'<div id="main"><header><div data-testid="conversation-info-header-chat-title"><span dir="auto">{CHAT}'
+            f'</span></div></header><div data-testid="conversation-panel-messages">{rows}</div></div>')
+
+
+def test_live_rows_have_bare_ids_and_no_direction_classes():
+    html = live("group_bottom")
+    assert 'data-id="true_' not in html and 'data-id="false_' not in html and "message-out" not in html
+    found = parse.thread(html, "Group Chat Placeholder", today=LIVE_TODAY)
+    assert found["header"] == "Group Chat Placeholder" and found["group"] is True
+    assert found["rows"] == 24 and len(found["messages"]) == 7  # the rest are virtualised (empty) rows
+    assert all(m["id"].startswith("FAKEMSGID") for m in found["messages"])
+
+
+def test_a_live_group_thread():
+    rows = parse.thread(live("group_top"), "Group Chat Placeholder", today=LIVE_TODAY)["messages"]
+    first, second = rows[0], rows[1]
+    assert (first["sender"], first["direction"], first["datetime"], first["text"]) == (
+        "Sender B", "received", "2025-07-28T19:49", "Placeholder text 34")
+    assert (second["sender"], second["direction"], second["status"]) == ("You", "sent", "read")
+    assert second["quoted"] == {"sender": "Sender B", "text": "Placeholder text 35"}  # the quote isn't its text
+    assert [m["media"] for m in rows if m["media"]] == ["sticker"]
+    assert all(m["datetime"] for m in rows)
+    assert {m["sender"] for m in rows} == {"You", "Sender B", "Sender C"}
+
+
+def test_a_live_group_voice_note_and_a_reply_to_yourself():
+    rows = parse.thread(live("group_bottom"), "Group Chat Placeholder", today=LIVE_TODAY)["messages"]
+    voice = next(m for m in rows if m["media"] == "voice note")
+    assert (voice["sender"], voice["direction"], voice["text"]) == ("Sender B", "received", "[voice note]")
+    assert any(m["quoted"] == {"sender": "You", "text": "Placeholder text 15"} for m in rows)
+    assert [m["status"] for m in rows if m["direction"] == "sent"][-1] == "delivered"
+
+
+def test_a_live_one_to_one_thread():
+    found = parse.thread(live("direct_top"), "Direct Chat Placeholder", today=LIVE_TODAY)
+    assert found["group"] is False  # an author inside a quote doesn't make it a group
+    rows = found["messages"]
+    assert {m["sender"] for m in rows} == {"You", "Sender A"}
+    assert all((m["sender"] == "You") == (m["direction"] == "sent") for m in rows)
+    doc = next(m for m in rows if m["media"] == "document")
+    assert doc["text"] == "[document] Document placeholder.pdf" and doc["sender"] == "Sender A"
+    assert "[deleted]" in [m["text"] for m in rows]
+    assert [m["media"] for m in rows].count("image") >= 1
+
+
+def test_a_continued_run_takes_its_sender_from_the_run():
+    rows = parse.thread(live("direct_top"), "Direct Chat Placeholder", today=LIVE_TODAY)["messages"]
+    continued = [m for m in rows if m["_continued"]]
+    assert continued and all(m["sender"] in ("You", "Sender A") for m in continued)
+    seq = [{"sender": None, "direction": "received", "_continued": False},
+           {"sender": None, "direction": "received", "_continued": True}]
+    assert [m["sender"] for m in parse.fill_senders(seq, "Pat", False)] == ["Pat", "Pat"]  # 1:1: the chat's name
+    seq = [{"sender": "Sender B", "direction": "received", "_continued": False}, None,
+           {"sender": None, "direction": "received", "_continued": True}]
+    assert [m["sender"] for m in parse.fill_senders(seq, "Group", True)] == ["Sender B", None]  # a gap breaks a run
+
+
+def test_screens_read_while_scrolling_merge_by_id_in_order():
+    seen = parse.Collected()
+    bottom = parse.thread(live("direct_bottom"), "Direct Chat Placeholder", today=LIVE_TODAY)
+    top = parse.thread(live("direct_top"), "Direct Chat Placeholder", today=LIVE_TODAY)
+    assert seen.add(bottom) == len(bottom["messages"])
+    assert seen.add(top) > 0 and seen.add(top) == 0
+    rows = seen.messages()
+    ids = [m["id"] for m in rows]
+    assert len(ids) == len(set(ids)) == 21
+    dated = [m["datetime"] for m in rows if m["datetime"]]
+    assert dated == sorted(dated) and dated[-1] == "2025-10-19T15:18"
+    assert seen.rows == 49 and seen.missing(rows) > 0  # these two looks skip the screens in between
+    assert seen.missing(rows[-3:]) == 0
+
+
+def test_list_rows_follow_their_translate_y_not_the_document_order():
+    swapped = (fixture("chat_list.html").replace("translateY(0px)", "translateY(@)")
+               .replace("translateY(72px)", "translateY(0px)").replace("translateY(@)", "translateY(72px)"))
+    assert [r["name"] for r in parse.chats(swapped)][:2] == ["Alice Smith", "Family Group"]
+    rows = parse.chats(swapped, positions=True)
+    assert rows[0]["_y"] == 0 and "_y" not in parse.public(rows)[0]
+    assert "_y" not in parse.chats(fixture("chat_list.html"))[0]
+
+
 # --- fetch, against a scripted page ---------------------------------------------------------------------------------
 
 NEW = "<!--NEW-->"
@@ -217,7 +316,8 @@ class Loc:
         self.page.focus = kind
         if kind == "target":
             self.page.open = self.page.opens_as.get(self.page.marked, self.page.marked)
-            self.page.main = thread_for(self.page.open)
+            html = self.page.thread_html
+            self.page.main = thread_for(self.page.open) if html is None else html.replace(CHAT, self.page.open)
         elif kind == "send":
             self.page.press_send()
 
@@ -263,7 +363,7 @@ class WhatsAppPage:
     url = "https://web.whatsapp.com/"
 
     def __init__(self, *, snap=None, search_html=None, opens_as=None, has_compose=True, has_send=True,
-                 draft="", delivers=True, tick="msg-time", switch_on_type=None):
+                 draft="", delivers=True, tick="msg-time", switch_on_type=None, thread_html=None, scrolls=None):
         self.snap = snap if snap is not None else {"list": True, "rows": 6, "main": False}
         self.list_html = fixture("chat_list.html")
         self.search_html = search_html if search_html is not None else fixture("search.html")
@@ -278,6 +378,9 @@ class WhatsAppPage:
         self.focus = None
         self.keyboard = Keyboard(self)
         self.policy = None
+        self.thread_html = thread_html
+        self.scrolls = list(scrolls or [])  # what #main shows after each scroll-up (live WhatsApp re-renders)
+        self.scroll_args: list = []
 
     async def goto(self, url, **_options):
         self.actions.append(("goto", url))
@@ -300,6 +403,13 @@ class WhatsAppPage:
             if "#main" in arg:
                 return self.main
             return None
+        if "/* wa:scroll-up */" in js and self.scrolls:
+            self.actions.append(("scroll",))
+            self.scroll_args.append(arg)
+            self.main = self.scrolls.pop(0).replace(CHAT, self.open)
+            return True
+        if "/* wa:scroll-up */" in js:
+            self.scroll_args.append(arg)
         if "/* wa:scroll-list */" in js or "/* wa:scroll-up */" in js or "/* wa:use-here */" in js:
             self.actions.append(("scroll" if "scroll" in js else "use-here",))
             return False
@@ -384,6 +494,36 @@ def test_read_since(web):
     web(WhatsAppPage())
     found = asyncio.run(fetch.messages("Alice Smith", 20, "2026-10-22T10:00"))
     assert [m["text"] for m in found["messages"]] == ["Groceries:\nmilk\neggs", "On my way"]
+
+
+def test_read_scrolls_a_screen_at_a_time_and_merges_what_each_screen_shows(web):
+    page = web(WhatsAppPage(thread_html=live_as_chat("direct_bottom"), scrolls=[live_as_chat("direct_top")]))
+    found = asyncio.run(fetch.messages("Alice Smith", 100))
+    assert len(found["messages"]) == 21 and found["rows"] == 49 and found["missing"] > 0
+    assert page.scroll_args[0] == [dom.alternatives(SELECTORS["scroller"]), fetch.SCROLL_STEP]
+    assert 0 < fetch.SCROLL_STEP < 1  # never a jump straight to the top: rows in between would never render
+    assert all(set(m) == {"id", "sender", "direction", "time", "datetime", "text", "media", "quoted", "status"}
+               for m in found["messages"])
+    assert page.writes() == []
+
+
+def test_read_stops_scrolling_once_the_limit_is_met(web):
+    page = web(WhatsAppPage(thread_html=live_as_chat("group_bottom"), scrolls=[live_as_chat("group_top")]))
+    found = asyncio.run(fetch.messages("Alice Smith", 3))
+    assert len(found["messages"]) == 3 and page.scroll_args == [] and found["missing"] == 0
+
+
+def test_a_chat_whose_rows_never_render_is_an_error_not_an_empty_list(web):
+    web(WhatsAppPage(thread_html=live_with_rows("")))
+    with pytest.raises(RuntimeError, match="no message rows rendered"):
+        asyncio.run(fetch.messages("Alice Smith", 5))
+
+
+def test_a_chat_whose_rows_dont_parse_is_an_error_not_an_empty_list(web):
+    rows = "".join(f'<div role="row"><div data-id="ID{i}"><div>?</div></div></div>' for i in range(3))
+    web(WhatsAppPage(thread_html=live_with_rows(rows)))
+    with pytest.raises(RuntimeError, match="shows 3 message rows, but none could be read"):
+        asyncio.run(fetch.messages("Alice Smith", 5))
 
 
 def test_read_falls_back_to_search_and_refuses_an_ambiguous_name(web):
@@ -581,6 +721,30 @@ def test_read_chats_and_search_print_rows(calls):
     assert json.loads(run("search", "sam", "--format", "json").stdout)[2]["type"] == "contact"
     answers["search"] = []
     assert run("search", "zzz", "--format", "json").exit_code == 3
+
+
+def test_read_never_exits_0_silently_with_nothing(calls):
+    _, answers = calls
+
+    def unreadable(*args, **kwargs):
+        raise RuntimeError("The chat 'Alice Smith' opened and shows 3 message rows, but none could be read.")
+
+    answers["messages"] = unreadable
+    result = run("read", "Alice Smith", "--format", "json")
+    assert result.exit_code == 5 and result.stdout == "" and "none could be read" in result.stderr
+    answers["messages"] = {"chat": "Alice Smith", "messages": [], "rows": 12, "missing": 0}
+    result = run("read", "Alice Smith", "--since", "2026-10-22", "--format", "json")
+    assert result.exit_code == 0 and json.loads(result.stdout) == []
+    assert "No messages in 'Alice Smith' at or after 2026-10-22" in result.stderr
+
+
+def test_read_warns_about_rows_that_never_rendered(calls):
+    _, answers = calls
+    rows = parse.public(parse.thread(live("direct_top"), "Direct Chat Placeholder", today=LIVE_TODAY)["messages"])
+    answers["messages"] = {"chat": "Direct Chat Placeholder", "messages": rows, "rows": 49, "missing": 2}
+    result = run("read", "Direct Chat Placeholder", "--format", "json")
+    assert result.exit_code == 0 and "2 message rows" in result.stderr
+    assert list(json.loads(result.stdout)[0])[0] == "id"
 
 
 def test_status_without_a_profile_is_not_linked(monkeypatch):

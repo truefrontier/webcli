@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.11.2 (2026-10-22)
+
+`webcli whatsapp read` answered `[]` with exit 0 for a chat full of messages (field report: a three-person group).
+
+### Fixed
+
+- **WhatsApp `read` on today's WhatsApp Web.** Message rows now carry a bare `data-id` (no `true_` / `false_`
+  prefix) and no `message-in` / `message-out` classes, so every row was skipped as a date label. Rows are now found
+  by `data-testid="conv-msg-*"` / `[role=row] [data-id]` as well; direction comes from the hidden `You:` label (and
+  the tails); the sender from `data-pre-plain-text`, the hidden `<Name>:` label, the group author, or the run it
+  continues (in a 1:1, the chat's name); the date from `data-pre-plain-text` (a quoted line's `> ` prefix is
+  skipped), else the date separators, which are no longer rows. Quotes, voice notes, stickers, images, documents
+  (file name), reactions and link previews parse in the new shape.
+- **No more silent empty reads.** After opening a chat, `read` waits up to 15s for message rows; when none render, or
+  rows render and none parses, it exits 5 with a hint instead of printing `[]`. An empty result now only comes from
+  `--since` and says so on stderr.
+- **History past the first screen.** WhatsApp renders only the rows near the viewport, so jumping to the top lost
+  everything in between. `read` now scrolls up about a screen at a time (still 1.2s apart, at most 40 steps, stopping
+  once `--limit` / `--since` is met) and merges each screen by message id, in order; rows in the returned span that
+  never rendered are warned about.
+- **Chat list and search order.** Rows are put in their on-screen order (their `translateY`), not the recycled DOM
+  order, so `chats` and search sections no longer shuffle.
+
+### Added
+
+- `read` rows carry `id` (WhatsApp's message id).
+- Sanitized live fixtures `tests/fixtures/whatsapp/thread_live_*.html` (placeholders only; see its README) and
+  tests for the live shape, the scroll-and-merge, and the no-rows / unreadable-rows errors.
+
 ## 0.11.1 (2026-10-22)
 
 chromecli on pages whose content lives in iframes or closed shadow roots (field report: a signNow agreement, where

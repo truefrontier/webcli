@@ -17,7 +17,7 @@ from typing import Iterator
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 SKIP = {"script", "style", "template", "noscript", "svg"}
-BLOCK = {"div", "p", "li", "br", "tr", "section", "article", "header", "footer"}
+BLOCK = {"div", "p", "li", "br", "tr", "section", "article", "header", "footer", "blockquote"}
 BIDI = re.compile("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
