@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; `send` writes only with `--confirm`). Plus `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; `send` writes only with `--confirm`) and `webcli whatsapp` (your WhatsApp chats through WhatsApp Web, unofficial; `send` writes only with `--confirm` and an exact `--expect-chat`). Plus `identity`, `doctor`, `sites`, and `serve`.
 - `chromecli`: the tabs you share from your real, signed-in Chrome, through the chromecli extension and a native messaging host: read them, and act in them (open, navigate, click, fill, ...) with your OK in the browser for anything risky; see [chromecli](#chromecli-tabs-you-share).
 
 All three binaries come from one Python package and share one core and one data home, `~/.webcli/`.
@@ -31,6 +31,7 @@ Each identity is one Chrome profile. There are seven:
 | `linkedin:default` | `webcli linkedin` | `~/.webcli/identities/linkedin-default/chrome-profile` |
 | `loom:default` | `webcli loom` | `~/.webcli/identities/loom-default/chrome-profile` |
 | `messages:default` | `webcli messages` | `~/.webcli/identities/messages-default/chrome-profile` |
+| `whatsapp:default` | `webcli whatsapp` | `~/.webcli/identities/whatsapp-default/chrome-profile` |
 
 Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 
@@ -42,6 +43,7 @@ webcli identity login facebook:default   # Facebook (its own profile, not Muse's
 webcli identity login linkedin:default   # LinkedIn (writes refuse unless signed in as your configured author)
 webcli identity login loom:default       # Loom
 webcli identity login messages:default   # Google Messages: scan the QR code with your phone
+webcli whatsapp login                    # WhatsApp Web (= webcli identity login whatsapp:default): scan its QR code
 ```
 
 Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
@@ -53,6 +55,8 @@ The Google data sites have no sign-in of their own. One `webcli identity login g
 `webcli facebook` has its own identity, `facebook:default`. It used to share Muse's `meta:default`, but Muse's sign-in leaves only Facebook's device cookies there, never its session (`c_user` and `xs`), so `webcli facebook status` stayed signed out. `webcli identity login facebook:default` finishes only once Facebook's own session is set, the account reads as signed in from `/me`, and a fresh hidden Chrome on the profile agrees. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
 
 `webcli messages` has its own identity, `messages:default`, because Google Messages for web pairs with your phone, not with a Google account. `webcli identity login messages:default` opens Messages on its QR code page. On the phone, open Google Messages, then **Device pairing > QR code scanner**, and scan the code. Leave **Remember this computer** on. Login finishes once the conversation list shows and a fresh hidden Chrome on the profile is paired too. The pairing lives in that profile. Nothing is copied from `~/.google-messages-cli`, and there is no `gmsg` alias.
+
+`webcli whatsapp` has its own identity, `whatsapp:default`, linked to your phone as a WhatsApp Web device. `webcli whatsapp login` (same as `webcli identity login whatsapp:default`) opens WhatsApp Web on its QR code. On the phone, open WhatsApp, then **Settings > Linked devices > Link a device**, and scan the code. Login finishes once the chat list shows and a fresh hidden Chrome on the profile is linked too. The link lives in that profile and never leaves this computer; the phone lists it under Linked devices, where you can log it out. No agent scans the code or works around it.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
@@ -87,6 +91,9 @@ webcli facebook sync && webcli facebook search --city springfield      # read-on
 webcli loom transcript https://www.loom.com/share/<id>                 # Loom's official transcript, as text
 webcli messages read Alice --limit 20           # read-only: reading doesn't mark it read
 webcli messages send --to Alice --text "On my way"                     # dry run: shows who it would go to
+webcli whatsapp chats --unread                  # chat list: name, last message, time, unread count
+webcli whatsapp read "Family Group" --limit 30  # opening a chat may send read receipts
+webcli whatsapp send "Alice Smith" --text "On my way" --expect-chat "Alice Smith"   # dry run
 webcli doctor                                   # hardening, Chrome, identities, daemons
 ```
 
@@ -105,24 +112,27 @@ The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-fi
 | 5 | site or network error |
 | 6 | rate limited: JSON `{"error":"rate_limited","code":6,"message",...,"resets_at"}` (or `model_fallback` with `--strict-model`) |
 | 7 | config error (config.toml, identity, site) |
-| 8 | sent but not verified: a confirmed write went out, but the site didn't show it afterwards (`messages send`; JSON `{"error":"sent_unverified","code":8,...}`). Check it; don't send it again |
+| 8 | sent but not verified: a confirmed write went out, but the site didn't show it afterwards (`messages send`, `whatsapp send`; JSON `{"error":"sent_unverified","code":8,...}`). Check it; don't send it again |
 | 128+N | killed by signal N |
 
 ## Writes
 
-Only five data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
+Only six data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
 
 - `webcli contacts label add|remove LABEL` adds the selected contacts to one of your labels or removes them from it.
 - `webcli gmail filters create|delete` creates one filter or deletes one filter.
 - `webcli linkedin messages send THREAD --text T` sends one DM to one existing thread (`--send` works too).
 - `webcli linkedin post create --text T --image P` publishes one post: text plus one image.
 - `webcli messages send --to QUERY --text T` sends one text to one existing conversation. It never starts a new one.
+- `webcli whatsapp send CHAT --text T --expect-chat NAME` sends one text to one existing WhatsApp chat, only when its name is exactly NAME. It never starts a new chat and sends no attachments.
 
-Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin and messages, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; one DM or one post, bound to its thread, sender, text, and image; or one Google Messages send. See [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md).
+Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin, messages, and whatsapp, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; one DM or one post, bound to its thread, sender, text, and image; or one Google Messages send. See [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md).
 
 `chromecli` (a separate command) also writes, only with `--confirm` and only in tabs you share or it opened: `open`, `focus`, `close`, `navigate`, `click`, `type`, `fill`, `select`, `press` (`eval` is disabled). Without `--confirm`, or with `--dry-run`, each prints a preview and sends nothing to Chrome. Risky ones wait for your *Allow once* in a chromecli window in Chrome. See [chromecli](#chromecli-tabs-you-share).
 
 Google Messages encrypts each message end to end between the browser and your phone, so its guard can't read the conversation or the text. The guard can read each phone action's type. It passes listing calls and blocks everything else, mark-as-read and typing included. A confirmed send first checks, in the page, that the open conversation is the one it resolved and that the compose box holds exactly your text. Only then does the guard open one slot for a single `SEND_MESSAGE`, for 10 seconds after the click. Afterwards, `confirmed` says whether the conversation showed the text. See [docs/messages-site.md](https://github.com/truefrontier/webcli/blob/main/docs/messages-site.md).
+
+WhatsApp Web's traffic is one end-to-end encrypted WebSocket, so `webcli whatsapp` reads the rendered page and its guard can only hold it to WhatsApp's own hosts (GET only, plus that socket). A confirmed send checks, in the page, that the chat it resolved, the open chat's header (before typing and again right before the click), and `--expect-chat` are exactly the same name, and that the compose box was empty and then holds exactly your text; afterwards `confirmed` says whether your message showed with a tick. WhatsApp's terms prohibit automated access, so it stays gentle: on-demand commands only, no polling, a pause after every scroll, and a block or challenge page stops the command. A send needs Kevin's own OK for that exact message. See [docs/whatsapp-site.md](https://github.com/truefrontier/webcli/blob/main/docs/whatsapp-site.md).
 
 The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle matches the expected author. No author ships as a default: set yours with `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml`. Until one is configured, every LinkedIn write refuses. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md).
 

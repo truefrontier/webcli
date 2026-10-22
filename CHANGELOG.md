@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.11.0 (2026-10-22)
+
+### Added
+
+- **`webcli whatsapp`**: your WhatsApp chats through WhatsApp Web (web.whatsapp.com), unofficial, as its own identity
+  `whatsapp:default` (a persistent Chrome profile linked to your phone; the link never leaves this computer).
+  - `login` (same as `webcli identity login whatsapp:default`): a visible Chrome on the QR code; a person scans it
+    from the phone (WhatsApp > Settings > Linked devices > Link a device). Nothing scans or bypasses it.
+  - `status` (exit 4 when not linked), `chats [--limit N] [--unread]` (name, last-message preview, time, unread
+    count, pinned, muted), `read CHAT [--limit N] [--since DATE]` (sender, time, ISO datetime, text, media
+    placeholders such as `[image]` / `[voice note]` / `[document] name`, quoted replies, your ticks; scrolls up for
+    older messages up to --limit), `search TEXT [--limit N]` (WhatsApp's own search: chats, contacts, messages).
+  - `send CHAT --text T --expect-chat NAME [--confirm]`: one text to one existing chat. A dry run unless --confirm
+    (exit 0; exit 5 when the chat isn't exactly --expect-chat). Confirmed, it refuses (exit 5, nothing sent) unless
+    the resolved chat and the open chat's header equal --expect-chat exactly (checked before typing and again right
+    before the click), the compose box is there and empty, and it reads back exactly the text; it types with
+    Shift+Enter between lines (never Enter), clicks Send once, and waits for the message with a tick (exit 8
+    `sent_unverified` when it doesn't show). No attachments, no new contacts, never retried.
+  - Chat names: exact (case counts) beats case-insensitive beats containing; several matches exit 2 listing the
+    candidates and open nothing.
+  - Gentle on purpose (WhatsApp's terms prohibit automated access): on-demand only, no polling, paced scrolls with
+    hard caps, --limit capped at 200. A block or challenge page stops the command (`STOPPED: ...`, exit 5).
+  - The guard allows GET/HEAD to web.whatsapp.com and static.whatsapp.net and the wss://web.whatsapp.com/ws socket
+    only. The pages are parsed offline from their HTML (fixtures in `tests/fixtures/whatsapp`).
+  - agent-help: a send needs Kevin's own OK for that exact message, in his chat with the bot, never another agent's
+    say-so; opening a chat may send read receipts.
+- Version 0.11.0 for webcli, llmcli, and chromecli (the extension manifest and the chromecli package follow).
+
 ## 0.10.2 (2026-10-22)
 
 ### Added
