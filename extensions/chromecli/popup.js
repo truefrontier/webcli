@@ -1,5 +1,5 @@
 import { allowToPermission, permissionPattern } from "./policy.js";
-import { auditRow, confirmsLabel, grantJev, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
+import { auditRow, confirmsLabel, grantJev, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, loosenWords, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
 let tab = null;
@@ -114,8 +114,12 @@ function render() {
 
   // pending policy
   $("pending").hidden = !state.pending;
-  $("pending-list").replaceChildren(...(state.pending?.loosening || []).map((l) =>
-    el("li", {}, el("span", { class: "k" }, loosenLabel(l)), el("span", { class: "v" }, String(l.value)))));
+  $("pending-list").replaceChildren(...(state.pending?.loosening || []).map((l) => {
+    const words = loosenWords(l);
+    const li = el("li", {}, el("span", { class: "k" }, loosenLabel(l)), el("span", { class: "v" }, String(l.value)));
+    if (words) li.append(el("span", { class: "w" }, words));
+    return li;
+  }));
 
   // shared tabs
   const shared = [...(state.shared || [])].sort((a, b) => (b.tabId === tab?.id) - (a.tabId === tab?.id) || (b.at || 0) - (a.at || 0));
@@ -186,8 +190,13 @@ function msg(text, err = false) {
 
 async function share(level) {
   // permissions.request must run straight from the click (user gesture): nothing is awaited before it.
-  const granted = chrome.permissions.request({ origins: [permissionPattern(tab.origin)] });
-  if (!(await granted)) { msg("Chrome didn't grant access to this site; not shared.", true); return; }
+  // 0.11.3: Act also asks for the accepted frame_act_allow origins (one prompt), so listed app frames work there.
+  const frames = level === "act" ? (state?.frameActAllow || []).map(allowToPermission).filter(Boolean) : [];
+  const granted = chrome.permissions.request({ origins: [permissionPattern(tab.origin), ...frames] });
+  if (!(await granted)) {
+    msg(frames.length ? "Chrome didn't grant access to this site and its frame_act_allow app sites; not shared." : "Chrome didn't grant access to this site; not shared.", true);
+    return;
+  }
   const res = await send({ type: "share", tabId: tab.id, origin: tab.origin, level });
   if (!res.ok) msg(res.error, true); else msg(level === "act" ? "Shared (act)." : "Shared (read).");
   await load();
@@ -228,7 +237,7 @@ $("retry").addEventListener("click", async () => {
 });
 $("accept").addEventListener("click", async () => {
   const origins = (state.pending?.loosening || [])
-    .filter((l) => l.kind === "read_allow_added" || l.kind === "act_allow_added")
+    .filter((l) => l.kind === "read_allow_added" || l.kind === "act_allow_added" || l.kind === "frame_act_allow_added")
     .map((l) => allowToPermission(l.value)).filter(Boolean);
   if (origins.length) { try { await chrome.permissions.request({ origins }); } catch { /* optional */ } }
   await send({ type: "acceptPolicy" });

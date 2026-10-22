@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.3 (2026-10-22)
+
+Two narrow, Kevin-accepted loosenings in chromecli: one URL shape through a path deny (the Shopify OAuth install
+page), and acting inside a listed app's iframe (As Described inside Shopify admin). Nothing here removes a gate.
+
+### Added
+
+- **`deny_except`** in `[chromecli]`: full `https://host/path` patterns, `*` within one path segment, query ignored
+  (e.g. `https://admin.shopify.com/store/*/oauth/install`). A matching URL is not denied for that URL only, and only
+  when every deny hit is a path deny (`path:/oauth`, `host/path`); host/origin denies and the built-in deny always win.
+  Refused: http, wildcard hosts, ports, whole origins, `**`, all-wildcard paths, the Chrome Web Store. Adding or
+  changing a pattern is loosening (pending until Accept; the popup says it in plain words); removing applies at once.
+  Replies, the host log (`deny_except=`) and the popup activity ("via deny exception") say when an exception allowed
+  access.
+- **`frame_act_allow`** in `[chromecli]`: exact https origins. click/fill/type/select/press on a frame ref (`f5:e3`)
+  work only when the tab is Share-act'd by Kevin (or inherits his Act share), the frame's origin is listed and not
+  denied, and Chrome grants chromecli host access to it (asked in the popup on Accept, or when setting Act; never
+  silently; else exit 4 `permission_needed`). Everything else still exits 2 `bad_target` `frame_ref`. Same gates as
+  the top frame (heuristics, Jev ≥ 0.7 safe, confirm window, `--confirm`); the confirm window shows the frame;
+  results carry `frameId` / `frameOrigin`, the log `frame=N frame_origin=`. Listed frames on act tabs are readable.
+  Adding is loosening (pending until Accept); removing applies at once.
+- **`grant add --frame-origin ORIGIN`**: a pre-approval for an element inside a frame from that origin (and only
+  there; grants without it never cover a frame). Jev's scope check sees the frame. Batch approvals ("approved to click
+  Scan, Review fixes, Apply and Undo in As Described ...") are one grant per target, `--uses N` for repeats.
+
+### Changed
+
+- Gate words now include `install`, `uninstall`, `authorize`/`authorise` (an app's Install button always asks).
+- Pending policy changes in the popup show plain-words descriptions for deny exceptions and frame origins.
+
 ## 0.11.2 (2026-10-22)
 
 `webcli whatsapp read` answered `[]` with exit 0 for a chat full of messages (field report: a three-person group).

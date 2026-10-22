@@ -24,7 +24,8 @@ test("'Place order', 'Delete', and the other submit words are gated anywhere", (
   assert.deepEqual(gateReasons("click", { tag: "div", role: "button", name: "", title: "Publish now" }), ["submit_word:publish"]);
   for (const w of ["buy", "purchase", "order", "pay", "checkout", "send", "post", "publish", "tweet", "reply", "submit",
     "confirm", "delete", "remove", "destroy", "transfer", "withdraw", "subscribe", "unsubscribe", "accept", "agree",
-    "approve", "sign out", "signout", "log out", "logout", "merge", "deploy"]) {
+    "approve", "sign out", "signout", "log out", "logout", "merge", "deploy", "install", "uninstall", "authorize",
+    "authorise"]) {
     assert.ok(SUBMIT_WORDS.test(`Please ${w} now`), w);
     assert.equal(gateReasons("click", btn(w[0].toUpperCase() + w.slice(1))).length, 1, w);
   }

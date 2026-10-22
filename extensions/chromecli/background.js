@@ -3,7 +3,7 @@
 // window (one at a time, others queue), badges, and a 200-entry audit ring buffer for the popup.
 // The extension is the authority: the host and CLI are untrusted callers.
 import {
-  DEFAULT_POLICY, acceptPending, applyIncoming, denied, matches, originOf, pendingAffects, permissionPattern,
+  DEFAULT_POLICY, acceptPending, applyIncoming, denied, denyException, matches, originOf, pendingAffects, permissionPattern,
   rejectPending, validPolicy,
 } from "./policy.js";
 import { displayValue, gateReasons } from "./gate.js";
@@ -169,11 +169,20 @@ async function handleRequest(req) {
     origin = err.origin || null;
     reply = { v: 1, id: req.id, ok: false, error: err };
   }
+  // 0.11.3: say when a deny exception (deny_except) is what let this URL through (host log + popup audit).
+  const info0 = reply.ok ? reply.result : reply.error;
+  if (info0 && typeof info0 === "object" && req.op !== "status") {
+    let url = typeof info0.url === "string" ? info0.url : null;
+    if (!url && Number.isInteger(info0.tab)) { try { url = (await chrome.tabs.get(info0.tab)).url || null; } catch { /* closed */ } }
+    const ex = url ? denyException(url, (await getPolicyState()).active) : null;
+    if (ex) info0.denyExcept = ex;
+  }
   post(reply);
   if (req.op !== "status") {
     const info = reply.ok ? reply.result : reply.error;
     const extra = info && Array.isArray(info.reasons) && info.reasons.length
       ? { reasons: info.reasons, confirmedInBrowser: !!info.confirmedInBrowser } : {};
+    if (info?.denyExcept) extra.denyExcept = info.denyExcept;
     await auditAdd({ op: req.op, tab: args.tab ?? info?.tab ?? (args.active ? "active" : null), origin,
       outcome: reply.ok ? "ok" : reply.error.code, ...extra });
   }
@@ -360,7 +369,7 @@ async function statusInfo() {
     shares: Object.entries(shares).map(([tab, s]) => ({ tab: Number(tab), origin: s.origin, level: s.level })),
     policy: { hash: st.active.hash, pending: !!st.pending, pendingLoosening: st.pending?.loosening || [],
       implicitActive: st.active.implicit_active, history: st.active.history, deny: st.active.deny,
-      readAllow: st.active.read_allow, actAllow: st.active.act_allow },
+      denyExcept: st.active.deny_except || [], frameActAllow: st.active.frame_act_allow || [], readAllow: st.active.read_allow, actAllow: st.active.act_allow },
   };
 }
 
@@ -429,7 +438,9 @@ async function tabFrames(tab, origin) {
   try { rows = await chrome.webNavigation.getAllFrames({ tabId: tab.id }); } catch { return topOnly; }
   if (!Array.isArray(rows) || !rows.some((f) => f.frameId === 0)) return topOnly;
   const st = await getPolicyState();
-  const { allowed, skipped } = await classifyFrames(rows, { tabOrigin: origin, policy: st.active, hasPermission: hasHostPermission });
+  // 0.11.3: frame_act_allow origins count only on tabs Kevin shared Act himself (or inherited Act), never bot tabs.
+  const actOrigins = (st.active.frame_act_allow || []).length && (await tabKind(tab)) === "act" ? st.active.frame_act_allow : [];
+  const { allowed, skipped } = await classifyFrames(rows, { tabOrigin: origin, policy: st.active, hasPermission: hasHostPermission, actOrigins });
   return { allowed, skipped, rows, listed: true };
 }
 
@@ -800,7 +811,8 @@ async function autoShare(tabId, url) {
     await setShares(shares);
   });
   post({ event: "share_changed", tab: tabId, origin, level, reason: "bot-opened" });
-  await auditAdd({ op: `auto-share-${level}`, tab: tabId, origin, outcome: "ok" });
+  const ex = denyException(url, st.active);
+  await auditAdd({ op: `auto-share-${level}`, tab: tabId, origin, outcome: "ok", ...(ex ? { denyExcept: ex } : {}) });
   await updateBadge(tabId);
   return { level };
 }
@@ -947,19 +959,53 @@ function normTarget(t, optional) {
   if (given.length === 0 && optional) return null;
   if (given.length !== 1) throw new OpError("bad_target", "Give exactly one target: selector, ref, text (+ role), or find.");
   const k = given[0];
-  if (k === "ref") topFrameRef(String(tt.ref));
+  if (k === "ref" && !parseFrameRef(String(tt.ref))) {
+    throw new OpError("bad_target", `${tt.ref} isn't an element ref (eN or fN:eN, from read --elements or find).`, { reason: "bad_ref" });
+  }
   return k === "text" ? { text: String(tt.text), ...(tt.role ? { role: String(tt.role) } : {}) } : { [k]: String(tt[k]) };
 }
 
-// Page actions stay in the top frame (0.11.1 reads frames, it doesn't act in them): a frame ref ("f12:e3", from
-// read --elements or find) is refused.
-function topFrameRef(ref) {
+// Page actions act in the top frame. 0.11.3: a frame ref ("f12:e3", from read --elements or find) is allowed only
+// when (a) Kevin shared the tab Act (or it inherited Act; never a bot-opened tab), (b) the frame's origin is exactly
+// in frame_act_allow and isn't denied, and (c) chromecli has host access to that origin. Anything else: bad_target
+// reason frame_ref (policy_pending while a pending change would allow it; permission_needed without host access).
+// Returns {frameId, frameOrigin, ref (the frame-local eN)}; {frameId: 0} for top-frame refs.
+async function frameTarget(tab, origin, ref) {
   const f = parseFrameRef(ref);
-  if (f && f.frameId !== 0) {
-    throw new OpError("bad_target", `${ref} is in iframe ${f.frameId}; chromecli reads iframes but only acts in the top frame.`,
-      { reason: "frame_ref", frameId: f.frameId, ref });
+  if (!f || f.frameId === 0) return { frameId: 0, ref: f ? f.ref : ref };
+  const refuse = (why, extra = {}) => new OpError("bad_target", `${ref} is in iframe ${f.frameId}: ${why}`,
+    { tab: tab.id, origin, reason: "frame_ref", frameId: f.frameId, ref, ...extra });
+  const kind = await tabKind(tab);
+  const st = await getPolicyState();
+  const fr = await tabFrames(tab, origin);
+  const row = fr.allowed.find((x) => x.frameId === f.frameId) || fr.skipped.find((x) => x.frameId === f.frameId);
+  if (!row) {
+    throw new OpError("script_error", `No frame ${f.frameId} in this tab (it navigated or closed); read it again.`,
+      { tab: tab.id, origin, reason: "frame_unreachable", frameId: f.frameId });
   }
-  return ref;
+  const fo = row.origin;
+  const listed = (st.active.frame_act_allow || []).includes(fo);
+  if (kind !== "act") {
+    throw refuse(kind === "bot" ? "frames are acted in only on tabs Kevin shared Act (this tab was opened by an agent)."
+      : "frames are acted in only on tabs Kevin shared Act.", { frameOrigin: fo, tabKind: kind });
+  }
+  if (!listed) {
+    if (fo && st.pending?.loosening.some((l) => l.kind === "frame_act_allow_added" && l.value === fo)) {
+      throw new OpError("policy_pending", `Acting in ${fo} frames waits on a pending policy change (Kevin: Accept in the popup).`,
+        { tab: tab.id, origin, frameId: f.frameId, frameOrigin: fo });
+    }
+    throw refuse(`${fo || "its origin"} isn't in frame_act_allow (chromecli acts only in the top frame and listed frame origins).`,
+      { frameOrigin: fo });
+  }
+  if (row.reason === "denied") throw refuse(`${fo} is denied; no frame_act_allow entry overrides the deny list.`, { frameOrigin: fo, frameReason: "denied" });
+  if (row.reason === "no_host_permission") {
+    throw new OpError("permission_needed", `chromecli has no host access to ${fo} (frame ${f.frameId}).`,
+      { tab: tab.id, origin, frameId: f.frameId, frameOrigin: fo, reason: "no_host_permission",
+        hint: "Kevin: Accept the policy change in the popup (it asks Chrome for access), or set the tab to Act again in the popup." });
+  }
+  if (row.reason) throw refuse(`the frame is skipped (${row.reason}).`, { frameOrigin: fo, frameReason: row.reason });
+  if (!row.frameAct) throw refuse(`${fo} frames can't be acted in here.`, { frameOrigin: fo });
+  return { frameId: f.frameId, frameOrigin: fo, ref: f.ref };
 }
 
 async function pagePre(args, need = "act") {
@@ -981,10 +1027,11 @@ function noResultMessage(res) {
   return m ? `In-page error: ${m}` : "The page returned nothing (it navigated or reloaded during the call, or the page script was blocked).";
 }
 
-async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
+async function inject(tab, origin, func, spec, { afterDispatch = false, frameId = 0 } = {}) {
   let res;
   try {
-    [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func, args: [spec] });
+    const target = frameId ? { tabId: tab.id, frameIds: [frameId] } : { tabId: tab.id };
+    [res] = await chrome.scripting.executeScript({ target, world: "ISOLATED", func, args: [spec] });
   } catch (e) {
     const m = String(e?.message || e);
     if (/permission|cannot access|must request/i.test(m)) throw new OpError("permission_needed", m, { tab: tab.id, origin, reason: "no_host_permission" });
@@ -999,7 +1046,7 @@ async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
   if (!out.ok) {
     // 0.10.2 spread the reply with code/message set to undefined, which wiped them from the error (a bare script_error).
     const { ok, code, message, diag, ...extra } = out;
-    throw new OpError(code || "script_error", message || "Page action failed.", { tab: tab.id, origin, ...extra });
+    throw new OpError(code || "script_error", message || "Page action failed.", { tab: tab.id, origin, ...(frameId ? { frameId } : {}), ...extra });
   }
   return out;
 }
@@ -1027,18 +1074,25 @@ async function pageOp(op, args, req) {
       throw new OpError("ambiguous_target", `No element clearly matches that description (${r.list[0] ? r.list[0].source : "no candidates"}).`,
         { tab: tab.id, origin, candidates: r.list.slice(0, 5), jev });
     }
-    topFrameRef(r.pick);
     found = { ref: r.pick, source: r.list.find((c) => c.ref === r.pick)?.source || "heuristic" };
     target = { ref: r.pick };
   }
+  // 0.11.3: a frame ref acts in that frame only under frameTarget's rules (else frame_ref, nothing dispatched).
+  let frame = { frameId: 0 };
+  if (target?.ref != null) {
+    frame = await frameTarget(tab, origin, target.ref);
+    target = { ref: frame.ref };
+  }
+  const fopt = { frameId: frame.frameId };
+  const fwhere = frame.frameId ? { frameId: frame.frameId, frameOrigin: frame.frameOrigin } : {};
   const spec = { mode: "describe", op, target, key: args.key };
-  const d = await inject(tab, origin, pageAction, spec);
+  const d = await inject(tab, origin, pageAction, spec, fopt);
   const element = d.element;
   const extra = [];
   if ((op === "click" || op === "press") && j.use) {
     try {
-      const resp = await callJev(globalThis.fetch, j.cfg.key, classifyBody({ model: j.cfg.model, page: { origin, title: tab.title || "" },
-        element: classifyElement(element) }));
+      const resp = await callJev(globalThis.fetch, j.cfg.key, classifyBody({ model: j.cfg.model,
+        page: { origin: frame.frameOrigin || origin, title: tab.title || "" }, element: classifyElement(element) }));
       const c = parseClassify(resp, j.cfg.floor);
       const gate = classifyGate(c, kind, j.cfg);
       if (gate) extra.push(gate);
@@ -1056,29 +1110,34 @@ async function pageOp(op, args, req) {
   if (jevFailed) extra.push(...fallbackFor(kind, element));
   // Jev only adds gates; the heuristic ones always stay.
   const reasons = mergeReasons(gateReasons(op, element, { key: args.key }), extra);
-  const where = { tab: tab.id, origin, element, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
+  const where = { tab: tab.id, origin, ...fwhere, element, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
   let confirmedInBrowser = false;
   // A pre-approval grant can answer the gate, unless a reason is never skippable (secret / payment fields, eval).
   const g = reasons.length && canSkip(reasons)
-    ? await findGrant(op, { tab, origin, element, value: args.value, key: args.key, spec, fingerprint: d.fingerprint }) : {};
+    ? await findGrant(op, { tab, origin, element, value: args.value, key: args.key, spec, fingerprint: d.fingerprint,
+      frameId: frame.frameId, frameOrigin: frame.frameOrigin || null }) : {};
   if (g.used) {
     if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
     await grantUsedSideEffects(g.used, { op, name: element?.name || element?.tag || "", origin, tab: tab.id });
   }
   if (reasons.length && !g.used) {
     const value = ["type", "fill", "select"].includes(op) ? displayValue(args.value, element) : null;
-    await confirmOrThrow({ op, origin, url: tab.url, title: tab.title || "", element, reasons, value,
+    await confirmOrThrow({ op, origin, url: tab.url, title: tab.title || "", element, reasons, value, ...fwhere,
       key: op === "press" ? String(args.key) : null, ...(g.near ? { grant: g.near } : {}) }, req, where);
     confirmedInBrowser = true;
     // Re-check every precondition after the confirm (spec 6.6).
     if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
-    await pagePre(args);
+    const again = await pagePre(args);
+    if (frame.frameId) {
+      const f2 = await frameTarget(again.tab, origin, `f${frame.frameId}:${frame.ref}`);
+      if (f2.frameOrigin !== frame.frameOrigin) throw new OpError("script_error", "The frame navigated during the confirm; nothing was done.", { ...where, reason: "frame_unreachable" });
+    }
   }
   if (op === "click" || op === "press") noteAction(tab.id);
   const t0 = Date.now();
   const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
-    { afterDispatch: true });
-  const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true,
+    { afterDispatch: true, ...fopt });
+  const out = { tab: tab.id, origin, ...fwhere, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true,
     verified: null, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}), ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
   // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
   if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
@@ -1096,7 +1155,8 @@ async function pageOp(op, args, req) {
     const ok = await waitFor(async () => {
       const t = await chrome.tabs.get(tab.id);
       if (originOf(t.url || "") !== origin) return false;
-      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func: pageProbe, args: [{ text: String(verify.text) }] });
+      const [r] = await chrome.scripting.executeScript({ target: frame.frameId ? { tabId: tab.id, frameIds: [frame.frameId] } : { tabId: tab.id },
+        world: "ISOLATED", func: pageProbe, args: [{ text: String(verify.text) }] }).catch(() => [null]);
       return !!r?.result?.found;
     }, 10000, 250);
     if (!ok) failed.push("text");
@@ -1251,7 +1311,7 @@ async function liveGrants() {
 // The grant that answers this gate, if any: {used} (already consumed) or {near} (scope matched, amount didn't).
 async function findGrant(op, c) {
   const now = Date.now();
-  const cands = (await liveGrants()).filter((g) => g.op === op && g.origin === c.origin);
+  const cands = (await liveGrants()).filter((g) => g.op === op && g.origin === c.origin && (g.frameOrigin || null) === (c.frameOrigin || null));
   if (!cands.length) return {};
   let insp = {};
   if (PAGE_GRANT_OPS.includes(op)) {
@@ -1260,14 +1320,15 @@ async function findGrant(op, c) {
     const autoAmount = cands.some((g) => g.maxAmount != null && !g.amountSelector);
     if (selectors.length || amountSelectors.length || autoAmount) {
       try {
-        insp = await inject(c.tab, c.origin, pageAction, { ...c.spec, mode: "inspect", selectors, amountSelectors, autoAmount });
+        insp = await inject(c.tab, c.origin, pageAction, { ...c.spec, mode: "inspect", selectors, amountSelectors, autoAmount },
+          { frameId: c.frameId || 0 });
       } catch { return {}; } // can't inspect: no grant, Kevin confirms
       if (c.fingerprint && insp.fingerprint && insp.fingerprint !== c.fingerprint) return {}; // the page changed
     }
   }
   let near = null;
   for (const g of cands) {
-    const m = grantMatches(g, { op, origin: c.origin, now, element: c.element, value: c.value, key: c.key, url: c.url,
+    const m = grantMatches(g, { op, origin: c.origin, frameOrigin: c.frameOrigin || null, now, element: c.element, value: c.value, key: c.key, url: c.url,
       selectorHit: g.target?.selector ? insp.selectorHits?.[g.target.selector] === true : undefined });
     if (!m.ok) continue;
     const texts = g.maxAmount == null ? [] : (insp.amountTexts?.[g.amountSelector || "_auto"] || []);
@@ -1320,7 +1381,8 @@ async function grantAdd(args) {
     throw e;
   }
   const st = await getPolicyState();
-  const why = denied(`${g.origin}/`, st.active) || (g.urlPrefix ? denied(g.urlPrefix, st.active) : null);
+  const why = denied(`${g.origin}/`, st.active) || (g.urlPrefix ? denied(g.urlPrefix, st.active) : null)
+    || (g.frameOrigin ? denied(`${g.frameOrigin}/`, st.active) : null);
   if (why) throw new OpError("origin_blocked", `${g.origin} is denied (${why}); no grant can cover it.`, { origin: g.origin });
   // Jev checks the grant's scope against the quote. No key or no answer: fail closed (nothing granted; prompts stay).
   const cfg = await getJev();
@@ -1396,12 +1458,19 @@ async function pageProbeOp(args) {
   if (target?.find != null) {
     const r = await locate(tab, origin, String(target.find), { use: false, mode: "off" });
     if (!r.pick) return { ...base, found: false, wouldFail: "ambiguous_target", candidates: r.list.slice(0, 5) };
-    if (parseFrameRef(r.pick)?.frameId) return { ...base, found: false, wouldFail: "bad_target", reason: "frame_ref", candidates: r.list.slice(0, 5) };
     target = { ref: r.pick };
+  }
+  let pframe = { frameId: 0 };
+  if (target?.ref != null) {
+    try { pframe = await frameTarget(tab, origin, target.ref); } catch (e) {
+      if (!(e instanceof OpError)) throw e;
+      return { ...base, found: false, wouldFail: e.code, message: e.message, ...(e.extra?.reason ? { reason: e.extra.reason } : {}) };
+    }
+    target = { ref: pframe.ref };
   }
   let d;
   try {
-    d = await inject(tab, origin, pageAction, { mode: "describe", op, target, key: args.key });
+    d = await inject(tab, origin, pageAction, { mode: "describe", op, target, key: args.key }, { frameId: pframe.frameId });
   } catch (e) {
     if (!(e instanceof OpError)) throw e;
     return { ...base, found: false, wouldFail: e.code, message: e.message,
@@ -1411,7 +1480,7 @@ async function pageProbeOp(args) {
   const jev = await getJev();
   const jevApplies = jev.configured && (op === "click" || op === "press") && args.jev !== "off";
   const bar = kind === "act" ? jev.actSafeFloor : jev.floor;
-  return { ...base, found: true, element: d.element, gateEstimate: {
+  return { ...base, ...(pframe.frameId ? { frameId: pframe.frameId, frameOrigin: pframe.frameOrigin } : {}), found: true, element: d.element, gateEstimate: {
     heuristic, wouldPrompt: heuristic.length ? true : jevApplies ? "depends_on_jev" : false,
     ...(jevApplies ? { jev: `Jev classifies at run time: no Jev prompt if it is >= ${bar} sure the ${op} is safe (${kind} tab).` } : {}),
     grantSkippable: heuristic.length ? canSkip(heuristic) : null } };
@@ -1447,7 +1516,8 @@ async function inheritShare(tabId, url) {
   inh.last = { share: level };
   if (changed) {
     post({ event: "share_changed", tab: tabId, origin, level, reason: `opened from tab ${inh.opener}` });
-    await auditAdd({ op: `inherit-share-${level}`, tab: tabId, origin, outcome: `from tab ${inh.opener}` });
+    const ex = denyException(url, st.active);
+    await auditAdd({ op: `inherit-share-${level}`, tab: tabId, origin, outcome: `from tab ${inh.opener}`, ...(ex ? { denyExcept: ex } : {}) });
     await updateBadge(tabId);
   }
 }
@@ -1520,7 +1590,7 @@ async function popupMessage(msg) {
       return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url), favIconUrl: tab.favIconUrl || "" },
         shared,
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
-        paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
+        paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus, frameActAllow: st.active.frame_act_allow || [],
         shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION,
         confirms: pendingConfirms(), jevConfigured: (await getJev()).configured,
         grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
@@ -1557,7 +1627,8 @@ async function popupMessage(msg) {
         await setShares(shares);
       });
       post({ event: "share_changed", tab: tab.id, origin, level: msg.level, reason: "shared" });
-      await auditAdd({ op: `share-${msg.level}`, tab: tab.id, origin, outcome: "ok" });
+      const ex = denyException(tab.url || "", st.active);
+      await auditAdd({ op: `share-${msg.level}`, tab: tab.id, origin, outcome: "ok", ...(ex ? { denyExcept: ex } : {}) });
       await updateBadge(tab.id);
       return { ok: true };
     }

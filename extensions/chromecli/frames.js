@@ -57,7 +57,9 @@ export function shortUrl(url) {
 // frames: webNavigation.getAllFrames() rows {frameId, parentFrameId, url, errorOccurred?}. Returns
 // {allowed: [{frameId, parentFrameId, url, origin, depth}], skipped: [{kind: "iframe", frameId, parentFrameId, origin,
 // url, reason}]}, parents before children. hasPermission(origin) -> Promise<bool>.
-export async function classifyFrames(frames, { tabOrigin, policy, hasPermission, max = MAX_FRAMES }) {
+// 0.11.3: actOrigins (frame_act_allow, passed only for tabs Kevin shared Act): frames from exactly these origins are
+// read too (not denied, and only with host access), marked frameAct: true so page actions may target them.
+export async function classifyFrames(frames, { tabOrigin, policy, hasPermission, max = MAX_FRAMES, actOrigins = [] }) {
   const rows = (Array.isArray(frames) ? frames : []).filter((f) => f && Number.isInteger(f.frameId));
   const byId = new Map(rows.map((f) => [f.frameId, f]));
   const kids = new Map();
@@ -83,13 +85,15 @@ export async function classifyFrames(frames, { tabOrigin, policy, hasPermission,
       else if (f.errorOccurred) reason = "load_error";
       else if (!origin) reason = "opaque_origin";
       else if (denied(/^https?:/i.test(f.url || "") ? f.url : `${origin}/`, policy)) reason = "denied";
-      else if (origin !== tabOrigin) {
+      else if (actOrigins.includes(origin)) {
+        if (origin !== tabOrigin && !(await hasPermission(origin))) reason = "no_host_permission";
+      } else if (origin !== tabOrigin) {
         if (!sameSite(origin, tabOrigin)) reason = "other_site";
         else if (!(await hasPermission(origin))) reason = "no_host_permission";
       }
       if (!reason && allowed.length >= max) reason = "too_many_frames";
-      if (reason) skipped.push({ kind: "iframe", ...row, reason });
-      else allowed.push({ ...row, url: f.url || "", depth: parent.depth + 1 });
+      if (reason) skipped.push({ kind: "iframe", ...row, reason, ...(actOrigins.includes(origin) ? { frameActAllowed: true } : {}) });
+      else allowed.push({ ...row, url: f.url || "", depth: parent.depth + 1, ...(actOrigins.includes(origin) ? { frameAct: true } : {}) });
       queue.push({ id: f.frameId, origin, ok: !reason, depth: parent.depth + 1 });
     }
   }

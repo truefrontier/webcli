@@ -34,6 +34,9 @@ POLL_SECONDS = 2.0
 SUN_PATH_MAX = 104
 
 
+FRAME_ACT_OPS = {"page.click", "page.fill", "page.type", "page.select", "page.press", "page.probe"}  # 0.11.3
+
+
 def audit(line: str) -> None:
     """One redacted line in logs/chromecli.log (0600, rotated). Never raises."""
     try:
@@ -167,6 +170,8 @@ def _summary(op: str, args: dict) -> str:
             parts.append(f"value={digest(str(args['value']))}")
         if args.get("urlPrefix"):
             parts.append(f"url_prefix={redact_url(str(args['urlPrefix']))}")
+        if args.get("frameOrigin"):  # 0.11.3
+            parts.append(f"frame_origin={redact_url(str(args['frameOrigin']))}")
         if args.get("maxAmount") is not None:
             parts.append(f"max_amount={redact_text(str(args['maxAmount']))[:16]} {redact_text(str(args.get('currency') or 'USD'))[:3]}")
         parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 1800)} user_approved={args.get('userApproved') is True}")
@@ -377,6 +382,13 @@ class Host:
             gate = f" gated={reasons} confirmed={bool(info.get('confirmedInBrowser'))}"
         if code in ("declined", "confirm_timeout"):
             gate += f" confirm={code}"
+        # 0.11.3: an action inside an iframe (frame_act_allow) names the frame and its origin.
+        if isinstance(info.get("frameId"), int) and info["frameId"] > 0 and op in FRAME_ACT_OPS:
+            gate += f" frame={info['frameId']}"
+            if info.get("frameOrigin"):
+                gate += f" frame_origin={redact_url(str(info['frameOrigin']))}"
+        if isinstance(info.get("denyExcept"), str):  # 0.11.3: a deny_except entry is what let this URL through
+            gate += f" deny_except={redact_url(info['denyExcept'])[:200]}"
         if info.get("tabKind") in ("act", "bot", "read"):
             gate += f" tab_kind={info['tabKind']}"
         ji = info.get("jevInfo") if isinstance(info.get("jevInfo"), dict) else None

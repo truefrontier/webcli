@@ -4,7 +4,7 @@
 // Output: reasons (empty = not gated). Jev (jev.js) may add reasons (jev:<choice>,
 // jev_unavailable); it never removes these.
 
-export const SUBMIT_WORDS = /\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy)\b/i;
+export const SUBMIT_WORDS = /\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy|install|uninstall|authori[sz]e)\b/i;
 export const SENSITIVE_NAME = /card|cvv|cvc|iban|routing|ssn/i;
 export const CREDENTIAL_AUTOCOMPLETE = /(?:^|\s)(current-password|new-password|one-time-code)(?:\s|$)/i;
 export const PAYMENT_AUTOCOMPLETE = /(?:^|\s)cc-[a-z-]+(?:\s|$)/i;

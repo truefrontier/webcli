@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  DEFAULT_DENY, DEFAULT_POLICY, acceptPending, allowToPermission, applyIncoming, denied, loosening, matches,
-  originOf, patternKind, pendingAffects, permissionPattern, rejectPending, tighten, validPolicy,
+  DEFAULT_DENY, DEFAULT_POLICY, acceptPending, allowToPermission, applyIncoming, denied, denyException, exceptError,
+  exceptMatches, loosening, matches, originOf, patternKind, pendingAffects, permissionPattern, rejectPending, tighten, validPolicy,
 } from "../policy.js";
 
 const cases = JSON.parse(readFileSync(new URL("./policy_cases.json", import.meta.url)));
@@ -93,4 +93,69 @@ test("origins and permission patterns", () => {
   assert.equal(allowToPermission("https://docs.python.org"), "https://docs.python.org/*");
   assert.equal(allowToPermission("*.example.com"), "*://*.example.com/*");
   assert.equal(allowToPermission("path:/x"), null);
+});
+
+// ---- 0.11.3 deny exceptions
+const INSTALL = "https://admin.shopify.com/store/*/oauth/install";
+const INSTALL_URL = "https://admin.shopify.com/store/kk-dev/oauth/install?client_id=abc123";
+
+test("deny_except pattern validation (https, exact host, a path, * within one segment, no built-ins)", () => {
+  for (const [p, ok] of cases.except_valid) assert.equal(exceptError(p) === null, ok, `${p}: ${exceptError(p)}`);
+  assert.match(exceptError("https://*.shopify.com/store/*/oauth/install"), /exact/);
+  assert.match(exceptError("http://admin.shopify.com/store/*/oauth/install"), /https/);
+  assert.match(exceptError("https://admin.shopify.com"), /path is required/);
+  assert.match(exceptError("https://chromewebstore.google.com/detail/x"), /built-in/);
+});
+
+test("deny_except matching: the install path only; other paths and hosts stay denied", () => {
+  const ed = cases.except_denied;
+  const p = build({ deny_add: ed.deny_add, deny_except: ed.deny_except }, "e1");
+  for (const [url, isDenied, ex] of ed.urls) {
+    assert.equal(!!denied(url, p), isDenied, `denied ${url}: ${denied(url, p)}`);
+    assert.equal(denyException(url, p), ex, `exception ${url}`);
+  }
+  assert.equal(denied("https://admin.shopify.com/store/x/oauth/other", p), "deny: path:/oauth");
+  assert.equal(denied("https://www.mybank.com/oauth/install", p), "deny: *.mybank.com");
+  assert.ok(exceptMatches(INSTALL, INSTALL_URL));
+  assert.ok(!exceptMatches(INSTALL, "https://admin.shopify.com/store/kk-dev/oauth/other"));
+});
+
+test("adding a deny exception is held pending until Accept; ops there wait (policy_pending)", () => {
+  const inc = build({ deny_except: [INSTALL] }, "e2");
+  const { state, accepted } = applyIncoming({ active: DEFAULT_POLICY, pending: null }, inc);
+  assert.equal(accepted, false);
+  assert.deepEqual(state.pending.loosening, [{ kind: "deny_except_added", value: INSTALL }]);
+  assert.deepEqual(state.active.deny_except, []);
+  assert.ok(denied(INSTALL_URL, state.active));
+  assert.ok(pendingAffects(state, { url: INSTALL_URL }));
+  assert.ok(!pendingAffects(state, { url: "https://admin.shopify.com/store/kk-dev/oauth/other" }));
+  assert.ok(!pendingAffects(state, { url: "https://example.com/oauth/install" }));
+  const acc = acceptPending(state);
+  assert.ok(!denied(INSTALL_URL, acc.active));
+  assert.ok(denied("https://admin.shopify.com/store/kk-dev/oauth/other", acc.active));
+  assert.ok(denied(INSTALL_URL, rejectPending(state).active));
+  // a changed exception is a new one: pending again
+  const changed = applyIncoming(acc, build({ deny_except: ["https://admin.shopify.com/store/*/oauth/grant"] }, "e3"));
+  assert.equal(changed.accepted, false);
+  assert.deepEqual(changed.state.pending.loosening.map((l) => l.kind), ["deny_except_added"]);
+  assert.deepEqual(changed.state.active.deny_except, [], "the old exception is dropped at once (tightening)");
+});
+
+test("removing a deny exception applies at once", () => {
+  const acc = acceptPending(applyIncoming({ active: DEFAULT_POLICY, pending: null }, build({ deny_except: [INSTALL] }, "e4")).state);
+  assert.ok(!denied(INSTALL_URL, acc.active));
+  const { state, accepted } = applyIncoming(acc, build({}, "e5"));
+  assert.equal(accepted, true);
+  assert.equal(state.pending, null);
+  assert.ok(denied(INSTALL_URL, state.active));
+});
+
+test("validPolicy rejects bad deny_except from the host; older hosts without the key still validate", () => {
+  assert.ok(validPolicy({ ...base(), deny_except: [INSTALL] }));
+  const { deny_except: _, ...old } = { ...base(), deny_except: [] };
+  assert.ok(validPolicy(old));
+  for (const bad of ["https://*.shopify.com/x/y", "http://a.com/x", "https://a.com", "https://chromewebstore.google.com/x", "chrome://x/y"]) {
+    assert.ok(!validPolicy({ ...base(), deny_except: [bad] }), bad);
+  }
+  assert.ok(!validPolicy({ ...base(), deny_except: INSTALL }));
 });
