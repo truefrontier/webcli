@@ -89,7 +89,7 @@ export function grantMeta(g, now = Date.now()) {
 
 export function grantsSub(enabled, count) {
   if (!enabled) return "Off: every risky action asks you here";
-  return count ? `${count} active · used once, then gone · Pause revokes all` : "On: agents may record a “yes” you give in chat";
+  return count ? `${count} active · Pause revokes all` : "On: agents may record a “yes” you give in chat";
 }
 
 // "https://www.example.com:8443" -> "www.example.com:8443"; non-URLs pass through.
