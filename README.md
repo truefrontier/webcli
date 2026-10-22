@@ -139,7 +139,7 @@ The LinkedIn writes also check who is signed in. LinkedIn's send and post calls 
 ```sh
 chromecli install-host --confirm         # writes Chrome's NativeMessagingHosts/com.truefrontier.chromecli.json
 chromecli status                         # connected, extension version + ID, paused, shares, policy
-chromecli list                           # tabs you shared (popup: Share-read / Share-act)
+chromecli list                           # tabs you shared (popup: Off / Read / Act)
 chromecli read 123 --as md --elements
 chromecli screenshot --active -o ~/Downloads/t.png
 chromecli history --limit 20

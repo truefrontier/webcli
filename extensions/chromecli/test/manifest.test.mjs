@@ -34,15 +34,25 @@ test("permissions: no blanket host access, no debugger", () => {
 
 test("every referenced file exists", () => {
   for (const f of [manifest.background.service_worker, manifest.action.default_popup,
-    ...Object.values(manifest.icons), "policy.js", "shares.js", "page/extract.js", "popup.js"]) {
+    ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon), "policy.js", "shares.js",
+    "page/extract.js", "popup.js", "popup-view.js", "popup.css"]) {
     assert.ok(existsSync(here(f)), f);
   }
 });
 
 test("no remote code or eval in extension scripts", () => {
-  for (const f of ["background.js", "policy.js", "shares.js", "page/extract.js", "popup.js"]) {
+  for (const f of ["background.js", "policy.js", "shares.js", "page/extract.js", "popup.js", "popup-view.js", "popup.html", "popup.css"]) {
     const src = readFileSync(here(f), "utf8");
     assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), `${f}: eval/new Function`);
     assert.ok(!/import\s*\(\s*["']https?:/.test(src) && !/<script[^>]+src=["']https?:/.test(src), `${f}: remote code`);
   }
+});
+
+test("popup loads no remote assets and no inline script", () => {
+  const html = readFileSync(here("popup.html"), "utf8");
+  const css = readFileSync(here("popup.css"), "utf8");
+  assert.ok(!/(?:src|href)=["']https?:/i.test(html), "popup.html: remote src/href");
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "popup.html: inline <script> (blocked by the MV3 CSP)");
+  assert.ok(!/\son[a-z]+=/i.test(html), "popup.html: inline event handler");
+  assert.ok(!/@import|url\(\s*["']?https?:/i.test(css), "popup.css: remote import/url");
 });

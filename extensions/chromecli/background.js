@@ -390,7 +390,16 @@ async function popupMessage(msg) {
       let tab = null;
       try { tab = msg.tabId != null ? await chrome.tabs.get(msg.tabId) : null; } catch { /* gone */ }
       const url = tab?.url || "";
-      return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url) },
+      // Every shared tab, for the popup's list (read-only view of the share map).
+      const shared = [];
+      for (const [id, s] of Object.entries(shares)) {
+        let t = null;
+        try { t = await chrome.tabs.get(Number(id)); } catch { /* gone; revoked on its own */ }
+        shared.push({ tabId: Number(id), origin: s.origin, level: s.level, at: s.at ?? null,
+          title: t?.title || "", favIconUrl: t?.favIconUrl || "", windowId: t?.windowId ?? null });
+      }
+      return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url), favIconUrl: tab.favIconUrl || "" },
+        shared,
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
         shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION };
