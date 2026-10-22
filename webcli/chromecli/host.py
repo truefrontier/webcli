@@ -150,7 +150,7 @@ def _summary(op: str, args: dict) -> str:
             parts.append(f"url_prefix={redact_url(str(args['urlPrefix']))}")
         if args.get("maxAmount") is not None:
             parts.append(f"max_amount={redact_text(str(args['maxAmount']))[:16]} {redact_text(str(args.get('currency') or 'USD'))[:3]}")
-        parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 1800)}")
+        parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 1800)} user_approved={args.get('userApproved') is True}")
         # Kevin's words, through the same redaction as everything else.
         parts.append(f"quote={json.dumps(redact_text(str(args.get('quote') or ''))[:500], ensure_ascii=False)}")
     if op == "grant.revoke":
@@ -230,9 +230,16 @@ class Host:
             origin = redact_url(str(msg.get("origin"))) if msg.get("origin") else ""
             audit(f"event={kind} tab={msg.get('tab')} origin={origin} level={msg.get('level')} "
                   f"paused={msg.get('paused')} reason={msg.get('reason')}")
-        elif kind in ("grants_cleared", "grants_enabled"):
-            audit(f"event={kind} count={msg.get('count')} enabled={msg.get('enabled')} "
-                  f"reason={redact_text(str(msg.get('reason')))[:60]}")
+        elif kind == "grants_cleared":
+            audit(f"event={kind} count={msg.get('count')} reason={redact_text(str(msg.get('reason')))[:60]}")
+        elif kind in ("grant_added", "grant_refused"):
+            # Jev's scope verdict, with Kevin's words (redacted like everything else).
+            narrowed = ",".join(str(x) for x in (msg.get("narrowed") or []))[:60]
+            audit(f"event={kind} grant={redact_text(str(msg.get('grant')))[:20]} op={redact_text(str(msg.get('op')))[:10]} "
+                  f"origin={redact_url(str(msg.get('origin')))} verdict={redact_text(str(msg.get('verdict')))[:12]} "
+                  f"confidence={msg.get('confidence')} narrowed={narrowed or '-'} "
+                  + (f"reason={json.dumps(redact_text(str(msg.get('reason')))[:300], ensure_ascii=False)} " if msg.get("reason") else "")
+                  + f"quote={json.dumps(redact_text(str(msg.get('quote') or ''))[:500], ensure_ascii=False)}")
         else:
             audit(f"event={redact_text(str(kind))}")
 
@@ -366,6 +373,13 @@ class Host:
                 gate += f" grant_amount={redact_text(str(g['amount']))[:16]}"
         if op == "grant.add" and reply.get("ok") and isinstance(result.get("grant"), dict):
             gate += f" grant={redact_text(str(result['grant'].get('id')))[:20]}"
+        jc = info.get("jevCheck") if op == "grant.add" and isinstance(info.get("jevCheck"), dict) else None
+        if jc:  # 0.10.1: Jev's scope verdict on the grant (the quote itself is in the summary)
+            narrowed = ",".join(str(n.get("field")) for n in (jc.get("narrowed") or []) if isinstance(n, dict))[:60]
+            gate += (f" jev_verdict={redact_text(str(jc.get('verdict')))[:12]} jev_confidence={jc.get('confidence')}"
+                     f" narrowed={narrowed or '-'}")
+            if jc.get("reason"):
+                gate += f" jev_reason={json.dumps(redact_text(str(jc['reason']))[:300], ensure_ascii=False)}"
         opened = info.get("openedTabs") if isinstance(info.get("openedTabs"), list) else []
         if opened:
             gate += " opened=" + ",".join(f"{o.get('id')}:{o.get('share') or 'none'}" for o in opened[:10] if isinstance(o, dict))

@@ -77,6 +77,20 @@ test("0.10.0 pre-approval rows: scope, uses/expiry, subtitle", async () => {
   assert.equal(grantMeta({ usesLeft: 1, expiresAt: now + 28 * 60_000 }, now), "1 use left · 28m left");
   assert.equal(grantMeta({ usesLeft: 3, expiresAt: now + 65 * 60_000 }, now), "3 uses left · 1h 5m left");
   assert.equal(grantMeta({ usesLeft: 1, expiresAt: now - 1 }, now), "expired");
-  assert.match(grantsSub(false, 0), /^Off/);
-  assert.match(grantsSub(true, 2), /^2 active/);
+  assert.match(grantsSub(0), /^None/);
+  assert.match(grantsSub(2), /^2 active/);
+});
+
+test("0.10.1: Jev verdict chip on grant rows; the popup has no pre-approvals toggle", async () => {
+  const { grantJev } = await import("../popup-view.js");
+  assert.equal(grantJev({}), null);
+  assert.deepEqual(grantJev({ jev: { verdict: "authorized", confidence: 0.94, narrowed: [] } }).label, "Jev ✓ 0.94");
+  const n = grantJev({ jev: { verdict: "authorized", confidence: 0.9, narrowed: [{ field: "maxAmount" }, { field: "uses" }] } });
+  assert.equal(n.label, "Jev ✓ 0.90 · narrowed");
+  assert.match(n.title, /narrowed cap, uses/);
+  const fs = await import("node:fs");
+  const html = fs.readFileSync(new URL("../popup.html", import.meta.url), "utf8");
+  const js = fs.readFileSync(new URL("../popup.js", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /grants-toggle|Allow agent pre-approvals|role="switch" aria-checked="false" aria-labelledby="grants/);
+  assert.doesNotMatch(js, /setGrantsEnabled|grantsEnabled/);
 });

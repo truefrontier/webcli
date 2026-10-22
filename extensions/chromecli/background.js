@@ -16,7 +16,8 @@ import {
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
 import { extractPage } from "./page/extract.js";
 import {
-  GrantError, PAGE_GRANT_OPS, amountCheck, canSkip, fmtAmount, grantMatches, grantView, isLive, validateGrant,
+  GrantError, PAGE_GRANT_OPS, amountCheck, canSkip, fmtAmount, grantMatches, grantView, isLive, parseScope, scopeBody,
+  validateGrant,
 } from "./grants.js";
 
 const HOST = "com.truefrontier.chromecli";
@@ -58,11 +59,10 @@ async function markBot(tabId, on = true) {
     await chrome.storage.session.set({ botTabs: bot });
   });
 }
-// Pre-approval grants (0.10.0): session storage, so they die with the browser. Accepted only while Kevin's popup
-// toggle (local "grantsEnabled", default off, settable only from the popup) is on.
+// Pre-approval grants (0.10.0): session storage, so they die with the browser. 0.10.1: no toggle; grant.add needs
+// userApproved: true from the CLI and Jev's scope check (grantAdd).
 const getGrants = async () => (await chrome.storage.session.get("grants")).grants || {};
 const setGrants = (grants) => chrome.storage.session.set({ grants });
-const getGrantsEnabled = async () => (await chrome.storage.local.get("grantsEnabled")).grantsEnabled === true;
 async function clearGrants(reason) {
   const n = Object.keys(await getGrants()).length;
   await withLock(() => setGrants({}));
@@ -967,7 +967,6 @@ async function liveGrants() {
 
 // The grant that answers this gate, if any: {used} (already consumed) or {near} (scope matched, amount didn't).
 async function findGrant(op, c) {
-  if (!(await getGrantsEnabled())) return {};
   const now = Date.now();
   const cands = (await liveGrants()).filter((g) => g.op === op && g.origin === c.origin);
   if (!cands.length) return {};
@@ -1032,31 +1031,52 @@ async function grantUsedSideEffects(g, { op, name, origin, tab }) {
 }
 
 async function grantAdd(args) {
-  if (!(await getGrantsEnabled())) {
-    throw new OpError("grants_disabled", "Pre-approvals are off. Only Kevin can turn on “Allow agent pre-approvals” in the chromecli popup.",
-      { hint: "Ask Kevin to confirm in the browser instead, or to turn the toggle on himself." });
-  }
   let g;
   try { g = validateGrant(args); } catch (e) {
     if (e instanceof GrantError) throw new OpError(e.code, e.message);
     throw e;
   }
   const st = await getPolicyState();
-  const why = denied(`${g.origin}/`, st.active);
+  const why = denied(`${g.origin}/`, st.active) || (g.urlPrefix ? denied(g.urlPrefix, st.active) : null);
   if (why) throw new OpError("origin_blocked", `${g.origin} is denied (${why}); no grant can cover it.`, { origin: g.origin });
+  // Jev checks the grant's scope against the quote. No key or no answer: fail closed (nothing granted; prompts stay).
+  const cfg = await getJev();
+  if (!cfg.configured) {
+    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: "jev_not_configured" });
+    throw new OpError("jev_not_configured", "Pre-approvals need Jev to check the quote against the grant, and no Jev key is set. Nothing was granted.",
+      { origin: g.origin, hint: "Kevin: save a TypeSafe key in chromecli's options. Until then every risky action asks you in Chrome." });
+  }
+  let v;
+  try {
+    v = parseScope(await callJev(globalThis.fetch, cfg.key, scopeBody({ model: cfg.model, grant: g })), g);
+  } catch (e) {
+    if (!(e instanceof JevError) && !(e instanceof GrantError)) throw e;
+    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: "jev_error" });
+    throw new OpError("jev_error", `Jev couldn't check the grant (${e.message}). Nothing was granted.`, { origin: g.origin });
+  }
+  const jevCheck = { verdict: v.verdict, confidence: v.confidence, reason: v.reason, narrowed: v.narrowed };
+  if (!v.ok) {
+    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: `grant_${v.verdict}` });
+    post({ event: "grant_refused", op: g.op, origin: g.origin, quote: g.quote, verdict: v.verdict, confidence: v.confidence,
+      reason: v.reason });
+    throw new OpError(`grant_${v.verdict}`, v.reason, { origin: g.origin, jevCheck,
+      hint: "Nothing was granted. Ask Kevin to approve exactly this (or let the action ask him in Chrome)." });
+  }
+  const n = { ...v.grant, jev: { verdict: v.verdict, confidence: v.confidence, narrowed: v.narrowed } };
   await withLock(async () => {
     const grants = await getGrants();
     if (Object.keys(grants).length >= 50) throw new OpError("bad_request", "Too many active pre-approvals (50); revoke some first.");
-    grants[g.id] = g;
+    grants[n.id] = n;
     await setGrants(grants);
   });
-  await auditAdd({ op: `grant-${g.op}`, tab: null, origin: g.origin, outcome: g.id });
-  return { op: "grant.add", added: true, grant: grantView(g), confirmedInBrowser: false };
+  await auditAdd({ op: `grant-${n.op}`, tab: null, origin: n.origin, outcome: `${n.id} jev:${v.verdict}` });
+  post({ event: "grant_added", grant: n.id, op: n.op, origin: n.origin, quote: n.quote, verdict: v.verdict,
+    confidence: v.confidence, narrowed: v.narrowed.map((x) => x.field) });
+  return { op: "grant.add", added: true, grant: grantView(n), jevCheck, confirmedInBrowser: false };
 }
 
 async function grantList() {
-  const enabled = await getGrantsEnabled();
-  return { enabled, grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
+  return { grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
 }
 
 async function grantRevoke(args) {
@@ -1219,7 +1239,7 @@ async function popupMessage(msg) {
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
         shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION,
         confirms: pendingConfirms(), jevConfigured: (await getJev()).configured,
-        grantsEnabled: await getGrantsEnabled(), grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
+        grants: (await liveGrants()).sort((a, b) => a.createdAt - b.createdAt).map((g) => grantView(g)) };
     }
     case "jevStatus": { const j = await getJev(); return { ok: true, configured: j.configured, model: j.model, floor: j.floor }; }
     case "jevTest": return jevTest();
@@ -1264,15 +1284,6 @@ async function popupMessage(msg) {
       return { ok: true };
     }
     case "pause": await setPaused(!!msg.paused); return { ok: true };
-    // Only Kevin, in the popup, turns pre-approvals on (config.toml / the host can't). Turning them off drops all grants.
-    case "setGrantsEnabled": {
-      const on = msg.enabled === true;
-      await chrome.storage.local.set({ grantsEnabled: on });
-      if (!on) await clearGrants("pre-approvals turned off");
-      post({ event: "grants_enabled", enabled: on });
-      await auditAdd({ op: on ? "pre-approvals-on" : "pre-approvals-off", tab: null, origin: null, outcome: "ok" });
-      return { ok: true };
-    }
     case "revokeGrant": {
       await withLock(async () => { const g = await getGrants(); delete g[String(msg.id)]; await setGrants(g); });
       await auditAdd({ op: "grant-revoke", tab: null, origin: null, outcome: String(msg.id) });
