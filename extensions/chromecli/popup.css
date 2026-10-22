@@ -283,6 +283,28 @@ kbd {
 .chip.jev { background: var(--paused-tint); color: var(--paused); }
 .chip.jev[data-on="true"] { background: var(--ok-tint); color: var(--ok); }
 
+/* pre-approvals (0.10.0) */
+.grants-card { padding: 10px 12px; }
+.grants-head { display: flex; align-items: center; gap: 12px; }
+.grants-card.on { border-color: color-mix(in srgb, var(--act) 35%, transparent); }
+.grants-wrap { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.grants-wrap .section-head { padding: 0; height: 24px; }
+.grant-list { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; }
+.grant-list:empty { display: none; }
+.grow {
+  display: flex; align-items: flex-start; gap: 8px; padding: 7px 4px 7px 9px; border-radius: 8px;
+  background: var(--surface-2); border-left: 3px solid var(--act);
+}
+.grow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.grow-quote {
+  font-size: 12.5px; line-height: 1.35; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.grow-scope { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grow-what { color: var(--act-text); font-weight: 600; }
+.grow-meta { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.grants-wrap .empty { margin-top: 4px; }
+
 /* shared tabs */
 .shared { padding: 4px 0 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 4px; }

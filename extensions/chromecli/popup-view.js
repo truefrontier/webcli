@@ -59,6 +59,39 @@ export function auditRow(a) {
   return { time, op: String(a?.op || ""), target, outcome, tone };
 }
 
+// ---- 0.10.0 pre-approvals
+const GRANT_VERB = { click: "Click", fill: "Fill", type: "Type into", select: "Choose in", press: "Press", navigate: "Go to",
+  open: "Open", close: "Close" };
+
+// "Click “Place order” · ≤ $49.99" — what one grant allows.
+export function grantScope(g) {
+  const t = g?.target || {};
+  const what = t.text != null ? `“${t.text}”${t.role ? ` (${t.role})` : ""}` : t.selector != null ? t.selector
+    : g?.urlPrefix ? g.urlPrefix.replace(/^https?:\/\//, "") : hostOf(g?.origin || "");
+  const verb = g?.op === "press" && g?.value ? `Press ${g.value} in` : GRANT_VERB[g?.op] || g?.op || "";
+  let cap = "";
+  if (g?.maxAmount != null) {
+    try { cap = ` · ≤ ${new Intl.NumberFormat("en-US", { style: "currency", currency: g.currency || "USD" }).format(g.maxAmount)}`; }
+    catch { cap = ` · ≤ ${g.maxAmount} ${g.currency || ""}`.trimEnd(); }
+  }
+  return `${verb} ${what}${cap}`.trim();
+}
+
+// "1 use left · 28m left" / "3 uses left · 1h 5m left" / "expired".
+export function grantMeta(g, now = Date.now()) {
+  const s = Math.max(0, Math.round((Number(g?.expiresAt) - now) / 1000));
+  if (!s || !(g?.usesLeft > 0)) return "expired";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const left = h ? `${h}h${m ? ` ${m}m` : ""}` : m ? `${m}m` : `${s}s`;
+  return `${g.usesLeft} use${g.usesLeft === 1 ? "" : "s"} left · ${left} left`;
+}
+
+export function grantsSub(enabled, count) {
+  if (!enabled) return "Off: every risky action asks you here";
+  return count ? `${count} active · used once, then gone · Pause revokes all` : "On: agents may record a “yes” you give in chat";
+}
+
 // "https://www.example.com:8443" -> "www.example.com:8443"; non-URLs pass through.
 export function hostOf(origin) {
   try { return new URL(origin).host || String(origin); } catch { return String(origin || ""); }

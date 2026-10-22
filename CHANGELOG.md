@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.0 (2026-10-22)
+
+### Added
+
+- **Pre-approval grants.** `chromecli grant add --op click|fill|type|select|press|navigate|open|close --origin O (--target-text NAME [--role R] | --selector S) [--value V | --value-file F] [--url-prefix P] [--max-amount N [--currency USD] [--amount-selector CSS]] [--uses 1] [--ttl 30m] --quote "<Kevin's exact words>" --confirm` (preview without `--confirm`), `grant list`, `grant revoke ID|--all --confirm`. Bots may only create a grant that quotes Kevin's own words from the current conversation. Grants live in the extension (`chrome.storage.session`, gone on Chrome restart) and are accepted only while Kevin's new popup toggle *Allow agent pre-approvals* is on (default off, popup-only; else exit 4 `grants_disabled`). A live grant with the same op + origin + target (accessible name exact or whole-word, case-insensitive, or the same element as `--selector`) + value answers the in-browser confirm once: the result has `confirmedBy: "grant:<id>"` and `grant {id, quote, usesLeft, amount?}`, the host log has the grant id and the redacted quote, and Chrome shows "Agent used your pre-approval: …" (new `notifications` permission). With `--max-amount`, only a parsed page amount ≤ the cap skips the confirm; otherwise the confirm window shows the grant and the amount. Never skippable: password / one-time-code / `cc-*` / card-like fields, eval, denied origins. Pause and turning the toggle off revoke every grant. Popup: a *Pre-approvals* section (quote, scope, uses left, expiry, revoke ×, Revoke all).
+- **Opened tabs inherit the share** (catalog-linter test drive): a tab opened by a click/press on a tab Kevin Share-act'd (`openerTabId`) is shared act on the same origin, read on another, never on a denied origin; click/press results report `openedTabs: [{id, url, share}]`; share grants and drops are logged with their reason. `list --all` adds unshared tabs as metadata (deny-filtered).
+- **Open shadow DOM**: read (text/md), `--elements`, `find`, `--text`, `--selector`, `wait`, fill and click pierce open shadow roots; refs work inside; a selector naming a component host means its one inner control; names come from host `label` attributes and slotted text. New fixture `tests/fixtures/chromecli/shadow.html` (Polaris-shaped components) with a headless-Chromium test.
+- Previews of page actions add a read-only `probe` (found / not found, `gateEstimate`); `wait --expect-origin/--expect-url`; `read` text output starts with `Title:`/`URL:`; `screenshot` without `-o` writes `~/.webcli/chromecli/screenshots/tab<ID>-<time>.png`; `agent-help` shows chromecli's own exit-code table.
+
+### Fixed
+
+- `script_error` now carries the page-side error message (`In-page error: TypeError: …`) instead of a bare failure; a page script that returns nothing explains why.
+- agent-help / `eval --help` no longer say eval is "always browser-confirmed": it is disabled (exit 7 `eval_disabled`).
+
+### Notes
+
+- Tests confirm a same-page reload and a same-origin link click on Kevin's act tab don't prompt.
+- Future work: report which account is signed in to a tab.
+
 ## 0.9.1 (2026-10-22)
 
 ### Changed

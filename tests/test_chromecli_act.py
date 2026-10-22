@@ -49,7 +49,11 @@ def test_preview_is_dry_and_sends_nothing(ext, cmd, args):
         assert result.exit_code == 0, (cmd, extra, result.output)
         plan = json.loads(result.stdout)
         assert plan["dryRun"] is True and plan["op"] == cmd and "Nothing was sent" in plan["hint"]
-    assert ops_sent(fake) == []
+    # 0.10.0: page-action previews send one read-only page.probe (never the value, never confirm: true); tab
+    # actions and eval send nothing.
+    sent = ops_sent(fake)
+    assert all(m["op"] == "page.probe" and m["confirm"] is False and "value" not in m["args"] for m in sent), sent
+    assert len(sent) == (3 if cmd in ("click", "fill", "type", "select", "press") else 0)
 
 
 def test_preview_shapes(ext):
@@ -63,7 +67,7 @@ def test_preview_shapes(ext):
     assert plan["target"] == {"selector": "#email"} and plan["expect"] == {"origin": FORM}
     assert plan["value"].startswith("<17 chars sha256:") and "kevin@example.com" not in json.dumps(plan)
     plan = json.loads(run("eval", "--tab", "7", "--code", "1+1", "--expect-origin", FORM).stdout)
-    assert plan["browserConfirm"] == "always" and "disabled" in plan["note"]
+    assert plan["disabled"] is True and "eval_disabled" in plan["note"]
 
 
 def test_preview_knows_the_allowlists(ext, home):

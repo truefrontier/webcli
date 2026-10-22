@@ -294,7 +294,10 @@ def test_status_list_read_history_screenshot(ext, home, tmp_path):
     read = run("read", "1", "--as", "md", "--format", "json")
     assert read.exit_code == 0 and json.loads(read.stdout)["content"] == "# Hello"
     text = run("read", "1", "--format", "text")
-    assert text.stdout.startswith("# Hello")
+    head, _, body = text.stdout.partition("\n\n")
+    assert body.startswith("# Hello")
+    assert head.startswith("Title: Ex\nURL: https://example.com/a")
+    assert "abcd1234efgh5678ijkl9012mnop" not in text.stdout, "a token in the URL reached the terminal"
     not_shared = run("read", "2")
     assert not_shared.exit_code == 4 and err(not_shared)["error"] == "not_shared"
     hist = run("history", "--limit", "5", "--query", "secret words", "--format", "json")

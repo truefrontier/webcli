@@ -135,6 +135,26 @@ def _summary(op: str, args: dict) -> str:
                     parts.append(f"{k}={digest(str(args[k]))}")
             if args.get("urlPrefix"):
                 parts.append(f"urlPrefix={redact_url(str(args['urlPrefix']))}")
+    if op == "tabs.list" and args.get("all"):
+        parts.append("all=1")
+    if op == "page.probe" and args.get("op"):
+        parts.append(f"probe_op={redact_text(str(args['op']))[:10]}")
+    if op == "grant.add":
+        parts.append(f"grant_op={redact_text(str(args.get('op')))[:10]} origin={redact_url(str(args.get('origin')))}")
+        t = _target_summary(args.get("target"))
+        if t:
+            parts.append(t)
+        if args.get("value") is not None:
+            parts.append(f"value={digest(str(args['value']))}")
+        if args.get("urlPrefix"):
+            parts.append(f"url_prefix={redact_url(str(args['urlPrefix']))}")
+        if args.get("maxAmount") is not None:
+            parts.append(f"max_amount={redact_text(str(args['maxAmount']))[:16]} {redact_text(str(args.get('currency') or 'USD'))[:3]}")
+        parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 1800)}")
+        # Kevin's words, through the same redaction as everything else.
+        parts.append(f"quote={json.dumps(redact_text(str(args.get('quote') or ''))[:500], ensure_ascii=False)}")
+    if op == "grant.revoke":
+        parts.append("all=1" if args.get("all") else f"id={redact_text(str(args.get('id')))[:20]}")
     expect = args.get("expect")
     if isinstance(expect, dict):
         if expect.get("origin"):
@@ -210,6 +230,9 @@ class Host:
             origin = redact_url(str(msg.get("origin"))) if msg.get("origin") else ""
             audit(f"event={kind} tab={msg.get('tab')} origin={origin} level={msg.get('level')} "
                   f"paused={msg.get('paused')} reason={msg.get('reason')}")
+        elif kind in ("grants_cleared", "grants_enabled"):
+            audit(f"event={kind} count={msg.get('count')} enabled={msg.get('enabled')} "
+                  f"reason={redact_text(str(msg.get('reason')))[:60]}")
         else:
             audit(f"event={redact_text(str(kind))}")
 
@@ -333,6 +356,19 @@ class Host:
         ji = info.get("jevInfo") if isinstance(info.get("jevInfo"), dict) else None
         if ji and isinstance(ji.get("choice"), str):
             gate += f" jev_info={redact_text(ji['choice'])[:20]}:{'gate' if ji.get('gated') else 'info'}"
+        # 0.10.0: a pre-approval answered the gate instead of Kevin's click.
+        if isinstance(info.get("confirmedBy"), str) and info["confirmedBy"].startswith("grant:"):
+            g = info.get("grant") if isinstance(info.get("grant"), dict) else {}
+            gate += f" grant_used={redact_text(info['confirmedBy'][6:])[:24]}"
+            if g.get("quote"):
+                gate += f" grant_quote={json.dumps(redact_text(str(g['quote']))[:500], ensure_ascii=False)}"
+            if g.get("amount") is not None:
+                gate += f" grant_amount={redact_text(str(g['amount']))[:16]}"
+        if op == "grant.add" and reply.get("ok") and isinstance(result.get("grant"), dict):
+            gate += f" grant={redact_text(str(result['grant'].get('id')))[:20]}"
+        opened = info.get("openedTabs") if isinstance(info.get("openedTabs"), list) else []
+        if opened:
+            gate += " opened=" + ",".join(f"{o.get('id')}:{o.get('share') or 'none'}" for o in opened[:10] if isinstance(o, dict))
         jev = info.get("jev") if isinstance(info.get("jev"), dict) else None
         if jev:
             gate += f" jev_used={bool(jev.get('used'))}" + (" jev_error=1" if jev.get("error") else "")

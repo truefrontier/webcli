@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shadow admin (Polaris-like)</title>
+<style>body { font: 14px system-ui; margin: 24px; }</style>
+</head>
+<body>
+<!-- Web components with OPEN shadow roots, shaped like Shopify Polaris (s-page / s-section / s-text-field / s-button):
+     the visible label, the real <input>, and the real <button> all live inside shadow roots; slotted text comes from
+     the light DOM. chromecli 0.10.0 must read, find, target, fill and click through them. -->
+<s-page heading="Store settings">
+  <s-section heading="Danger zone">
+    <s-text-field label="Store name" name="storeName" id="store-name"></s-text-field>
+    <s-text-field label="Contact email" name="email" type="email" id="contact-email"></s-text-field>
+    <s-text-field label="Password" name="password" type="password" id="pw"></s-text-field>
+    <s-select label="Plan" name="plan" id="plan"></s-select>
+    <s-card>
+      <s-text tone="subdued">Order total $44.99</s-text>
+      <s-button variant="primary" id="delete-store">Delete store</s-button>
+      <s-button id="cancel">Cancel</s-button>
+    </s-card>
+  </s-section>
+</s-page>
+<p id="light-status">idle</p>
+<script>
+const css = `:host { display: block; margin: 8px 0; } label { display: block; font-weight: 600; } button { padding: 6px 12px; }`;
+function root(el, html) { const r = el.attachShadow({ mode: "open" }); r.innerHTML = `<style>${css}</style>` + html; return r; }
+
+customElements.define("s-page", class extends HTMLElement {
+  connectedCallback() { if (!this.shadowRoot) root(this, `<h1 part="heading">${this.getAttribute("heading")}</h1><main><slot></slot></main>`); }
+});
+customElements.define("s-section", class extends HTMLElement {
+  connectedCallback() { if (!this.shadowRoot) root(this, `<section><h2>${this.getAttribute("heading")}</h2><form id="f" onsubmit="return false"><slot></slot></form></section>`); }
+});
+customElements.define("s-card", class extends HTMLElement {
+  connectedCallback() { if (!this.shadowRoot) root(this, `<div class="card"><slot></slot></div>`); }
+});
+customElements.define("s-text", class extends HTMLElement {
+  connectedCallback() { if (!this.shadowRoot) root(this, `<span><slot></slot></span>`); }
+});
+customElements.define("s-text-field", class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    const id = "in";
+    const r = root(this, `<label for="${id}">${this.getAttribute("label")}</label>` +
+      `<input id="${id}" name="${this.getAttribute("name")}" type="${this.getAttribute("type") || "text"}"` +
+      `${this.getAttribute("type") === "password" ? ' autocomplete="current-password"' : ""}>`);
+    r.querySelector("input").addEventListener("input", (e) => { this.value = e.target.value; });
+  }
+});
+customElements.define("s-select", class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    root(this, `<label for="sel">${this.getAttribute("label")}</label><select id="sel" name="${this.getAttribute("name")}">` +
+      `<option value="basic">Basic</option><option value="plus">Plus</option></select>`);
+  }
+});
+customElements.define("s-button", class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    const r = root(this, `<button type="button" part="button"><slot></slot></button><span class="status" role="status"></span>`);
+    r.querySelector("button").addEventListener("click", () => {
+      r.querySelector(".status").textContent = `clicked ${this.textContent.trim()}`;
+      document.getElementById("light-status").textContent = `clicked ${this.id}`;
+    });
+  }
+});
+</script>
+</body>
+</html>

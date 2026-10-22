@@ -25,15 +25,17 @@ EXT_TO_HOST_MAX = 64 * 2**20
 CLI_REQUEST_MAX = 1 * 2**20
 
 READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
-            "page.find")
+            "page.find", "page.probe", "grant.list")
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
-OPS = READ_OPS + TAB_OPS + PAGE_OPS
-# Ops that change a tab or page: sent only with --confirm (confirm: true); the extension refuses them otherwise.
-MUTATING_OPS = TAB_OPS + PAGE_OPS
+# 0.10.0 pre-approval grants (stored in the extension; accepted only while Kevin's popup toggle is on).
+GRANT_OPS = ("grant.add", "grant.revoke")
+OPS = READ_OPS + TAB_OPS + PAGE_OPS + GRANT_OPS
+# Ops that change something: sent only with --confirm (confirm: true); the extension refuses them otherwise.
+MUTATING_OPS = TAB_OPS + PAGE_OPS + GRANT_OPS
 # Not in this version: bad_request.
 FUTURE_OPS = ("page.elements",)
-EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "error")
+EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "grants_cleared", "grants_enabled", "error")
 
 # Spec section 4: one table, every error code the host or extension can answer with.
 ERROR_EXIT: dict[str, int] = {
@@ -43,7 +45,7 @@ ERROR_EXIT: dict[str, int] = {
     "tab_not_found": 3, "element_not_found": 3, "ambiguous_target": 3, "no_history": 3,
     # 4: a person must act
     "not_shared": 4, "not_act_shared": 4, "origin_blocked": 4, "paused": 4, "declined": 4, "confirm_timeout": 4,
-    "not_visible": 4, "permission_needed": 4, "policy_pending": 4,
+    "not_visible": 4, "permission_needed": 4, "policy_pending": 4, "grants_disabled": 4,
     # 5: bridge / page
     "bridge_down": 5, "host_busy": 5, "timeout": 5, "url_mismatch": 5, "script_error": 5, "jev_error": 5,
     # 7: config
@@ -72,6 +74,8 @@ ERROR_HINTS: dict[str, str] = {
     "ambiguous_target": "Narrow the target: a more specific --selector, a --ref from `read --elements`, or --role.",
     "element_not_found": "Refs die on navigation; run `chromecli read TAB --elements` again.",
     "jev_not_configured": "Kevin: open chromecli's options (popup → Jev → Options) and save a TypeSafe API key, or use --jev auto.",
+    "grants_disabled": "Pre-approvals are off; only Kevin can turn on “Allow agent pre-approvals” in the chromecli popup. "
+                       "Let the action ask him in the browser instead.",
     "jev_error": "Jev failed. --jev auto falls back to heuristics (stricter gating in bot-opened tabs).",
 }
 

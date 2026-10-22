@@ -472,7 +472,7 @@ def _leaves(group: click.Group, path: tuple[str, ...] = ()):
 
 
 def agent_reference(group: click.Group, ctx: click.Context, *, env: dict[str, str], notes: list[str],
-                    writes: list[str]) -> dict:
+                    writes: list[str], exit_codes: dict | None = None) -> dict:
     """Commands, aliases, args, options, exit codes, error shapes, and env vars, read from the click tree."""
     commands = []
     for path, aliases, cmd in _leaves(group):
@@ -505,7 +505,7 @@ def agent_reference(group: click.Group, ctx: click.Context, *, env: dict[str, st
         "writes": writes,
         "globalOptions": global_options,
         "commands": commands,
-        "exitCodes": {str(k): v for k, v in EXIT_CODES.items()},
+        "exitCodes": {str(k): v for k, v in (exit_codes if exit_codes is not None else EXIT_CODES).items()},
         "errorShapes": ERROR_SHAPES,
         "env": env,
         "notes": notes,
@@ -532,7 +532,7 @@ def reference_markdown(ref: dict) -> str:
 
 
 def agent_help_command(group: click.Group, *, version: str, env: Callable[[], dict], notes: list[str],
-                       writes: list[str]) -> click.Command:
+                       writes: list[str], exit_codes: dict | None = None) -> click.Command:
     """The `agent-help` command for `group` (every umbrella and site has one)."""
 
     @click.command("agent-help")
@@ -541,7 +541,8 @@ def agent_help_command(group: click.Group, *, version: str, env: Callable[[], di
     @click.pass_context
     def agent_help_cmd(ctx: click.Context, fmt: str | None) -> None:
         """Compact command / flag / exit-code reference for agents."""
-        ref = {"version": version, **agent_reference(group, ctx.parent, env=env(), notes=notes, writes=writes)}
+        ref = {"version": version, **agent_reference(group, ctx.parent, env=env(), notes=notes, writes=writes,
+                                                     exit_codes=exit_codes)}
         if resolve_format(fmt, human="markdown") == "json":
             emit_json(ref)
         else:

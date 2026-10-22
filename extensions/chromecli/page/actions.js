@@ -8,9 +8,51 @@
 export function pageAction(spec) {
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
   const fail = (code, message, extra = {}) => ({ ok: false, code, message, ...extra });
+  try {
+  // Open shadow roots (web components like Shopify Polaris): deep queries, deep parents, deep text.
+  const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const deepAll = (sel) => {
+    const out = [];
+    const visit = (root) => {
+      out.push(...root.querySelectorAll(sel));
+      for (const n of root.querySelectorAll("*")) if (n.shadowRoot) visit(n.shadowRoot);
+    };
+    visit(document);
+    return out;
+  };
+  const closestDeep = (el, sel) => { for (let n = el; n; n = up(n)) if (n.nodeType === 1 && n.matches(sel)) return n; return null; };
+  const byId = (el, id) => (el.getRootNode && el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : null) || document.getElementById(id);
+  const deepText = (n) => {
+    const t = [n.innerText || ""];
+    const walk = (x) => { if (x.shadowRoot) for (const c of x.shadowRoot.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
+    walk(n);
+    return t.join(" ");
+  };
+  // Rendered (flat-tree) text: slots show their assigned light-DOM nodes (a shadow <button><slot></slot></button>
+  // has an empty innerText, but its name is the slotted text).
+  const slotText = (n) => {
+    const out = [];
+    const walk = (x) => {
+      if (x.nodeType === 3) { out.push(x.nodeValue); return; }
+      if (x.nodeType !== 1 && x.nodeType !== 11) return;
+      if (x.nodeType === 1) {
+        if (x.tagName === "STYLE" || x.tagName === "SCRIPT") return;
+        const cs = getComputedStyle(x);
+        if (cs.display === "none" || cs.visibility === "hidden") return;
+        if (x.tagName === "SLOT") { const a = x.assignedNodes({ flatten: true }); (a.length ? a : Array.from(x.childNodes)).forEach(walk); return; }
+      }
+      for (const c of (x.shadowRoot ? x.shadowRoot.childNodes : x.childNodes)) walk(c);
+    };
+    walk(n);
+    return out.join(" ");
+  };
+  const hostLabel = (el) => {
+    const host = el.getRootNode && el.getRootNode().host;
+    return host ? clean(host.getAttribute("label") || host.getAttribute("aria-label") || "") : "";
+  };
 
   const hidden = (el) => {
-    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    for (let n = el; n && n.nodeType === 1; n = up(n)) {
       if (n.hidden || n.getAttribute("aria-hidden") === "true") return true;
       const cs = getComputedStyle(n);
       if (cs.display === "none" || cs.visibility === "hidden") return true;
@@ -28,11 +70,13 @@ export function pageAction(spec) {
     if (label) return clean(label);
     const by = el.getAttribute("aria-labelledby");
     if (by) {
-      const t = by.split(/\s+/).map((id) => document.getElementById(id)?.innerText || "").join(" ");
+      const t = by.split(/\s+/).map((id) => byId(el, id)?.innerText || "").join(" ");
       if (clean(t)) return clean(t);
     }
     const l = labelOf(el);
     if (l) return l;
+    const hl = hostLabel(el);
+    if (hl) return hl;
     const tag = el.tagName;
     if (tag === "INPUT") {
       const type = (el.getAttribute("type") || "").toLowerCase();
@@ -42,7 +86,7 @@ export function pageAction(spec) {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) {
       return clean(el.getAttribute("placeholder") || el.getAttribute("title") || el.getAttribute("name") || "");
     }
-    return clean(el.innerText || el.getAttribute("title") || el.getAttribute("alt") || "");
+    return clean(el.innerText) || clean(slotText(el)) || clean(el.getAttribute("title") || el.getAttribute("alt") || "");
   }
   function implicitRole(el) {
     const explicit = el.getAttribute("role");
@@ -75,8 +119,8 @@ export function pageAction(spec) {
       type: tag === "input" ? (typeAttr || "text") : typeAttr,
       id: el.id || null, nameAttr: el.getAttribute("name") || null, label: labelOf(el).slice(0, 120) || null,
       title: el.getAttribute("title") || null, autocomplete: el.getAttribute("autocomplete") || null,
-      inForm: !!(el.form || el.closest("form")),
-      defaultSubmit: tag === "button" && !!(el.form || el.closest("form")) && el.type === "submit",
+      inForm: !!(el.form || closestDeep(el, "form")),
+      defaultSubmit: tag === "button" && !!(el.form || closestDeep(el, "form")) && el.type === "submit",
       isField: ["input", "textarea", "select"].includes(tag) || el.isContentEditable,
       disabled: !!el.disabled, outerHTML: snippet(el),
     };
@@ -84,7 +128,7 @@ export function pageAction(spec) {
     if (tag === "input" && ["submit", "button", "reset", "image"].includes(d.type)) d.value = el.getAttribute("value") || null;
     if (tag === "a") { try { const u = new URL(el.href); d.href = u.origin + u.pathname; } catch { /* skip */ } }
     if (tag === "form" || d.inForm) {
-      const f = el.form || el.closest("form");
+      const f = el.form || closestDeep(el, "form");
       try { const u = new URL(f.action || location.href); d.formAction = u.origin + u.pathname; } catch { /* skip */ }
     }
     return d;
@@ -95,6 +139,11 @@ export function pageAction(spec) {
     "[contenteditable=true], [role=button], [role=link], [role=checkbox], [role=radio], [role=tab], [role=menuitem], " +
     "[role=switch], [role=combobox], [role=textbox], [role=option]";
 
+  function retarget(el) {
+    if (!el.shadowRoot || el.matches(INTERACTIVE)) return el;
+    const inner = Array.from(el.shadowRoot.querySelectorAll(INTERACTIVE)).filter((x) => !hidden(x));
+    return inner.length === 1 ? inner[0] : el;
+  }
   function resolve(target) {
     if (!target) {
       const el = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
@@ -110,14 +159,15 @@ export function pageAction(spec) {
     }
     let found;
     if (target.selector) {
-      try { found = Array.from(document.querySelectorAll(target.selector)); } catch (e) {
+      try { found = deepAll(target.selector); } catch (e) {
         return { error: fail("bad_target", `Invalid CSS selector: ${String(e.message || e).slice(0, 200)}`) };
       }
-      found = found.filter((el) => !hidden(el));
+      // A selector naming a web-component host (e.g. <s-button id="save">) means its one inner control.
+      found = found.map(retarget).filter((el) => !hidden(el));
     } else if (target.text != null) {
       const want = clean(target.text).toLowerCase();
       const role = target.role ? String(target.role).toLowerCase() : null;
-      const pool = Array.from(document.querySelectorAll(INTERACTIVE)).filter((el) => !hidden(el) && (!role || implicitRole(el) === role));
+      const pool = deepAll(INTERACTIVE).filter((el) => !hidden(el) && (!role || implicitRole(el) === role));
       const exact = pool.filter((el) => accessibleName(el).toLowerCase() === want);
       found = exact.length ? exact : pool.filter((el) => accessibleName(el).toLowerCase().includes(want));
     } else {
@@ -144,6 +194,27 @@ export function pageAction(spec) {
   if (spec.op === "select" && el && el.tagName !== "SELECT") return fail("bad_target", "select needs a <select> element.", { element });
   if ((spec.op === "fill" || spec.op === "type") && el && !(["INPUT", "TEXTAREA"].includes(el.tagName) || el.isContentEditable)) {
     return fail("bad_target", `${spec.op} needs an input, textarea, or contenteditable element.`, { element });
+  }
+  if (spec.mode === "inspect") {
+    // Pre-approval matching (read-only): is the element the one a grant's selector names, and what amounts are near it?
+    const selectorHits = {};
+    for (const sel of spec.selectors || []) { try { selectorHits[sel] = el ? deepAll(sel).map(retarget).includes(el) : false; } catch { selectorHits[sel] = false; } }
+    const amountTexts = {};
+    for (const sel of spec.amountSelectors || []) {
+      try { amountTexts[sel] = deepAll(sel).slice(0, 5).map((n) => clean(deepText(n)).slice(0, 300)); } catch { amountTexts[sel] = []; }
+    }
+    if (spec.autoAmount && el) {
+      const texts = [];
+      for (let n = el, i = 0; n && i < 5; n = up(n), i++) texts.push(clean(deepText(n)).slice(0, 600));
+      const totalRe = /\b(order total|total|amount due|due today|you pay)\b/i;
+      for (const n of deepAll("*")) {
+        if (texts.length > 20) break;
+        const own = Array.from(n.childNodes).filter((c) => c.nodeType === 3).map((c) => c.nodeValue).join(" ");
+        if (totalRe.test(own) && !hidden(n)) texts.push(clean(deepText(up(n) || n)).slice(0, 300));
+      }
+      amountTexts._auto = texts;
+    }
+    return { ok: true, element, fingerprint: fp, selectorHits, amountTexts, url: location.href };
   }
   if (spec.mode !== "do") return { ok: true, element, fingerprint: fp, url: location.href };
   if (spec.fingerprint && spec.fingerprint !== fp) {
@@ -210,7 +281,7 @@ export function pageAction(spec) {
       let effect = null;
       // Synthetic key events don't trigger default actions; do the common ones explicitly.
       if (go && key === "Enter") {
-        const form = node.form || node.closest?.("form");
+        const form = node.form || closestDeep(node, "form");
         const tag = node.tagName;
         if (["INPUT"].includes(tag) && form) { form.requestSubmit ? form.requestSubmit() : form.submit(); effect = "submitted_form"; }
         else if (["BUTTON", "A", "SUMMARY"].includes(tag) || node.getAttribute?.("role") === "button") { node.click(); effect = "activated"; }
@@ -221,17 +292,48 @@ export function pageAction(spec) {
     }
   }
   return fail("bad_request", `Unknown page op ${spec.op}.`);
+  } catch (e) {
+    return fail("script_error", `In-page error: ${String(e && e.name || "Error")}: ${String(e && e.message || e).slice(0, 300)}`);
+  }
 }
 
 // Wait helper (read-only): does the page have a visible match for selector / text right now?
 export function pageProbe(spec) {
+  try {
+  const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  // Open shadow roots (web components like Shopify Polaris): deep queries, deep parents, deep text.
+  const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const deepAll = (sel) => {
+    const out = [];
+    const visit = (root) => {
+      out.push(...root.querySelectorAll(sel));
+      for (const n of root.querySelectorAll("*")) if (n.shadowRoot) visit(n.shadowRoot);
+    };
+    visit(document);
+    return out;
+  };
+  const closestDeep = (el, sel) => { for (let n = el; n; n = up(n)) if (n.nodeType === 1 && n.matches(sel)) return n; return null; };
+  const byId = (el, id) => (el.getRootNode && el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : null) || document.getElementById(id);
+  const deepText = (n) => {
+    const t = [n.innerText || ""];
+    const walk = (x) => { if (x.shadowRoot) for (const c of x.shadowRoot.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
+    walk(n);
+    return t.join(" ");
+  };
+  const hostLabel = (el) => {
+    const host = el.getRootNode && el.getRootNode().host;
+    return host ? clean(host.getAttribute("label") || host.getAttribute("aria-label") || "") : "";
+  };
   if (spec.selector) {
     let els;
-    try { els = Array.from(document.querySelectorAll(spec.selector)); } catch (e) { return { ok: false, code: "bad_target", message: String(e.message || e).slice(0, 200) }; }
+    try { els = deepAll(spec.selector); } catch (e) { return { ok: false, code: "bad_target", message: String(e.message || e).slice(0, 200) }; }
     const vis = els.filter((el) => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return (r.width || r.height) && cs.visibility !== "hidden" && cs.display !== "none"; });
     return { ok: true, found: vis.length > 0, count: vis.length, url: location.href };
   }
   const text = String(spec.text || "");
-  const body = document.body ? document.body.innerText : "";
+  const body = document.body ? deepText(document.body) : "";
   return { ok: true, found: body.includes(text), url: location.href };
+  } catch (e) {
+    return { ok: false, code: "script_error", message: `In-page error: ${String(e && e.message || e).slice(0, 300)}` };
+  }
 }
