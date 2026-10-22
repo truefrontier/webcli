@@ -103,7 +103,7 @@ Tab kinds:
 | Tab kind | Op | Prompts (in-browser confirm) when |
 |---|---|---|
 | any | any | Denied origin: never prompts, always exit 4 `origin_blocked`. Paused: exit 4. Heuristic gates (`gate.js`, unchanged): submit-like click, Enter/Space on such a button, Enter in a form field, typing into password / `cc-*` / credential / card-like fields, `eval` (disabled, exit 7). |
-| act (Kevin) | click, press | Heuristic gates, **or** Jev's choice is purchase / destructive / send_publish / credential with confidence ≥ the **risk floor** (default 0.6). safe, submit, uncertain, or a low-confidence risky choice: no Jev gate. `jevInfo` reports Jev's answer either way. |
+| act (Kevin) | click, press | Heuristic gates, **or** Jev's choice is purchase / destructive / send_publish / credential with confidence ≥ the **risk floor** (default 0.7). safe, submit, uncertain, or a low-confidence risky choice: no Jev gate. `jevInfo` reports Jev's answer either way. |
 | act (Kevin) | click/press, Jev failed (`--jev auto`) | Heuristic gates only (no stricter fallback). |
 | act (Kevin) | type, fill, select | Heuristic gates only (Jev doesn't classify these). |
 | act (Kevin) | navigate, same origin | Never (deny list still applies). |
@@ -170,7 +170,7 @@ Jev is TypeSafe's judgment API (`POST https://api.typesafe.ai/v1/systemone`, Bea
 everything works as in P3, with heuristics for `find`/`--find`.
 
 - **Key**: Kevin pastes it in the extension's options (popup → Jev → Options, or `chrome://extensions` → chromecli →
-  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9; bot-opened tabs), risk floor (default 0.6, 0.5-0.95;
+  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9; bot-opened tabs), risk floor (default 0.7, 0.5-0.95;
   tabs Kevin Share-act'd). Saving
   asks Chrome for the optional host permission `https://api.typesafe.ai/*`. The key lives in
   `chrome.storage.local.typesafeApiKey` and is used only by the service worker's `fetch` to TypeSafe; it is never sent
