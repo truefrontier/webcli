@@ -60,8 +60,8 @@ EXIT_CODES = {
                        "servedModel)",
     EXIT_CONFIG: "config error: missing or invalid config.toml, identity, or site (error names what to fix)",
     EXIT_SENT_UNVERIFIED: "sent but not verified (error \"sent_unverified\"): a confirmed write went out, but the site "
-                          "didn't show it afterwards (`messages send`: the conversation didn't show the text). Check "
-                          "it (`webcli messages read <thread>`); don't send it again",
+                          "didn't show it afterwards (`messages send` / `whatsapp send`: the conversation didn't show the text). "
+                          "Check it (`webcli messages read <thread>`, `webcli whatsapp read <chat>`); don't send it again",
     128 + 1: "killed by SIGHUP (command cancelled, its Chrome tab closed)",
     128 + 2: "Ctrl-C",
     128 + 15: "killed by SIGTERM (command cancelled, its Chrome tab closed)",
