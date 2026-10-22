@@ -30,6 +30,7 @@ from webcli.chromecli import (
     install,
     policy,
     protocol,
+    recording,
 )
 from webcli.core import config, output
 from webcli.core.redact import redact_url
@@ -181,6 +182,29 @@ NOTES = [
     "On an error the files already written stay; the error JSON "
     "has partial {count, files (names)} and restored. No --stitch (no image library in webcli): read the pages in "
     "order; neighbours overlap by ~40px.",
+    "Recording (0.12.1): `record start TAB --confirm [--out FILE.webm|FILE.mp4] [--fps N (<= 60, default 30)] [--max 10m "
+    "(<= 4h)] [--audio] [--wait 2m] [--force]` records only the tab's page pixels (iframes included; no browser UI, no "
+    "other windows) as WebM (VP9, else VP8), for tabs Kevin shared (Read or Act; never bot-opened, denied, or paused "
+    "ones). CATCH 1 (gesture): --confirm only asks; nothing records until Kevin clicks Start in the confirm window "
+    "\"Start recording this tab: TITLE (ORIGIN)\" (Deny -> exit 4 declined). CATCH 2 (Chrome's grant): Chrome lets an "
+    "extension capture a tab only after Kevin clicked the chromecli icon on that tab since it last changed site (sharing "
+    "it from the popup counts; a reload of the extension resets it). Without it, after Start the request turns "
+    "awaiting_popup: stderr says so, the badge shows REC?, Kevin gets a notification, and the CLI waits (--wait) for him "
+    "to press Record in the popup on that tab; else exit 4 confirm_timeout. Returns once recording: {recId, tab, origin, "
+    "state: recording, path, mime, width, height, fps, audio, maxSec, via confirm|popup}. Badge: red REC; the popup's "
+    "shared-tab row gets a Stop button. It stops by itself on Pause, Unshare, the tab closing, the tab leaving its "
+    "origin, or --max. `record stop TAB|--all` finalizes and returns {stopped [...], finished [...]} with path, "
+    "bytesWritten, durationMs, reason; an .mp4 --out is converted then with ffmpeg if it's on PATH (H.264, the .webm is "
+    "kept), else {converted: false, note} says it stayed WebM. `record status [TAB]` lists them (state awaiting_popup "
+    "/ starting / recording / stopping / stopped / failed / cancelled / expired).",
+    "Covered tabs (0.12.1): `screenshot TAB --covered`, or a plain `screenshot` of a tab that isn't in front, takes the "
+    "newest frame of that tab's running recording (JSON source: \"stream\", width, height, frameAgeMs, frames; "
+    "visible captures say source: \"visible\"). Not recorded -> exit 4 not_visible (the hint says to record it). "
+    "CATCH 3 (throttling, measured on Chrome 153 with an animated page): while it's captured, a tab covered by another "
+    "window or sitting in a background tab keeps painting at full rate (~120 rAF/s, fresh frames, visibilityState "
+    "stays visible). Minimizing its window stops painting: rAF drops to ~1/s, the recording freezes on the last frame "
+    "and a covered screenshot is stale (frameAgeMs grows; JSON adds a warning and stderr says so when it's over 2s). "
+    "Advice: give the recorded tab its own window, leave it behind others, never minimized.",
     "`read` JSON has url and title; text output starts with `Title:` and `URL:` lines, then a blank line.",
     "`wait` takes --expect-origin / --expect-url like the page actions (exit 5 url_mismatch when the tab is elsewhere).",
     "Not yet: which Google/site account is signed in to a tab (future work).",
@@ -206,6 +230,9 @@ WRITES = [
     "`screenshot [-o PATH]` writes that image file (default ~/.webcli/chromecli/screenshots/); `screenshot --full-page "
     "[--out DIR]` writes page-NN images into DIR (default a new folder there).",
     "`scroll` and `screenshot --full-page` move the page's scroll position (a read op; --full-page puts it back).",
+    "`record start TAB --confirm` records the tab after Kevin clicks Start (Kevin clicks Start in Chrome; maybe also "
+    "Record in the popup: see the notes) into ~/.webcli/chromecli/recordings/ (or --out), written as it records "
+    "(0600); `record stop` closes it and may write the .mp4 next to it (ffmpeg).",
 ]
 TAB_FIELDS = ["id", "title", "url", "origin", "share", "active", "windowId", "botOpened"]
 HISTORY_FIELDS = ["title", "url", "lastVisit", "visitCount"]
@@ -373,6 +400,9 @@ def _write_image(path: Path, data) -> int:
     return len(raw)
 
 
+STALE_FRAME_MS = 2000  # an older stream frame means Chrome stopped painting the tab (its window is minimized)
+
+
 @group.command("screenshot")
 @tab_options
 @click.option("-o", "--output", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
@@ -389,16 +419,21 @@ def _write_image(path: Path, data) -> int:
 @click.option("--out", "out_dir", type=click.Path(path_type=Path, file_okay=False), default=None,
               help="With --full-page: the folder to write into (default ~/.webcli/chromecli/screenshots/"
                    "tab<ID>-<time>-full/).")
+@click.option("--covered", is_flag=True, help="Take the frame from the tab's running recording (works while the tab "
+              "is covered or in the background; `record start` first). Used by itself when the tab isn't visible.")
 @agent_output_options(rows=False)
-def screenshot_cmd(tab, active, out, jpeg, quality, full_page, pages, container, out_dir, fmt, quiet) -> None:
+def screenshot_cmd(tab, active, out, jpeg, quality, full_page, pages, container, out_dir, covered, fmt, quiet) -> None:
     """The visible part of a shared tab (Share-read is enough), or with --full-page every viewport of it. The tab
-    must be the active tab of a focused window (else exit 4 not_visible); nothing is focused for you."""
+    must be the active tab of a focused window, or being recorded (then the frame comes from the recording: source
+    "stream"); else exit 4 not_visible. Nothing is focused for you."""
     target = _target(tab, active)
+    if covered and full_page:
+        die("--covered takes one frame; it doesn't go with --full-page.", EXIT_USAGE, error="bad_request")
     if not full_page:
         given = [n for n, v in (("--out", out_dir), ("--container", container)) if v not in (None, "")]
         if given or pages != FULL_PAGE_MAX:
             die(f"{', '.join(given) or '--pages'} goes with --full-page.", EXIT_USAGE, error="bad_request")
-        args = {**target, "format": "jpeg" if jpeg else "png", "quality": quality}
+        args = {**target, "format": "jpeg" if jpeg else "png", "quality": quality, **({"covered": True} if covered else {})}
         res = dict(bridge.request("tabs.screenshot", args, timeout=max(bridge.timeout_seconds(), 30)) or {})
         data = res.pop("data", None)
         if out is None:
@@ -406,6 +441,12 @@ def screenshot_cmd(tab, active, out, jpeg, quality, full_page, pages, container,
             out = config.home() / "chromecli" / "screenshots" / f"tab{res.get('tab')}-{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
         path = out.expanduser()
         size = _write_image(path, data)
+        age = res.get("frameAgeMs")
+        if res.get("source") == "stream" and isinstance(age, (int, float)) and age > STALE_FRAME_MS:
+            res["warning"] = (f"The frame is {age / 1000:.1f}s old: Chrome stopped painting the tab (is its window "
+                              "minimized?). Ask Kevin to restore the window; covering it is fine.")
+            if not quiet:
+                click.echo(f"chromecli: {res['warning']}", err=True)
         emit_json({**res, "path": str(path.resolve()), "bytes": size})
         raise SystemExit(EXIT_OK)
     if out is not None:
@@ -1126,6 +1167,256 @@ def uninstall_host_cmd(dry_run, confirm) -> None:
     if not confirm_write(confirm, plan, dry_run=dry_run):
         raise SystemExit(EXIT_OK)
     emit_json({"removed": install.remove(), "manifestPath": str(install.manifest_path())})
+    raise SystemExit(EXIT_OK)
+
+
+# ---- tab recording (0.12.1)
+RECORD_FIELDS = ["recId", "tab", "state", "origin", "path", "bytesWritten", "durationMs", "fps", "audio", "via",
+                 "reason", "error", "writeError"]
+_DUR_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+RECORD_CATCH = ("Chrome lets an extension capture a tab only after Kevin clicked the chromecli icon on that tab (since "
+                "it last changed site); sharing it from the popup counts. Without that, Start isn't enough: the "
+                "request waits for Kevin to press Record in the popup on that tab.")
+
+
+def parse_duration(value: str, flag: str, lo: int, hi: int) -> int:
+    """'10m', '1h30m', '90s', or bare seconds -> seconds, within [lo, hi]."""
+    v = str(value).strip().lower()
+    if v.isdigit():
+        secs = int(v)
+    else:
+        m = _DUR_RE.match(v)
+        if not v or not m or not any(m.groups()):
+            die(f"{flag} {value!r} isn't a duration like 90s, 10m, 1h30m.", EXIT_USAGE, error="bad_request")
+        h, mi, se = (int(x or 0) for x in m.groups())
+        secs = h * 3600 + mi * 60 + se
+    if not lo <= secs <= hi:
+        die(f"{flag} must be between {lo}s and {hi // 3600}h.", EXIT_USAGE, error="bad_request")
+    return secs
+
+
+def _record_paths(tab: int, out: Path | None, force: bool) -> tuple[Path, str | None]:
+    """(the .webm the host writes, the .mp4 to convert to after stop or None)."""
+    if out is None:
+        webm, mp4 = recording.default_path(tab), None
+    else:
+        p = out.expanduser().resolve()
+        suffix = p.suffix.lower()
+        if suffix == ".webm":
+            webm, mp4 = p, None
+        elif suffix == ".mp4":
+            webm, mp4 = p.with_suffix(".webm"), str(p)
+        else:
+            die("--out must end in .webm or .mp4.", EXIT_USAGE, error="bad_request")
+    if webm.is_dir():
+        die(f"{webm} is a folder.", EXIT_USAGE, error="bad_request")
+    if not force:
+        for p in [webm] + ([Path(mp4)] if mp4 else []):
+            if p.exists():
+                die(f"{p} exists. Use --force to replace it, or another --out.", EXIT_USAGE, error="bad_request")
+    return webm, mp4
+
+
+def to_mp4(webm: Path, mp4: Path, fps: int | None, audio: bool) -> dict:
+    """Convert a finished WebM with ffmpeg (H.264, constant frame rate, faststart). {mp4, ok} or {ok: false, note}."""
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return {"ok": False, "note": f"ffmpeg isn't on PATH, so the recording stays WebM: {webm}. Install ffmpeg "
+                                     f"(brew install ffmpeg) and run: ffmpeg -i {webm} {mp4}"}
+    rate = int(fps or 30)
+    base = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(webm),
+            "-vf", f"fps={rate},pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    tail = (["-c:a", "aac", "-b:a", "160k"] if audio else ["-an"]) + [str(mp4)]
+    errors = []
+    for codec in (["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"], ["-c:v", "h264_videotoolbox", "-b:v", "8M"]):
+        try:
+            run = subprocess.run(base + codec + tail, capture_output=True, text=True, timeout=3600)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(str(exc)[:200])
+            continue
+        if run.returncode == 0 and mp4.exists() and mp4.stat().st_size > 0:
+            return {"ok": True, "mp4": str(mp4), "mp4Bytes": mp4.stat().st_size, "encoder": codec[1]}
+        errors.append((run.stderr or "").strip()[-300:])
+    return {"ok": False, "note": f"ffmpeg couldn't convert it; the WebM is kept: {webm}", "ffmpegError": errors[-1] if errors else ""}
+
+
+def _finish_row(row: dict) -> dict:
+    """A finished recording: convert to the requested .mp4 (once), and say what's on disk."""
+    out = dict(row)
+    path = Path(str(row.get("path") or ""))
+    requested = row.get("requested")
+    if row.get("state") != "stopped" or not row.get("path"):
+        return out
+    out["exists"] = path.exists()
+    if requested and str(requested).lower().endswith(".mp4") and path.exists() and path.stat().st_size > 0:
+        mp4 = Path(str(requested))
+        if mp4.exists() and mp4.stat().st_mtime >= path.stat().st_mtime:
+            out.update(mp4=str(mp4), mp4Bytes=mp4.stat().st_size, converted="earlier")
+        else:
+            conv = to_mp4(path, mp4, row.get("fps"), bool(row.get("audio")))
+            if conv.pop("ok"):
+                out.update(conv, converted="now")
+            else:
+                out.update(conv, converted=False)
+    return out
+
+
+def _host_files() -> list[dict]:
+    try:
+        reply = bridge.call("record.files", {}, timeout=10)
+    except bridge.BridgeDown:
+        return []
+    return list((reply.get("result") or {}).get("recordings") or []) if reply.get("ok") else []
+
+
+@group.group("record")
+def record_group() -> None:
+    """Record a shared tab to a video file (tabCapture: only the tab's page, with its iframes; no browser UI, no other
+    windows). `record start TAB --confirm` asks Kevin in Chrome (he clicks Start); `record stop` finalizes;
+    `record status` lists them. While a recording runs, `screenshot` works even when the tab is covered."""
+
+
+@record_group.command("start")
+@click.argument("tab", type=int)
+@click.option("--out", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
+              help="FILE.webm, or FILE.mp4 (converted with ffmpeg after `record stop`; the .webm next to it is kept). "
+                   "Default ~/.webcli/chromecli/recordings/\"tab<ID> <YYYY-mm-dd> at <HH.MM.SS>.webm\".")
+@click.option("--fps", type=click.IntRange(1, 60), default=30, show_default=True, help="Highest frame rate.")
+@click.option("--max", "max_", default="10m", show_default=True, help="Stop by itself after this long (90s, 10m, 1h; at most 4h).")
+@click.option("--audio", is_flag=True, help="Also record the tab's sound (Kevin keeps hearing it). Default: video only.")
+@click.option("--wait", "wait", default="2m", show_default=True,
+              help="If Chrome needs Kevin's Record click in the popup: how long to wait for it (5s..15m).")
+@click.option("--force", is_flag=True, help="Replace an existing output file.")
+@write_options
+def record_start_cmd(tab, out, fps, max_, audio, wait, force, dry_run, confirm) -> None:
+    """Start recording a tab Kevin shared (Read or Act; never a bot-opened, denied, or paused one). With --confirm
+    the in-browser confirm asks Kevin "Start recording this tab: TITLE (ORIGIN)"; nothing records until he clicks
+    Start (exit 4 declined / confirm_timeout otherwise). Returns once recording: {recId, tab, state: recording,
+    path, ...}. If Chrome also needs his click on the chromecli icon on that tab, this says so on stderr and waits
+    (--wait) for his Record in the popup."""
+    max_sec = parse_duration(max_, "--max", 1, 4 * 3600)
+    wait_sec = parse_duration(wait, "--wait", 5, 900)
+    webm, mp4 = _record_paths(tab, out, force)
+    plan = {"op": "record.start", "tab": tab, "path": str(webm), **({"mp4": mp4} if mp4 else {}), "fps": fps,
+            "audio": audio, "maxSec": max_sec, "needs": "Kevin's Start click in Chrome (the confirm window)"}
+    if dry_run or not confirm:
+        _preview(plan)
+    args = {"tab": tab, "out": str(webm), "fps": fps, "audio": audio, "maxSec": max_sec, "waitSec": wait_sec,
+            **({"requestedOut": mp4} if mp4 else {})}
+    try:
+        reply = bridge.call("record.start", args, timeout=_write_timeout() + 15, confirm=True)
+    except bridge.BridgeDown as exc:
+        bridge.die_down(str(exc))
+    if not reply.get("ok"):
+        bridge.die_reply(reply)
+    res = dict(reply.get("result") or {})
+    if res.get("state") == "awaiting_popup":
+        res = _await_popup(res, wait_sec)
+    res.pop("hint", None)
+    res["hint"] = (f"Recording. Stop with: chromecli record stop {tab}" + (" (then it converts to MP4)" if mp4 else "")
+                   + f". It stops by itself after {max_sec}s, on Pause or Unshare, or when the tab leaves {res.get('origin')}.")
+    emit_json(res)
+    raise SystemExit(EXIT_OK)
+
+
+def _await_popup(res: dict, wait_sec: int) -> dict:
+    rec_id = str(res.get("recId"))
+    click.echo(f"chromecli: {res.get('hint') or RECORD_CATCH}", err=True)
+    deadline = time.monotonic() + wait_sec + 5
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            try:
+                st = bridge.call("record.status", {"recId": rec_id}, timeout=10)
+            except bridge.BridgeDown as exc:
+                bridge.die_down(str(exc))
+            if not st.get("ok"):
+                bridge.die_reply(st)
+            rows = (st.get("result") or {}).get("recordings") or []
+            row = rows[0] if rows else {}
+            state = row.get("state")
+            if state == "recording":
+                return {**row, "confirmedInBrowser": True}
+            if state not in ("awaiting_popup", "starting"):
+                if state == "expired" or not row:
+                    die(f"Kevin didn't press Record in the chromecli popup within {wait_sec}s; nothing was recorded.",
+                        protocol.exit_code("confirm_timeout"), RECORD_CATCH, error="confirm_timeout", recId=rec_id)
+                die(f"The recording didn't start ({state}: {row.get('reason') or row.get('error') or ''}).".replace(": )", ")"),
+                    protocol.exit_code("capture_failed" if state == "failed" else "declined"), RECORD_CATCH,
+                    error="capture_failed" if state == "failed" else "declined", recId=rec_id)
+    except KeyboardInterrupt:
+        bridge.call("record.stop", {"recId": rec_id, "reason": "cancelled"}, timeout=10)
+        die("Cancelled; nothing was recorded.", protocol.exit_code("declined"), error="declined", recId=rec_id)
+    try:
+        bridge.call("record.stop", {"recId": rec_id, "reason": "cli wait over"}, timeout=10)
+    except bridge.BridgeDown:
+        pass
+    die(f"Kevin didn't press Record in the chromecli popup within {wait_sec}s; nothing was recorded.",
+        protocol.exit_code("confirm_timeout"), RECORD_CATCH, error="confirm_timeout", recId=rec_id)
+
+
+@record_group.command("stop")
+@click.argument("tab", type=int, required=False)
+@click.option("--all", "all_", is_flag=True, help="Stop every recording.")
+@agent_output_options(rows=False)
+def record_stop_cmd(tab, all_, fmt, quiet) -> None:
+    """Stop and finalize a tab's recording (or --all). Waits until the last chunk is written, then converts to the
+    requested .mp4 when ffmpeg is on PATH (else keeps the .webm and says so). Recordings that already stopped by
+    themselves (pause, unshare, origin change, --max) are finalized and converted here too."""
+    if (tab is None) == (not all_):
+        die("Give a TAB id or --all (one of them).", EXIT_USAGE, error="bad_target")
+    args = {"all": True} if all_ else {"tab": tab}
+    try:
+        reply = bridge.call("record.stop", args, timeout=max(bridge.timeout_seconds(), 45))
+    except bridge.BridgeDown as exc:
+        bridge.die_down(str(exc))
+    note = None
+    if reply.get("ok"):
+        res = dict(reply.get("result") or {})
+        stopped, finished = list(res.get("stopped") or []), list(res.get("finished") or [])
+    elif (reply.get("error") or {}).get("code") == "paused":
+        # Pause already stopped every recording; the host still has the files.
+        note = "Agents are paused: Pause already stopped the recordings. These are the files chromecli-host wrote."
+        stopped = []
+        finished = [r for r in _host_files() if all_ or r.get("tab") == tab]
+    else:
+        bridge.die_reply(reply)
+    seen = {r.get("recId") for r in stopped}
+    host_rows = {r.get("recId"): r for r in _host_files()}
+    out = {"stopped": [], "finished": []}
+    for key, rows in (("stopped", stopped), ("finished", [r for r in finished if r.get("recId") not in seen])):
+        for row in rows:
+            out[key].append(_finish_row({**host_rows.get(row.get("recId"), {}), **row}))
+    if not out["stopped"] and not out["finished"]:
+        note = note or ("Nothing was recording." if all_ else f"Tab {tab} isn't being recorded and has no finished recording.")
+    emit_json({**({"tab": tab} if tab is not None else {}), **out, **({"note": note} if note else {})})
+    raise SystemExit(EXIT_OK)
+
+
+@record_group.command("status")
+@click.argument("tab", type=int, required=False)
+@agent_output_options()
+def record_status_cmd(tab, fmt, compact, select, as_csv, quiet) -> None:
+    """Recordings this Chrome session (active first): state (awaiting_popup / starting / recording / stopping /
+    stopped / failed / cancelled / expired), tab, origin, file, bytes written, duration, why it stopped."""
+    args = {"tab": tab} if tab is not None else {}
+    try:
+        reply = bridge.call("record.status", args, timeout=bridge.timeout_seconds())
+    except bridge.BridgeDown as exc:
+        bridge.die_down(str(exc))
+    if not reply.get("ok"):
+        bridge.die_reply(reply)
+    rows = list((reply.get("result") or {}).get("recordings") or [])
+    ids = {r.get("recId") for r in rows}
+    # Files the host wrote that the extension forgot (it was reloaded): still listed.
+    rows += [r for r in _host_files() if r.get("recId") not in ids and (tab is None or r.get("tab") == tab)]
+    rows.sort(key=lambda r: r.get("state") not in ("awaiting_popup", "starting", "recording", "stopping"))
+    emit_rows(rows, title="Recordings", fields=RECORD_FIELDS, compact_fields=("recId", "tab", "state", "path"),
+              columns=["tab", "state", "origin", "path", "bytesWritten"], noun="recordings", fmt=fmt, compact=compact,
+              select=select, quiet=quiet, as_csv=as_csv)
     raise SystemExit(EXIT_OK)
 
 

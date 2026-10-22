@@ -1,5 +1,6 @@
 // Pure view model for the in-browser confirm window (no DOM, no chrome.*), so node --test can check it.
 import { reasonLabel } from "./gate.js";
+import { recordHeadline, recordRows } from "./recorder.js";
 
 const VERB = { click: "Click", type: "Type into", fill: "Fill", select: "Choose in", press: "Press", eval: "Run JavaScript in",
   open: "Open", navigate: "Go to" };
@@ -19,6 +20,7 @@ export function headline(info) {
   if (op === "open" || op === "navigate") return `${VERB[op]} ${hostOf(info.origin)}`;
   if (op === "press") return el ? `Press ${info.key || "a key"} in ${name}` : `Press ${info.key || "a key"}`;
   if (op === "eval") return `Run JavaScript on ${hostOf(info.origin)}`;
+  if (op === "record") return recordHeadline(info); // 0.12.1
   return `${VERB[op] || op} ${name}`.trim();
 }
 
@@ -35,6 +37,7 @@ export function detailRows(info) {
   rows.push(["Origin", String(info.origin || ""), "mono"]);
   if (info.frameOrigin) rows.push(["Inside frame", `${info.frameOrigin} (frame ${info.frameId})`, "mono"]);
   if (info.title) rows.push(["Tab", trunc(info.title, 120)]);
+  if (info.op === "record") { rows.push(...recordRows(info)); return rows; }
   if (info.op === "navigate" && info.from) rows.push(["From", hostOf(info.from), "mono"]);
   if (info.url && (info.op === "open" || info.op === "navigate")) rows.push(["URL", trunc(info.url, 300), "mono"]);
   if (info.element) {
@@ -60,7 +63,7 @@ export function reasonItems(reasons) {
 
 export function opIcon(op) {
   return { click: "click", press: "keys", type: "keys", fill: "keys", select: "list", open: "globe", navigate: "globe",
-    eval: "code" }[op] || "click";
+    eval: "code", record: "rec" }[op] || "click";
 }
 
 export function countdown(expiresAt, now) {

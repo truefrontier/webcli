@@ -158,7 +158,20 @@ function sharedRow(s) {
   });
   const x = el("button", { class: "icon-btn", title: "Unshare", "aria-label": `Unshare ${title}` }, icon("x"));
   x.addEventListener("click", async () => { await send({ type: "unshare", tabId: s.tabId }); msg("Unshared."); await load(); });
-  return el("li", { class: `srow${isCurrent ? " current" : ""}` }, fav, main,
+  // 0.12.1: Record (an agent's request waits for this click) / Stop (while recording).
+  const rb = s.rec?.button;
+  let recBtn = null;
+  if (rb) {
+    recBtn = el("button", { class: `btn btn-sm rec-btn ${rb.kind}`, title: rb.title, "aria-label": `${rb.label}: ${title}` },
+      el("span", { class: "rec-dot", "aria-hidden": "true" }), rb.label);
+    recBtn.addEventListener("click", async () => {
+      recBtn.disabled = true;
+      const res = await send({ type: rb.kind === "record" ? "recordStart" : "recordStop", recId: s.rec.recId });
+      if (!res?.ok) msg(res?.error || "Didn't work.", true); else msg(rb.kind === "record" ? "Recording." : "Recording stopped; the file is kept.");
+      await load();
+    });
+  }
+  return el("li", { class: `srow${isCurrent ? " current" : ""}${rb ? " recording" : ""}` }, fav, main, recBtn,
     el("span", { class: `chip ${s.level}`, title: s.level === "act" ? "Shared: act (badge A)" : "Shared: read (badge R)" },
       s.level === "act" ? "Act" : "Read"), x);
 }
