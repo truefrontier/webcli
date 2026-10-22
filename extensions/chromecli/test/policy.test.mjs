@@ -159,3 +159,16 @@ test("validPolicy rejects bad deny_except from the host; older hosts without the
   }
   assert.ok(!validPolicy({ ...base(), deny_except: INSTALL }));
 });
+
+// ---- 0.11.4 unknown keys: the host drops unknown [chromecli] keys; a pushed policy carrying one anyway (a newer or
+// odd host) is still valid, and the extension keeps only the keys it knows, so an unknown key can't loosen anything.
+test("a pushed policy's unknown keys are ignored, never loosening", () => {
+  const p = { ...base(), hash: "u1", some_future_key: ["*"], act_allow_all: true, deny_remove: ["path:/checkout"] };
+  assert.equal(validPolicy(p), true);
+  const { state, accepted } = applyIncoming({ active: base(), pending: null }, p);
+  assert.equal(accepted, true);
+  assert.equal(state.pending, null);
+  for (const k of ["some_future_key", "act_allow_all", "deny_remove"]) assert.ok(!(k in state.active), k);
+  assert.deepEqual(state.active.deny, [...DEFAULT_DENY]);
+  assert.deepEqual(state.active.act_allow, []);
+});

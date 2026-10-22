@@ -201,6 +201,7 @@ class Host:
         self.started = time.time()
         self.policy: dict | None = None
         self.config_error: str | None = None
+        self.config_warnings: list[str] = []
         self.config_stamp: tuple | None = None
         self.server: socket.socket | None = None
         self.sock_path: Path | None = None
@@ -279,13 +280,17 @@ class Host:
         """Re-read [chromecli]; True when the policy changed."""
         self.config_stamp = self._stamp()
         try:
-            new = policy.load()
+            new, warnings = policy.load_checked()
         except ConfigError as exc:
             if self.config_error != str(exc):
                 audit(f"event=config_error {exc}")
             self.config_error = str(exc)
             return False
         self.config_error = None
+        if warnings != self.config_warnings:
+            for w in warnings:  # unknown [chromecli] keys: ignored, never fatal, never loosening
+                audit(f"event=config_warning {w}")
+        self.config_warnings = warnings
         if self.policy and new["hash"] == self.policy["hash"]:
             return False
         self.policy = new
@@ -310,7 +315,7 @@ class Host:
                 "since": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.started)),
                 "helloReceived": self.hello is not None,
                 "policyHash": (self.policy or {}).get("hash"), "configError": self.config_error,
-                "policyAck": self.policy_ack}
+                "configWarnings": list(self.config_warnings), "policyAck": self.policy_ack}
 
     def forward(self, req: dict) -> dict:
         req_id = uuid.uuid4().hex[:16]
@@ -359,7 +364,9 @@ class Host:
             reply = protocol.reply_error(None, "bad_request", "A request is one line of JSON.")
         else:
             if self.config_error and op != "status":
-                reply = protocol.reply_error(None, "config_error", self.config_error)
+                # The host's version (and the extension's) let the CLI say "reload the extension" when they differ.
+                reply = protocol.reply_error(None, "config_error", self.config_error, hostVersion=__version__,
+                                             extVersion=(self.hello or {}).get("extVersion"))
             else:
                 reply = self.forward(req)
             if op == "status" and reply.get("ok") and isinstance(reply.get("result"), dict):

@@ -27,6 +27,12 @@ def report(*, probe: bool = True) -> dict:
                 out.update(connected=True, extVersion=res.get("extVersion"),
                            extensionIdMatches=res.get("extensionId") == EXTENSION_ID, paused=res.get("paused"),
                            shares=len(res.get("shares") or []))
+                host_info = res.get("host") if isinstance(res.get("host"), dict) else {}
+                check = bridge.version_check(host_info.get("version"), res.get("extVersion"))
+                out.update(versions=check["versions"], versionMismatch=check["versionMismatch"],
+                           configWarnings=list(host_info.get("configWarnings") or []))
+                if check["versionMismatch"]:
+                    out["hint"] = check["reloadHint"]
             else:
                 out["error"] = (reply.get("error") or {}).get("code")
     out["ok"] = bool(host["ok"] and out["connected"] and out["extensionIdMatches"])
