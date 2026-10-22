@@ -25,7 +25,7 @@ def grant_ext(req):
     op, args = req["op"], req["args"]
     if op == "grant.add":
         g = {"id": "g1a2b3", "op": args["op"], "origin": args["origin"], "target": args.get("target"),
-             "quote": args["quote"], "uses": args["uses"], "usesLeft": args["uses"], "expiresInSec": args["ttlSec"]}
+             "quote": args["quote"], "uses": args["uses"], "usesLeft": args["uses"], "expiresInSec": args.get("ttlSec", 1800)}
         jc = {"verdict": "authorized", "confidence": 0.93, "reason": "Jev: the quote authorizes this grant (0.93).",
               "narrowed": [{"field": "uses", "from": args["uses"], "to": 1}]}
         return {"ok": True, "result": {"op": "grant.add", "added": True, "grant": g, "jevCheck": jc}}
@@ -59,7 +59,7 @@ def test_grant_add_previews_without_confirm_and_sends_nothing(ext):
     assert plan["dryRun"] is True and plan["op"] == "click" and plan["origin"] == FORM
     assert plan["target"] == {"text": "Place order", "role": "button"}
     assert plan["maxAmount"] == 49.99 and plan["currency"] == "USD"
-    assert plan["uses"] == 1 and plan["ttlSec"] == 1800 and plan["quote"] == QUOTE
+    assert plan["uses"] == 1 and "ttlSec" not in plan and "window" in plan["ttl"] and plan["quote"] == QUOTE
     assert "exit 9" in plan["requires"] and "own words" in plan["rule"] and "--user-approved" in plan["rule"]
     assert ops_sent(fake) == []
 

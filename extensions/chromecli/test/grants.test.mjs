@@ -28,7 +28,7 @@ test("validateGrant: refusals", () => {
   bad({ ttlSec: 5 }, /ttl/);
   bad({ uses: 0 }, /uses/);
   bad({ uses: 21 }, /uses/);
-  bad({ maxAmount: -1 }, /positive/);
+  bad({ maxAmount: -1 }, /0 or more/);
   bad({ op: "fill", maxAmount: 5 }, /only applies to click/);
   bad({ currency: "USD" }, /need --max-amount/);
   bad({ value: "x" }, /--value only/);
