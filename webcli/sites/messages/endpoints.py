@@ -81,6 +81,7 @@ ACTIONS = {
     56: "FETCH_DESTINATIONS_TO_CONVERSATIONS",
 }
 SEND_MESSAGE = 3
+GET_OR_CREATE_CONVERSATION = 9  # opens or creates a conversation with given numbers: only `send --new-ok --confirm`
 # The actions any command may send: listing and thumbnails, and the session's own upkeep (GET_UPDATES makes this tab
 # the active web session, as "Use here" does; the presence acks and NOTIFY_DITTO_ACTIVITY tell the phone a browser
 # is there). GUESS: which of these the app calls. Everything else is a write and is blocked, MESSAGE_READ and
@@ -119,8 +120,42 @@ SELECTORS = {
     "lightboxImage": "mws-image img",
     "aria": "mws-text-message-part, [aria-label]",
     "stamp": ["mws-absolute-timestamp", "mws-relative-timestamp", ".time, [data-e2e-timestamp], .timestamp"],
-    # The open conversation's title (GUESS): send checks it names the resolved conversation when one is found.
-    "header": ["[data-e2e-conversation-title]", "mws-conversation-header h2", "mws-conversation-header"],
+    # LIVE (2026-10-22): the open conversation's title, in its header: a 1:1 shows the contact's name (or the number),
+    # a group its members' names joined by ", ". send checks it names the resolved conversation (and, with
+    # --expect-recipient, exactly those recipients). The older gmsg selectors stay as fallbacks.
+    "header": ["mws-header[data-e2e-conversation-header] [data-e2e-header-title] h2",
+               "mws-header[data-e2e-conversation-header] [data-e2e-header-title]", "[data-e2e-conversation-title]",
+               "mws-conversation-header h2", "mws-conversation-header"],
+    # LIVE (2026-10-22): "Messages is open in another window/tab" offers "Use here" (the useHere buttons above); its
+    # text, read only inside banners and dialogs (never a conversation's text). webcli never clicks "Use here".
+    "elsewhereBoxes": "mw-banner, [role=\"dialog\"], [role=\"alertdialog\"], mat-dialog-container, "
+                      ".cdk-overlay-container",
+    "elsewhereText": ["open in another (window|tab)", "open (in|on) another (computer|browser|device)",
+                      "using Messages (in|on) another"],
+    # --- Deeper lookups (LIVE 2026-10-22, read-only: the guard passes nothing new for them) ---
+    # The list's "Load more conversations" button: each click lists 25 more (LIST_CONVERSATIONS, a read).
+    "loadMore": "mws-conversations-list button.load-more",
+    # Start chat (a link to /web/conversations/new) and its contact picker. Typing into its input filters the
+    # phone's contacts (LIST_CONTACTS, a read) and searches group conversations by member (Messages' own
+    # CONVERSATION_GROUP_NAME_SEARCH, a read). Clicking a row in 1:1 mode opens (or creates) the conversation with
+    # GET_OR_CREATE_CONVERSATION, which only `send --new-ok --confirm` lets out, once.
+    "start": "a[data-e2e-start-button]",
+    "contactInput": "input[data-e2e-contact-input]",
+    "contactRow": "mw-contacts-list mw-contact-row",
+    "contactClick": "[data-e2e-contact-row]",  # the row's clickable part (role=checkbox)
+    "contactName": "[data-e2e-contact-name]",
+    "contactNumber": "[data-e2e-contact-number]",
+    "contactAvatar": "[data-e2e-contact-icon]",  # a row without one is another number of the contact above it
+    "contactsLoading": "mw-contacts-list mw-skeleton-loader:not(.hide)",
+    "sendTo": "button[data-e2e-send-to-button]",  # "Send to <number>" for a number that isn't a contact
+    "sendToNumber": ".anon-contact-name",
+    "groupItem": "a[data-e2e-group-conversation-item]",  # its href is the group conversation's link
+    "groupName": "[data-e2e-group-conversation-name]",
+    "groupsLoading": "mw-group-conversation-search-results mw-skeleton-loader:not(.hide)",
+    "startGroup": "button[data-e2e-start-group-chat-button]",
+    "chip": "mw-contact-chips-input mat-chip-option",  # a recipient picked in group mode; its text is the name
+    "next": "button[data-e2e-next-button]",  # group mode: open (or create) the group conversation
+    "back": "mws-header a[data-e2e-header-back-button]",
 }
 # The compose box, visible one first: the contenteditable mirror; its paired <textarea> is often hidden.
 INPUTS = ("div[contenteditable=\"true\"][data-e2e-message-input-box]", "mws-message-compose div[contenteditable=\"true\"]",
@@ -141,3 +176,11 @@ SEND_SECONDS = 10  # the guard's one send slot stays open this long after the cl
 CONFIRM_SECONDS = 15  # the thread shows the sent text within this
 IMAGE_SECONDS = 20  # the lightbox shows the full-size image within this (a phone photo is ~7 MB over the relay)
 CLOSE_SECONDS = 5  # the lightbox is gone within this after Escape
+# Deeper lookups (LIVE 2026-10-22: 25 more conversations arrive 3-8s after a click on "Load more").
+DEEP_PAGES = 8  # default "Load more" clicks for search / read / send --to past the first 25 (about 225 conversations)
+MAX_PAGES = 40  # the cap --pages accepts
+MORE_SECONDS = 12  # one "Load more" click lists more rows within this, or the list is complete
+PACE_MS = 750  # a pause between "Load more" clicks: the lookup stays gentle
+PICKER_SECONDS = 8  # the contact picker settles (its contacts and group results stop changing) within this
+CREATE_SECONDS = 10  # send --new-ok --confirm: the one GET_OR_CREATE_CONVERSATION slot stays open this long
+SESSION_LOCK = "messages.session.lock"  # run/<this>: one Google Messages web session at a time, every identity
