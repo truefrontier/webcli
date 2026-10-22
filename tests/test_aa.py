@@ -19,7 +19,7 @@ from webcli.core.errors import ConfigError
 from webcli.sites.aa import api, digest
 from conftest import FIXTURES
 
-KEY = "aa_live_9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+KEY = "aa_test_FAKE_not_a_real_key"
 LLM_URL = f"{api.BASE_URL}{api.LLM_ENDPOINT}?page=1"
 TTS_URL = f"{api.BASE_URL}{api.TTS_ENDPOINT}"
 
