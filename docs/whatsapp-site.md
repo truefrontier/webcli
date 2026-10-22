@@ -32,10 +32,14 @@ webcli whatsapp agent-help
 - A chat name resolves exactly (case counts), else ignoring case, else by containing it, from the chat list or
   WhatsApp's search ("Chats" section only, never a contact without a chat). Several matches exit 2 with the
   candidates; nothing is opened. None exits 3.
-- `read` rows: `sender` ("You" for yours), `direction`, `time` (as shown), `datetime` (local ISO, null when the date
+- `read` rows: `id` (WhatsApp's message id), `sender` ("You" for yours; in a group the member), `direction`, `time` (as shown), `datetime` (local ISO, null when the date
   isn't shown), `text`, `media` (`image`, `video`, `voice note`, `document`, `sticker`, `gif`, `location`,
   `contact card`; also a `[placeholder]` in `text`, with the caption or file name), `quoted` (`{sender, text}`),
   `status` (yours: `pending` / `sent` / `delivered` / `read`). Media isn't downloaded.
+- `read` never answers an empty list for a chat it couldn't read: when the chat opens but no message row renders
+  within 15s, or rows render and none parses, it exits 5 (WhatsApp's DOM has likely moved). An empty list only comes
+  with `--since` (and a warning). WhatsApp renders only the rows near the screen, so `read` scrolls up about a screen
+  at a time and reads each screen on the way; rows inside the returned span that never rendered are warned about.
 - Opening a chat (`read`, a confirmed `send`) is what WhatsApp counts as reading it: it may send read receipts unless
   they're off on the phone. `chats` and `search` open no chat.
 
@@ -58,7 +62,8 @@ One text to one existing chat per call. No attachments, no new contacts, never r
 ## Gentle by design
 
 WhatsApp's terms prohibit automated access, so the site only runs commands on demand, one at a time: no polling, no
-bulk scraping. Every scroll pauses (1.2s); `chats` scrolls at most 8 times, `read` at most 15. A block or challenge
+bulk scraping. Every scroll pauses (1.2s); `chats` scrolls at most 8 times; `read` scrolls up about
+a screen at a time, at most 40 times, and stops as soon as `--limit` / `--since` is met. A block or challenge
 page (unsupported browser, ban notice, too many attempts, human check) stops the command with exit 5 `STOPPED: ...`;
 nothing on it is clicked. A person should look (`webcli whatsapp login` opens a visible window).
 
@@ -71,5 +76,5 @@ nothing on it is clicked. A person should look (`webcli whatsapp login` opens a 
   from a write: the page checks above, and typing or clicking nothing else, keep the other commands read-only.
 - Panes are read as outerHTML and parsed in Python (`parse.py`, `dom.py`) with the selectors in `endpoints.py`
   (ARIA roles, `data-id`, `data-pre-plain-text`, `data-icon`, `title`, each with fallbacks). The tests run the same
-  parsers on hand-built fixtures in `tests/fixtures/whatsapp`. When WhatsApp's DOM moves, save a scrubbed pane there
+  parsers on hand-built fixtures and sanitized live captures (`thread_live_*.html`) in `tests/fixtures/whatsapp`. When WhatsApp's DOM moves, save a scrubbed pane there
   and fix `endpoints.py`.

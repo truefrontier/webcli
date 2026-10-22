@@ -41,7 +41,9 @@ from webcli.sites.whatsapp.endpoints import (
     MAX_LIST_SCROLLS,
     OPEN_SECONDS,
     POLL_MS,
+    ROWS_SECONDS,
     SCROLL_MS,
+    SCROLL_STEP,
     SEARCH_SETTLE_MS,
     SECTIONS,
     SELECTORS,
@@ -94,7 +96,9 @@ SCROLL_LIST_JS = """/* wa:scroll-list */ (sels) => {
   }
   return false;
 }"""
-SCROLL_UP_JS = """/* wa:scroll-up */ (sels) => {
+# Scroll the conversation up by about a screen (not straight to the top: WhatsApp only renders the rows near the
+# viewport, so each step is parsed on the way). True when it moved; at the top WhatsApp loads older rows by itself.
+SCROLL_UP_JS = """/* wa:scroll-up */ ([sels, step]) => {
   let el = null;
   for (const sel of sels) {
     const found = document.querySelector(sel);
@@ -107,8 +111,8 @@ SCROLL_UP_JS = """/* wa:scroll-up */ (sels) => {
   }
   if (!el) return false;
   const before = el.scrollTop;
-  el.scrollTop = 0;
-  return before !== 0;
+  el.scrollTop = Math.max(0, before - Math.max(200, el.clientHeight * step));
+  return el.scrollTop !== before;
 }"""
 # Mark the one row named `name` (exactly, as parse reads a row's name) for a real click. In search results only rows
 # under a chats heading count (never a contact or a message hit). Returns how many rows matched: only 1 is marked.
@@ -198,7 +202,7 @@ async def _html(page: "Page", selector: str) -> str | None:
 
 
 async def _list_rows(page: "Page") -> list[dict]:
-    return parse.chats(await _html(page, S["chatList"]))
+    return parse.chats(await _html(page, S["chatList"]), positions=True)
 
 
 async def _first_usable(page: "Page", selector: str) -> "Locator | None":
@@ -301,37 +305,57 @@ async def chats(limit: int | None = None, unread: bool = False, *, headed: bool 
                 break
             await page.wait_for_timeout(SCROLL_MS)
             stall = 0 if parse.merge(seen, await _list_rows(page)) else stall + 1
-    return [row for row in seen if keep(row)][:limit]
+    return parse.public([row for row in seen if keep(row)][:limit])
+
+
+async def _rendered(page: "Page", chat: str) -> dict:
+    """The opened chat's first look (parse.thread) once its message rows have rendered and parse, waiting up to
+    ROWS_SECONDS. RuntimeError when no row shows, or rows show but none parses: never an empty read that looks
+    like an empty chat."""
+    found = {"rows": 0, "messages": []}
+    for _ in range(_polls(ROWS_SECONDS)):
+        found = await _thread(page, chat)
+        if found["messages"]:
+            await page.wait_for_timeout(SETTLE_MS)  # let the rest of the screen hydrate
+            return await _thread(page, chat)
+        await page.wait_for_timeout(POLL_MS)
+    if not found["rows"]:
+        raise RuntimeError(f"The chat {chat!r} opened, but no message rows rendered within {ROWS_SECONDS}s. "
+                           f"{SNIFF_HINT}")
+    raise RuntimeError(f"The chat {chat!r} opened and shows {found['rows']} message rows, but none could be read "
+                       f"(sender, time, text) within {ROWS_SECONDS}s. {SNIFF_HINT}")
 
 
 async def messages(query: str, limit: int | None = None, since: str | None = None, *,
                    headed: bool = False) -> dict:
-    """{chat, messages}: the last `limit` messages of the chat `query` names, oldest first (at or after `since`, a
-    local ISO time, when given). Scrolls the conversation up for older ones, gently, at most MAX_HISTORY_SCROLLS
-    times. Opening the chat may send WhatsApp's read receipts (see the module doc)."""
+    """{chat, messages, rows, missing}: the last `limit` messages of the chat `query` names, oldest first (at or
+    after `since`, a local ISO time, when given). WhatsApp renders only the rows near the viewport, so it parses
+    each screen as it scrolls up (about a screen at a time, SCROLL_MS apart, at most MAX_HISTORY_SCROLLS times)
+    and merges them by message id. `rows`: message rows seen; `missing`: rows inside the returned span that never
+    rendered. Opening the chat may send WhatsApp's read receipts (see the module doc)."""
     limit = _clamp(limit)
     cut = datetime.fromisoformat(since) if since else None
+    cut_iso = cut.isoformat(timespec="minutes") if cut else None
     async with browser.site_page(POLICY) as page:
         await open_app(page)
         row = await _resolve(page, query)
         await _open(page, row)
-        found = await _thread(page, row["name"])
+        seen = parse.Collected()
+        seen.add(await _rendered(page, row["name"]))
         stall = 0
         for _ in range(MAX_HISTORY_SCROLLS):
-            rows = found["messages"]
+            rows = seen.messages()
             oldest = next((r["datetime"] for r in rows if r["datetime"]), None)
-            if cut is not None and oldest and oldest < cut.isoformat(timespec="minutes"):
+            if cut_iso is not None and oldest and oldest < cut_iso:
                 break
             if len(parse.since_filter(rows, cut)) >= limit or stall >= STALL_SCROLLS:
                 break
-            if not await page.evaluate(SCROLL_UP_JS, dom.alternatives(S["scroller"])):
-                stall += 1
+            moved = await page.evaluate(SCROLL_UP_JS, [dom.alternatives(S["scroller"]), SCROLL_STEP])
             await page.wait_for_timeout(SCROLL_MS)
-            more = await _thread(page, row["name"])
-            stall = 0 if len(more["messages"]) > len(rows) else stall + 1
-            found = more
-    rows = parse.since_filter(found["messages"], cut)
-    return {"chat": row["name"], "messages": rows[-limit:]}
+            added = seen.add(await _thread(page, row["name"]))
+            stall = 0 if moved or added else stall + 1
+    rows = parse.since_filter(seen.messages(), cut)[-limit:]
+    return {"chat": row["name"], "messages": parse.public(rows), "rows": seen.rows, "missing": seen.missing(rows)}
 
 
 async def search(query: str, limit: int | None = None, *, headed: bool = False) -> list[dict]:

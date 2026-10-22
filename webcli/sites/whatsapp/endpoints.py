@@ -64,14 +64,28 @@ SELECTORS = {
     "main": "#main",
     "header": '#main header [data-testid="conversation-info-header-chat-title"], #main header span[dir="auto"][title], '
               '#main header span[dir="auto"]',
-    "message": '[data-id^="true_"], [data-id^="false_"]',
-    "messageOut": ".message-out",
-    "messageIn": ".message-in",
+    # LIVE (2026-10): each message is a [role="row"] wrapping a div with data-id="<bare message id>" (no more
+    # true_/false_ prefix) and data-testid="conv-msg-<id>". The list is virtualised: rows away from the viewport stay
+    # in the DOM (with their data-id) but empty, so `read` parses as it scrolls and merges by data-id. Date
+    # separators ("7/27/2026", "Today") are plain divs between the rows. Older builds: data-id="true_..."/"false_...".
+    "message": '[data-id^="true_"], [data-id^="false_"], [data-testid^="conv-msg-"], [role="row"] [data-id]',
+    # LIVE: yours carry an aria-label "You:" span and (first of a run) a tail-out icon; theirs a tail-in icon (first
+    # of a run only: a message with no tail continues the previous sender's run). Older builds: .message-out/-in.
+    "messageOut": '.message-out, [aria-label="You:"], [data-testid="tail-out"], [data-icon="tail-out"]',
+    "messageIn": '.message-in, [data-testid="tail-in"], [data-icon="tail-in"]',
+    "tail": '[data-testid="tail-in"], [data-testid="tail-out"], [data-icon="tail-in"], [data-icon="tail-out"]',
+    # LIVE: "[2:27 PM, 10/22/2026] Sender Name: " on the message's div.copyable-text. Quoted lines inside a text are
+    # <blockquote data-pre-plain-text="> ">: only a value in the "[time, date] sender: " shape counts.
     "prePlain": "[data-pre-plain-text]",
+    # Inside a message but not its content: reactions, link previews, a group member's avatar. Never media.
+    "decor": '[data-testid="addon-bubble-container"], [data-testid="reaction-bubble"], '
+             '[data-testid="link-preview-container"], [data-testid="group-chat-profile-picture"]',
     "text": "span.selectable-text, [data-testid=\"msg-text\"]",
     "quoted": '[aria-label="Quoted message"], [data-testid="quoted-message"], .quoted-mention',
     "quotedText": ".quoted-mention",
-    "author": '[data-testid="author"], [aria-label^="Message from"]',
+    "author": '[data-testid="author"], [aria-label^="Message from"]',  # LIVE: a group's first message of a run
+    # LIVE: every message (media too) starts with a hidden span labelled "<sender>:" ("You:" for yours).
+    "senderLabel": 'span[aria-label$=":"]',
     "msgTime": '[data-testid="msg-meta"] span, [data-testid="msg-time"]',
     # The scrollable message list in #main (scrolled up to load older messages).
     "scroller": '#main [data-testid="conversation-panel-messages"], #main [role="application"], '
@@ -85,11 +99,13 @@ SELECTORS = {
 # Media placeholders: (selector inside one message, outside its quoted block) -> the placeholder's word. First wins.
 MEDIA = (
     ('[data-icon="audio-play"], [data-icon="ptt-status"], [data-icon="ptt-play"], button[aria-label*="voice message"], '
-     '[data-testid="audio-play"], [data-testid="ptt-status"]', "voice note"),
+     '[data-testid="audio-play"], [data-testid="ptt-status"], [aria-label="Voice message"], '
+     '[data-testid^="audio-player"]', "voice note"),
     ('[data-icon="media-gif"], [data-testid="media-gif"]', "gif"),
-    ('[data-icon="media-play"], [data-icon="video-pip"], [data-testid="media-play"], [aria-label*="Play video"]',
-     "video"),
-    ('img[alt*="sticker"], [data-testid="sticker"], [aria-label*="Sticker"]', "sticker"),
+    ('[data-icon="media-play"], [data-icon="video-pip"], [data-testid="media-play"], [aria-label*="Play video"], '
+     '[data-testid="video-thumb"], [data-testid="video-content"]', "video"),
+    ('img[alt*="sticker"], [data-testid="sticker"], [aria-label*="Sticker"], [data-testid="sticker-container"], '
+     '[data-testid="sticker-like-msg-placeholder"]', "sticker"),
     ('[data-icon^="document"], [data-icon="audio-file"], [data-testid="document-thumb"], [title^="Download"]',
      "document"),
     ('[data-testid="location-map"], [data-icon="location"], a[href*="maps.google.com"]', "location"),
@@ -114,12 +130,14 @@ SECTIONS = {"chats": "chat", "groups": "chat", "groups in common": "chat", "cont
 
 # --- Pacing: on demand and gentle (no polling loops; reasonable delays) ---------------------------------------------
 POLL_MS = 500
+ROWS_SECONDS = 15  # an opened chat's message rows render (`read` fails loudly when none do)
 LOAD_SECONDS = 90  # the chat list after a fresh load (a just-linked browser syncs first)
 OPEN_SECONDS = 15  # a chat opens (its header and messages show)
 SEARCH_SETTLE_MS = 1_500  # search results render after typing
 SETTLE_MS = 800  # rows and bubbles hydrate after they appear
 SCROLL_MS = 1_200  # after each scroll, older messages / more rows load
-MAX_HISTORY_SCROLLS = 15  # `read`: at most this many scroll-ups for older messages
+MAX_HISTORY_SCROLLS = 40  # `read`: at most this many scroll-ups (each ~one screen: ~6-10 messages) for older ones
+SCROLL_STEP = 0.85  # `read` scrolls up this fraction of the conversation's height at a time (rows render as they show)
 MAX_LIST_SCROLLS = 8  # `chats`: at most this many scroll-downs of the chat list
 STALL_SCROLLS = 2  # stop scrolling once this many scrolls in a row loaded nothing new
 TYPE_DELAY_MS = 30  # between typed characters in the search box

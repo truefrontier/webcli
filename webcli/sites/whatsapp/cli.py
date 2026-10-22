@@ -35,7 +35,7 @@ from webcli.sites.whatsapp.endpoints import (
 
 CHAT_FIELDS = ["name", "preview", "time", "unread", "pinned", "muted"]
 CHAT_COMPACT = ("name", "time", "unread")
-MESSAGE_FIELDS = ["sender", "direction", "time", "datetime", "text", "media", "quoted", "status"]
+MESSAGE_FIELDS = ["id", "sender", "direction", "time", "datetime", "text", "media", "quoted", "status"]
 MESSAGE_COMPACT = ("sender", "time", "text")
 MESSAGE_COLUMNS = ["sender", "time", "text", "status"]
 SEARCH_FIELDS = ["type", "name", "preview", "time", "unread"]
@@ -57,11 +57,14 @@ NOTES = [
     "CHAT (`read`, `send`) is a chat name: the one with exactly that name (case counts), else ignoring case, else the "
     "one containing it, from the list or WhatsApp's search under \"Chats\". Several matches exit 2 and list the "
     "candidates (nothing is opened); none exits 3. Contacts without a chat are never opened.",
-    "`read`: the chat's last --limit messages, oldest first: {sender (\"You\" for yours), direction (sent|received), "
+    "`read`: the chat's last --limit messages, oldest first: {id (WhatsApp's message id), sender (\"You\" for yours; "
+    "in a group, the member), direction (sent|received), "
     "time (as shown), datetime (local ISO 8601, null when the date isn't shown), text, media, quoted ({sender, text} "
     "of the message it replies to, when shown), status (yours: pending|sent|delivered|read)}. Media is a "
     "placeholder in text: [image], [video], [voice note], [document], [sticker], [gif], [location], [contact card] "
-    "(then the caption); media isn't downloaded. It scrolls up for older messages until --limit (or --since) is met. "
+    "(then the caption); media isn't downloaded. WhatsApp renders only the messages near the screen, so it reads each "
+    "screen as it scrolls up (about a screen per step, paced) until --limit (or --since) is met. A chat that opens "
+    "but shows no readable message exits 5 (never an empty list); rows that never rendered are warned about. "
     "--since: YYYY-MM-DD, ISO 8601, or 48h / 2d / 1w; rows with no known date are left out then.",
     "Opening a chat (`read`, a confirmed `send`) is what WhatsApp counts as reading it: it may send read receipts "
     "(blue ticks) unless read receipts are off on the phone. `chats` and `search` open no chat.",
@@ -172,6 +175,11 @@ def read_cmd(chat, limit, since, **opts) -> None:
     exact name (else the one chat containing it; several exit 2 with the candidates)."""
     found = _call("messages", chat, limit, since)
     note(f"Chat: {found['chat']}", quiet=opts["quiet"])
+    if not found["messages"]:  # fetch fails loudly when no row parses; only --since can leave nothing
+        warn(f"No messages in {found['chat']!r}" + (f" at or after {since}" if since else "")
+             + f" ({found.get('rows', 0)} message rows read).")
+    if found.get("missing"):
+        warn(f"{found['missing']} message rows in this span never rendered while scrolling and are left out.")
     emit_rows(found["messages"], title=found["chat"], fields=MESSAGE_FIELDS, compact_fields=MESSAGE_COMPACT,
               columns=MESSAGE_COLUMNS, noun="messages", **opts)
     raise SystemExit(EXIT_OK)
