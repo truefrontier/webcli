@@ -748,7 +748,7 @@ async function pageOp(op, args, req) {
       jev = { ...jev, used: true, choice: c.choice, confidence: c.confidence };
       // What Jev said, shown even when it isn't a gate (e.g. "safe" below the floor on a tab Kevin shared).
       jevInfo = { reason: `jev:${c.choice}`, choice: c.choice, confidence: c.confidence, gated: !!gate,
-        policy: kind === "act" ? `act-shared: gates only ${"purchase/destructive/send_publish/credential"} at >= ${j.cfg.riskFloor}`
+        policy: kind === "act" ? `act-shared: gates unless safe at >= ${j.cfg.actSafeFloor}`
           : `bot-opened: gates unless safe at >= ${j.cfg.floor}` };
     } catch (e) {
       if (!(e instanceof JevError)) throw e;

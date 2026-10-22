@@ -7,12 +7,12 @@
 Kevin's call after using 0.9.0 live: "if I give it Act permissions I don't want to be prompted on every click."
 
 - Tabs Kevin Share-act'd himself (`tabKind: "act"`) are treated as consent to ordinary clicks and same-origin moves:
-  - Jev's click/press classification adds a gate only for purchase / destructive / send_publish / credential with confidence (or `probabilities[choice]`) ≥ the new **risk floor** (default 0.7). safe / submit / uncertain and low-confidence risky answers are informational only, in the result's `jevInfo`.
+  - Jev's click/press classification skips its gate when Jev is ≥ 70% sure the target is `safe` (confidence or `probabilities.safe` ≥ the new **act-tab safe floor**, default 0.7, instead of 0.9). Any other choice, or safe below the floor, still adds `jev:<choice>`. The result's `jevInfo` always shows Jev's answer.
   - A same-origin `navigate` isn't gated. Cross-origin navigate and `open` outside the allowlists still are, and the deny list always applies.
   - If Jev fails under `--jev auto`, the fallback is heuristics only (no every-button `jev_unavailable`).
 - Bot-opened tabs (`tabKind: "bot"`, including those auto-shared via `act_allow`) keep the strict 0.9.0 rules: a `jev:<choice>` gate unless Jev says safe at ≥ 0.9, and the stricter fallback when Jev fails.
 - Unchanged: every heuristic gate in `gate.js` (submit-like clicks, Enter in a form, password / payment / one-time-code / card fields, eval), the deny list, and `--jev on` (exit 5 `jev_error`). Jev still never removes a heuristic gate.
-- Options: new "Risk floor" (0.5–0.95, default 0.7, `chrome.storage.local.jevRiskFloor`) next to the confidence floor.
+- Options: new "Act-tab safe floor" (0.5–0.95, default 0.7, `chrome.storage.local.jevActSafeFloor`) next to the confidence floor. The 0.9 confidence floor still applies to bot-opened tabs and to find/locate.
 - Results gain `tabKind` and `jevInfo`; the host's audit line adds `tab_kind=` and `jev_info=<choice>:gate|info`.
 - Full table: docs/chromecli.md → "Tabs Kevin Share-act'd vs bot-opened tabs".
 

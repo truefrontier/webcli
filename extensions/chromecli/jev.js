@@ -9,9 +9,8 @@ export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_PERMISSION = "https://api.typesafe.ai/*";
 export const DEFAULT_MODEL = "jev-latest";
 export const DEFAULT_FLOOR = 0.9;
-// Tabs Kevin Share-act'd himself: Jev adds a gate only for a risky choice at >= this confidence (0.9.1).
-export const DEFAULT_RISK_FLOOR = 0.7;
-export const RISKY_CHOICES = ["purchase", "destructive", "send_publish", "credential"];
+// Tabs Kevin Share-act'd himself: no Jev gate when Jev is at least this sure the target is "safe" (0.9.1).
+export const DEFAULT_ACT_SAFE_FLOOR = 0.7;
 export const TIMEOUT_MS = 25000;
 export const SNAPSHOT_MAX = 60;
 export const SNAPSHOT_BYTES = 24 * 1024;
@@ -41,9 +40,9 @@ export function jevConfig(stored) {
   const model = typeof stored?.jevModel === "string" && stored.jevModel.trim() ? stored.jevModel.trim() : DEFAULT_MODEL;
   const f = Number(stored?.jevFloor);
   const floor = Number.isFinite(f) && f >= 0.5 && f <= 0.99 ? f : DEFAULT_FLOOR;
-  const rf = Number(stored?.jevRiskFloor);
-  const riskFloor = Number.isFinite(rf) && rf >= 0.5 && rf <= 0.95 ? rf : DEFAULT_RISK_FLOOR;
-  return { configured: !!key, key, model, floor, riskFloor };
+  const af = Number(stored?.jevActSafeFloor);
+  const actSafeFloor = Number.isFinite(af) && af >= 0.5 && af <= 0.95 ? af : DEFAULT_ACT_SAFE_FLOOR;
+  return { configured: !!key, key, model, floor, actSafeFloor };
 }
 
 // mode "auto" (default: use Jev if a key is set), "on" (require it), "off".
@@ -176,15 +175,12 @@ export function parseClassify(resp, floor = DEFAULT_FLOOR) {
 
 // Gate policy for Jev's classification, by tab kind:
 //   "bot"  (bot-opened, incl. auto-shared via act_allow): strict, gate unless "safe" >= floor (parseClassify's reason).
-//   "act"  (Kevin Share-act'd it himself): gate only for a risky choice (purchase / destructive / send_publish /
-//          credential) at >= riskFloor; safe / submit / uncertain / low-confidence risky are informational only.
+//   "act"  (Kevin Share-act'd it himself): the same rule with a lower bar, gate unless "safe" >= actSafeFloor (0.7).
 // Either way this only ADDS a reason; the heuristic gates from gate.js are merged in separately and never removed.
-export function classifyGate(c, kind, { floor = DEFAULT_FLOOR, riskFloor = DEFAULT_RISK_FLOOR } = {}) {
-  if (kind !== "act") {
-    const safe = c.choice === "safe" && c.confidence !== null && c.confidence >= floor;
-    return safe ? null : `jev:${c.choice}`;
-  }
-  return RISKY_CHOICES.includes(c.choice) && c.confidence !== null && c.confidence >= riskFloor ? `jev:${c.choice}` : null;
+export function classifyGate(c, kind, { floor = DEFAULT_FLOOR, actSafeFloor = DEFAULT_ACT_SAFE_FLOOR } = {}) {
+  const bar = kind === "act" ? actSafeFloor : floor;
+  const safe = c.choice === "safe" && c.confidence !== null && c.confidence >= bar;
+  return safe ? null : `jev:${c.choice}`;
 }
 
 // The stricter fallback is for bot-opened tabs only; on tabs Kevin Share-act'd, a failed Jev call means heuristics only.

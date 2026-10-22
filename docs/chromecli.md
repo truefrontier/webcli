@@ -90,8 +90,9 @@ every click." There were two causes. First, a plain click on dev.shopify.com was
 below the 0.9 floor. Second, a same-origin navigate in an act-shared tab was gated `origin_not_allowlisted`.
 
 Kevin's own Share-act is now treated as consent to ordinary clicks and same-origin moves in that tab. Two things
-still prompt there: the risky actions the heuristics recognise, and actions Jev is fairly sure are risky. Tabs an agent
-opened keep the strict 0.9.0 rules, because nobody looked at them.
+still prompt there: the risky actions the heuristics recognise, and clicks Jev isn't at least 70% sure are safe (the
+**act-tab safe floor**, 0.7 by default, instead of 0.9). Tabs an agent opened keep the strict 0.9.0 rules, because
+nobody looked at them.
 
 The heuristic gates in `gate.js` and the deny list are unchanged.
 
@@ -103,7 +104,7 @@ Tab kinds:
 | Tab kind | Op | Prompts (in-browser confirm) when |
 |---|---|---|
 | any | any | Denied origin: never prompts, always exit 4 `origin_blocked`. Paused: exit 4. Heuristic gates (`gate.js`, unchanged): submit-like click, Enter/Space on such a button, Enter in a form field, typing into password / `cc-*` / credential / card-like fields, `eval` (disabled, exit 7). |
-| act (Kevin) | click, press | Heuristic gates, **or** Jev's choice is purchase / destructive / send_publish / credential with confidence ≥ the **risk floor** (default 0.7). safe, submit, uncertain, or a low-confidence risky choice: no Jev gate. `jevInfo` reports Jev's answer either way. |
+| act (Kevin) | click, press | Heuristic gates, **or** `jev:<choice>` unless Jev's choice is `safe` with confidence (or `probabilities.safe`) ≥ the **act-tab safe floor** (default 0.7). Any other choice (submit, purchase, destructive, send_publish, credential, uncertain) or safe < 0.7 gates. `jevInfo` reports Jev's answer either way. |
 | act (Kevin) | click/press, Jev failed (`--jev auto`) | Heuristic gates only (no stricter fallback). |
 | act (Kevin) | type, fill, select | Heuristic gates only (Jev doesn't classify these). |
 | act (Kevin) | navigate, same origin | Never (deny list still applies). |
@@ -170,8 +171,8 @@ Jev is TypeSafe's judgment API (`POST https://api.typesafe.ai/v1/systemone`, Bea
 everything works as in P3, with heuristics for `find`/`--find`.
 
 - **Key**: Kevin pastes it in the extension's options (popup → Jev → Options, or `chrome://extensions` → chromecli →
-  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9; bot-opened tabs), risk floor (default 0.7, 0.5-0.95;
-  tabs Kevin Share-act'd). Saving
+  Extension options): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9; bot-opened tabs and
+  find/locate), act-tab safe floor (default 0.7, 0.5-0.95; clicks in tabs Kevin Share-act'd). Saving
   asks Chrome for the optional host permission `https://api.typesafe.ai/*`. The key lives in
   `chrome.storage.local.typesafeApiKey` and is used only by the service worker's `fetch` to TypeSafe; it is never sent
   to the host, the CLI, logs, or pages, and the options page never shows it again (Remove key / Test key only).
@@ -184,8 +185,8 @@ everything works as in P3, with heuristics for `find`/`--find`.
   `ambiguous_target` with the candidates (use one with `--ref`). Rows say `source: jev` or `heuristic`.
 - **Classify**: for `click` and `press`, Jev answers one `choice` question (safe / submit / purchase / destructive /
   send_publish / credential / uncertain). In bot-opened tabs, anything but `safe` at ≥ the confidence floor adds
-  `jev:<choice>`. In tabs Kevin Share-act'd, only purchase / destructive / send_publish / credential at ≥ the risk floor
-  adds `jev:<choice>`. The result's `jevInfo` (`{reason, choice, confidence, gated, policy}`) shows Jev's answer even
+  `jev:<choice>`. In tabs Kevin Share-act'd the bar is the act-tab safe floor (default 0.7): anything but
+  `safe` at ≥ 0.7 adds `jev:<choice>`. `find`/`--find` always use the confidence floor. The result's `jevInfo` (`{reason, choice, confidence, gated, policy}`) shows Jev's answer even
   when it isn't a gate. Jev only adds gates; the heuristic gates from `gate.js` always stay.
 - **Modes**: `--jev auto` (default) uses Jev when a key is set; no key means heuristics and P3 gating. If a Jev call
   fails (network, HTTP error, malformed or incomplete answer), auto falls back to heuristics and reports
