@@ -1,7 +1,7 @@
 [project]
 name = "truefrontier-webcli"
-version = "0.6.0"
-description = "Agent-native CLIs (webcli, llmcli) over your own signed-in, hidden Chrome sessions."
+version = "0.7.0"
+description = "Agent-native CLIs (webcli, llmcli, chromecli) over your own signed-in Chrome sessions."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -30,6 +30,8 @@ dependencies = [
 [project.scripts]
 webcli = "webcli.apps.webcli:main"
 llmcli = "webcli.apps.llmcli:main"
+chromecli = "webcli.apps.chromecli:main"
+chromecli-host = "webcli.chromecli.host:entry"
 
 [project.entry-points."webcli.sites"]
 gemini = "webcli.sites.gemini:ADAPTER"

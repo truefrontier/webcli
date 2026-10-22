@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 (2026-10-22)
+
+### Added
+
+- `chromecli`, a third command from the same package (like `llmcli`): read the tabs you share from your real, signed-in Chrome. P1 is read-only: `chromecli status | list [--active] | show TAB|--active | read TAB|--active [--as text|md] [--max-chars N] [--elements] | screenshot TAB|--active -o FILE [--jpeg --quality Q] | history [--query Q] [--limit N] [--since DATE] | install-host | uninstall-host | doctor | agent-help`. Same `--format`, JSON errors, redaction, and exit codes as webcli; its error codes (`not_shared`, `paused`, `origin_blocked`, `policy_pending`, `not_visible`, `bridge_down`, ...) map onto them (2/3/4/5/7/8).
+- The "chromecli" MV3 extension in `extensions/chromecli/` (Load unpacked; not in the wheel), with a stable ID `ileggcomhbnofnapippaanhimdhchhci` from the committed public key. Toolbar popup: Share-read (badge R) / Share-act (badge A) / Unshare per tab, Pause agents (badge II; also Cmd+Shift+Period), Unshare all, pending policy Accept/Reject, and recent activity. No blanket host permission: sharing a tab asks Chrome for that origin.
+- `chromecli-host`, the native messaging host (`com.truefrontier.chromecli`): checks the caller is the chromecli extension, takes `run/chromecli.lock` (a second one answers `host_busy`), serves `run/chromecli.sock` (0600 in 0700), pushes the `[chromecli]` policy (re-read every 2s), and exits with Chrome. `chromecli install-host` writes its Chrome manifest (dry run unless `--confirm`).
+- Origin policy, enforced by the extension: built-in deny (every non-http(s) scheme, the Chrome Web Store) that config can't remove; a default deny list (banks, sign-in/SSO, password managers, checkout/cart/oauth/login paths); `[chromecli]` config (`implicit_active`, `history`, `confirm_timeout`, `read_allow`, `act_allow`, `deny`). A config change that widens access waits for Kevin's Accept in the popup (`policy_pending`, exit 4); tightening applies at once.
+- `webcli doctor` / `llmcli doctor` gain a `chromecli` row: host manifest present and pointing at an existing `chromecli-host`, allowed origin = the extension ID, socket mode, extension connected and its version.
+
+### Security
+
+- Every chromecli op is logged to `~/.webcli/logs/chromecli.log` through the redacting, rotating logger (URLs through `redact_url`; history queries only as `<N chars sha256:8>`). `read --elements` never reads form values (only `valueKind: empty|filled`).
+- The extension's private key is not in the repo (it lives outside it, 0600); only the public key and ID are committed.
+
 ## 0.6.0 (2026-10-21)
 
 ### Added

@@ -177,6 +177,7 @@ def chrome_info() -> dict:
 
 def doctor_command() -> click.Command:
     """`doctor`: one health report over the shared data home. Registered on both webcli and llmcli."""
+    from webcli.chromecli import doctor as chromecli_doctor
     from webcli.core import config, hardening
 
     @click.command("doctor")
@@ -184,7 +185,8 @@ def doctor_command() -> click.Command:
     @click.option("--no-browser", is_flag=True, help="Don't check sign-in with a (headless) Chrome.")
     def doctor_cmd(fix: bool, no_browser: bool) -> None:
         """Health report (JSON): data home hardening, FileVault, Chrome, every identity's profile, daemon, and
-        sign-in. Shared by webcli and llmcli (one data home). Never shows a window."""
+        sign-in, and the chromecli bridge (host manifest, extension ID, socket, extension connected). Shared by
+        webcli and llmcli (one data home). Never shows a window."""
         from webcli import __version__, sites
 
         root = config.ensure_home()
@@ -197,6 +199,7 @@ def doctor_command() -> click.Command:
             "identities": [identity_report(i, browser_check=not no_browser) for i in known],
             "sites": {"llmcli": [s.name for s in sites.of_kind("llm")],
                       "webcli": [s.name for s in sites.of_kind("data")]},
+            "chromecli": chromecli_doctor.report(),
         }
         report["ok"] = bool(home["ok"] and report["chrome"]["installed"])
         emit_json(report)

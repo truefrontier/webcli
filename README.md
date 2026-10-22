@@ -1,11 +1,12 @@
-# webcli / llmcli
+# webcli / llmcli / chromecli
 
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
 - `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; `send` writes only with `--confirm`). Plus `identity`, `doctor`, `sites`, and `serve`.
+- `chromecli`: the tabs you share from your real, signed-in Chrome, read through the chromecli extension and a native messaging host (read-only; see [chromecli](#chromecli-tabs-you-share)).
 
-Both binaries come from one Python package and share one core and one data home, `~/.webcli/`.
+All three binaries come from one Python package and share one core and one data home, `~/.webcli/`.
 
 ## Install
 
@@ -13,7 +14,7 @@ Both binaries come from one Python package and share one core and one data home,
 pipx install truefrontier-webcli      # or: pip install truefrontier-webcli
 ```
 
-This puts both the `webcli` and `llmcli` commands on your path. (`pip install truefrontier-llmcli` also works — it is a thin alias that depends on `truefrontier-webcli`.) The PyPI distribution is named `truefrontier-webcli`; the commands stay `webcli` and `llmcli`. With Homebrew: `brew install truefrontier/tap/webcli`. Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
+This puts the `webcli`, `llmcli`, and `chromecli` commands (plus chromecli's `chromecli-host`) on your path. (`pip install truefrontier-llmcli` also works — it is a thin alias that depends on `truefrontier-webcli`.) The PyPI distribution is named `truefrontier-webcli`; the commands stay `webcli` and `llmcli`. With Homebrew: `brew install truefrontier/tap/webcli`. Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
 
 To develop from a checkout instead, see [Develop](#develop).
 
@@ -131,11 +132,28 @@ The LinkedIn writes also check who is signed in. LinkedIn's send and post calls 
 - Every log line and printed error goes through the redaction module.
 - `~/.webcli` is 0700, excluded from Time Machine, and marked for Spotlight (`.metadata_never_index`) and sync tools (`.nosync`) when first created. `webcli doctor` re-checks it, and `webcli doctor --fix` re-applies it.
 
+## chromecli (tabs you share)
+
+`chromecli` reads the Chrome tabs you share with agents, in your everyday Chrome, through an MV3 extension ("chromecli", in `extensions/chromecli/` of this repo; Load unpacked) and a native messaging host (`chromecli-host`, host name `com.truefrontier.chromecli`). No CDP, no TCP port, no launchd: Chrome starts the host when the extension connects, and the host serves `~/.webcli/run/chromecli.sock` (0600).
+
+```sh
+chromecli install-host --confirm         # writes Chrome's NativeMessagingHosts/com.truefrontier.chromecli.json
+chromecli status                         # connected, extension version + ID, paused, shares, policy
+chromecli list                           # tabs you shared (popup: Share-read / Share-act)
+chromecli read 123 --as md --elements
+chromecli screenshot --active -o ~/Downloads/t.png
+chromecli history --limit 20
+chromecli agent-help --format json
+```
+
+Only tabs you share in the toolbar popup are visible; a share ends when the tab goes to another origin or Chrome restarts. *Pause agents* (popup, or Cmd+Shift+Period) makes everything but `status` exit 4. Banks, sign-in pages, password managers, and checkout/cart paths are denied by default (`[chromecli]` in `config.toml`); config changes that widen access wait for you to Accept them in the popup. chromecli changes nothing in Chrome (P1 is read-only). Exit 5 `bridge_down` means Chrome or the extension isn't connected. Full reference: [docs/chromecli.md](https://github.com/truefrontier/webcli/blob/main/docs/chromecli.md).
+
 ## Develop
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e . pytest
 .venv/bin/python -m pytest -q      # offline: no browser, no network, temp WEBCLI_HOME
+node --test extensions/chromecli/test   # the chromecli extension's pure modules and a mocked service worker
 ```
 
 After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](https://github.com/truefrontier/webcli/blob/main/docs/post-login-verification.md).

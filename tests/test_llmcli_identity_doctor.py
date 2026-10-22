@@ -34,7 +34,7 @@ def test_llmcli_doctor_reports_same_shape_as_webcli():
     b = run(webcli_app, "doctor", "--no-browser")
     assert a.exit_code == 0 and b.exit_code == 0
     da, db = json.loads(a.output), json.loads(b.output)
-    assert set(da) == set(db) == {"version", "home", "chrome", "identities", "sites", "ok"}
+    assert set(da) == set(db) == {"version", "home", "chrome", "identities", "sites", "chromecli", "ok"}
     # one shared store: identical identities + sites regardless of which binary asked
     assert da["sites"] == db["sites"]
     assert {i["id"] for i in da["identities"]} == {i["id"] for i in db["identities"]}
