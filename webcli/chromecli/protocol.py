@@ -30,7 +30,8 @@ READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", 
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
 # Pre-approval grants (stored in the extension; 0.10.1: grant.add needs userApproved and Jev's scope check).
-GRANT_OPS = ("grant.add", "grant.revoke")
+# 0.11.5: grant.add_batch, one quote covering several grants (clause-aware check).
+GRANT_OPS = ("grant.add", "grant.add_batch", "grant.revoke")
 OPS = READ_OPS + TAB_OPS + PAGE_OPS + GRANT_OPS
 # Ops that change something: sent only with --confirm (confirm: true); the extension refuses them otherwise.
 MUTATING_OPS = TAB_OPS + PAGE_OPS + GRANT_OPS

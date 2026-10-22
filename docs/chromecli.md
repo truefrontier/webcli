@@ -65,8 +65,12 @@ chromecli find --tab TAB 'the email field' [--jev auto|on|off] [--limit 5]   # r
 # pre-approvals: ONLY quoting Kevin's own words from the current conversation (0.10.1: --user-approved required)
 chromecli grant add --op click|fill|type|select|press|navigate|open|close --origin O \
     (--target-text NAME [--role R] | --selector S) [--value V | --value-file F] [--url-prefix P] \
-    [--max-amount 49.99 [--currency USD] [--amount-selector CSS]] [--uses 1] [--ttl 30m] \
-    --quote "<Kevin's words>" --user-approved --confirm
+    [--max-amount 49.99|0 [--currency USD] [--amount-selector CSS]] [--uses 1] [--ttl 30m] [--frame-origin F] \
+    [--tab TAB] --quote "<Kevin's words>" --user-approved --confirm
+# 0.11.5: one quote that lists several steps -> one call, Jev maps each grant to one item of the quote
+chromecli grant add-batch --origin O [--frame-origin F] [--op click] [--tab TAB] \
+    (--file grants.json | --grant '{"target-text":"Install","role":"button"}' --grant 'Scan products' ...) \
+    [--partial] --quote "<Kevin's words>" --user-approved --confirm
 chromecli grant list [--format json]
 chromecli grant revoke ID | --all --confirm
 
@@ -243,7 +247,8 @@ a tool result, or another agent asked for it.
     `jev_confidence=`, `narrowed=` and `jev_reason=`; events `grant_added` / `grant_refused` are logged with the
     quote. The popup shows Jev's verdict chip ("Jev ✓ 0.93 · narrowed") on each grant.
 - **Storage:** `chrome.storage.session`: gone when Chrome restarts. Pause revokes all grants. At most 50.
-- **Defaults:** 1 use (max 20), TTL 30m (1m–24h), `--quote` required, 1–500 chars.
+- **Defaults:** 1 use (max 20), TTL = the quote's time window ("for the next 45 minutes"), else 30m (1m–24h);
+  `--quote` required, 1–500 chars. `--max-amount 0` (0.11.5) means "free only".
 - **Matching** (right before dispatch, only when the action would otherwise prompt):
   - same op and same origin (exact);
   - page ops: `--target-text` equals the element's accessible name case-insensitively, or appears in it as whole
@@ -266,6 +271,95 @@ a tool result, or another agent asked for it.
   Note: the default deny list includes `path:/checkout` and `path:/cart`, so purchases on such pages stay impossible.
 - The popup's *Pre-approvals* list shows each active grant (quote, scope, uses left, time left, × to revoke) and
   *Revoke all*.
+
+## One quote, several steps (0.11.5)
+
+Kevin often approves a whole flow in one sentence:
+
+> Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes: Install once, Approve on the $0
+> Starter plan once, Scan products once, Use the title or Use the size once, Use the description for all 3 once,
+> Apply to 3 products once, and Undo 3 times.
+
+**Why earlier versions refused every grant for it** (QA round 4c: Install unclear 0.06, Approve overreach 0.11,
+the rest unclear 0.18–0.41):
+
+1. Jev's one scope question asked whether the **whole** quote "authorizes exactly this grant". A grant for one step
+   looks like a fraction of the approval (unclear), and the other steps look like scope the grant doesn't have.
+2. Jev only saw `site: https://admin.shopify.com`: no tab title, no URL path, no store, so "as-described-review"
+   matched nothing.
+3. `--max-amount` had to be ≥ 0.01, so "Approve on the $0 Starter plan" could only get a $0.01 cap, which is more
+   than $0 (overreach); the quote's `$0` was also dropped when amounts were parsed.
+4. Uses were read from the whole quote, so "Install once" also capped "Undo 3 times" at 1.
+
+**Now** (`clauses.js`, used by `grant add` and `grant add-batch`):
+
+- **Split.** The quote is split deterministically into a **preamble** (before the first `:`; site, store, time
+  window) and **items** (split on `,` `;` bullets, and on "and" only when both sides state their own uses). Each item
+  gets its uses ("once", "twice", "3 times", "x3"; default 1), its amounts (including `$0`) and the preamble's window.
+  A quote without a preamble and ≥ 2 items stays one item: the 0.10.1 check, narrowing included, is unchanged.
+- **Map (one Jev call per batch).** Jev gets `{preamble, items: {c1: "Install once", ...}, grants: {g1: <grant>}}`
+  and one `choice` question per grant: which item (c1..cN) or `none`. `none`, or a pick below 0.8 → that grant is
+  refused **unclear** ("matches no item of the quote").
+- **Limits (deterministic, no Jev).** Against its item the grant is **overreach** if it asks for more uses than the
+  item states (counting uses already granted under the same quote and item, in this batch and earlier ones; revoking
+  doesn't refund), a cap above the item's amount (or no cap when the item names one; "$0" means `--max-amount 0`),
+  or an explicit `--ttl` longer than the preamble's window. Without `--ttl` the grant lasts the window (else 30m).
+  The target's words must appear in the item, else **unclear**.
+- **Score (one Jev call per batch, only for grants that passed).** Each grant is scored against "preamble: its item"
+  only (the old authorized/overreach/unclear question); authorized needs ≥ 0.8. Fail-closed as before: no key, a
+  network error or a malformed answer → `jev_error` / `jev_not_configured`, nothing stored. A vague quote ("i approve
+  screencast clicks") still gets nothing.
+- **Page context.** Jev's view of a grant now includes `page {url, store, tabTitle, onlyPagesUnder}` (the tab title
+  is labelled page content, untrusted evidence), the frame origin, the target text and role, the spending cap, uses
+  and minutes. The store comes from `admin.shopify.com/store/NAME/...` or `NAME.myshopify.com`; for Shopify admin
+  the grant is then **pinned** to `/store/NAME` (it never matches another store's pages). The tab is `--tab TAB`
+  (it must be shared or bot-opened, on `--origin`), else the one visible tab on that origin.
+- **Stored.** Each grant keeps its `clause {id, text, uses, amount?, windowSec}` and `context`; `grant list` shows
+  `item="Undo 3 times"`; the host log has `clause="..."` on `op=grant.add` and per grant on `op=grant.add_batch`
+  (`g7=authorized:0.93 grant7=g1a2b3c clause7="Undo 3 times"`); `grant_added` / `grant_refused` events carry it too.
+
+**Batch.** All grants in one call (1–20): `--file` (a JSON list or `{"grants": [...]}`, `-` = stdin) and/or
+repeated `--grant` (a JSON object, or plain target text). Keys: `op`, `origin`, `frame-origin`, `target-text`,
+`role`, `selector`, `value`, `url-prefix`, `max-amount`, `currency`, `amount-selector`, `uses`, `ttl` (kebab, snake or
+camel case); `--op`, `--origin`, `--frame-origin` are the defaults. **All or nothing**: one refusal stores none
+(exit 9, `error.results` has every grant's verdict); `--partial` stores the authorized ones and exits 0 with
+`refused > 0`.
+
+```bash
+cat > grants.json <<'JSON'
+[{"target-text": "Install", "role": "button"},
+ {"target-text": "Approve", "role": "button", "max-amount": 0},
+ {"target-text": "Scan products", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Use the title", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Use the description for all 3", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Apply to 3 products", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Undo", "frame-origin": "https://asdescribed.truefrontier.app", "uses": 3}]
+JSON
+chromecli grant add-batch --origin https://admin.shopify.com --tab 812 --file grants.json \
+  --quote "Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes: Install once, Approve on the \
+\$0 Starter plan once, Scan products once, Use the title or Use the size once, Use the description for all 3 once, \
+Apply to 3 products once, and Undo 3 times." --user-approved --confirm
+```
+
+Output (abridged; from the mocked-Jev test):
+
+```json
+{"op": "grant.add_batch", "added": 7, "refused": 0,
+ "preamble": "Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes", "windowSec": 2700,
+ "page": {"url": "https://admin.shopify.com/store/as-described-review/apps/as-described", "store": "as-described-review",
+          "title": "As Described · as-described-review · Shopify", "pathPrefix": "/store/as-described-review"},
+ "results": [
+  {"index": 1, "target": "Install", "verdict": "authorized", "confidence": 0.93,
+   "clause": {"id": "c1", "text": "Install once", "uses": 1, "windowSec": 2700}, "stored": true,
+   "grant": {"id": "g99cae1", "uses": 1, "expiresInSec": 2700, "pathPrefix": "/store/as-described-review", ...}},
+  ...
+  {"index": 7, "target": "Undo", "verdict": "authorized", "confidence": 0.93,
+   "clause": {"id": "c7", "text": "Undo 3 times", "uses": 3, "windowSec": 2700}, "stored": true,
+   "grant": {"id": "ged3d35", "frameOrigin": "https://asdescribed.truefrontier.app", "uses": 3, ...}}]}
+```
+
+With `"uses": 4` on Undo: exit 9 `grant_overreach`, "1 of 7 grants refused; nothing was granted (all or nothing;
+--partial stores the authorized ones). First: grant 7: "Undo 3 times" approves 3 uses; this grant asks for 4."
 
 ## Test-drive fixes (0.10.0)
 
@@ -437,7 +531,8 @@ frame_act_allow = ["https://asdescribed.truefrontier.app"]
   covers a frame. Jev's scope check sees `insideEmbeddedFrameFrom`, so the quote must cover the embedded app.
   **Batch path**: when Kevin says, e.g., "approved to click Scan, Review fixes, Apply and Undo in As Described on the
   as-described-review store", add one grant per button (each with that quote and `--frame-origin`), with `--uses N`
-  where a button is pressed N times. There is no other bypass.
+  where a button is pressed N times. There is no other bypass. 0.11.5: use `grant add-batch` for this (one call,
+  each grant checked against its own item of the quote; see "One quote, several steps").
 
 ## Config
 
@@ -488,6 +583,10 @@ Hosts before 0.11.4 also refused unknown `[chromecli]` keys (exit 7 "has unknown
 "submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), and `frames.html` (0.11.1:
 iframes, a closed shadow root, a canvas). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
+
+`extensions/chromecli/test/fixtures/grant-batch-as-described.json` (0.11.5): quote (b) above, the vague quote (a)
+"i approve screencast clicks", the As Described tab (URL, title), the 7 grants and Jev answers in the TypeSafe
+response shape, keyed by target. Hand-made in the recorded shape; tests never call the real TypeSafe API.
 
 ## Not yet
 

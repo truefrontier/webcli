@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.11.5 (2026-10-22)
+
+chromecli pre-approvals for a quote that lists several steps. QA round 4c: Kevin's "Yes, pre-approve chromecli
+clicks on as-described-review for the next 45 minutes: Install once, Approve on the $0 Starter plan once, Scan
+products once, Use the title or Use the size once, Use the description for all 3 once, Apply to 3 products once, and
+Undo 3 times." got every grant refused (Install unclear 0.06, Approve overreach 0.11, the rest unclear 0.18–0.41).
+
+### Root cause
+
+- Jev's single scope question asked whether the **whole** multi-item quote "authorizes exactly this grant", so each
+  one-step grant looked like a fraction of the approval (unclear) or the other steps looked like extra scope.
+- Jev saw only `site: https://admin.shopify.com`: no tab title, path or store, so "as-described-review" matched
+  nothing.
+- `--max-amount` had a 0.01 minimum (CLI and extension), so "$0 Starter plan" could only get a $0.01 cap, which is
+  more than $0 (overreach); quote amounts of `$0` were dropped.
+- Uses were read from the whole quote, so "once" also limited "Undo 3 times".
+
+### Added
+
+- **Clause-aware scope check** (`extensions/chromecli/clauses.js`). The quote is split into a preamble (site, store,
+  time window) and items, each with its own uses and amount. One Jev call maps every grant to its best item (`none`
+  or < 0.8 → refused unclear); deterministic limits make a grant over its item's uses (counted across batches under
+  the same quote), over its amount, or with a `--ttl` longer than the window **overreach**; one more Jev call scores
+  each remaining grant against the preamble plus only its item (authorized ≥ 0.8, unchanged). Single-item quotes keep
+  the 0.10.1 check (narrowing included). Fail-closed as before; the vague "i approve screencast clicks" still gets
+  nothing.
+- **`chromecli grant add-batch`**: `--file grants.json` and/or repeated `--grant` (JSON or plain target text),
+  defaults from `--op/--origin/--frame-origin`, 1–20 grants, one quote, `--user-approved`, preview unless
+  `--confirm`. All or nothing (exit 9 with per-grant `error.results`); `--partial` stores the authorized ones.
+  Returns `{added, refused, preamble, windowSec, page, results: [{index, verdict, confidence, reason, clause, stored,
+  grant}]}`.
+- **Page context for Jev**: each grant's view has `page {url, store, tabTitle, onlyPagesUnder}` (title labelled
+  untrusted page content) plus the frame origin, target text, cap, uses and minutes. `--tab TAB` on `grant add` /
+  `add-batch` (shared or bot-opened, on the origin), else the one visible tab on the origin. A Shopify admin store
+  pins the grant to `/store/NAME`.
+- Stored grants keep `clause` and `context`; `grant list` shows `item="..."`; the host log has `clause=` on
+  `op=grant.add` and `gN=verdict:conf grantN=id clauseN="..."` per grant on `op=grant.add_batch`; `grant_added` /
+  `grant_refused` events carry the clause.
+- Tests: `extensions/chromecli/test/grant-batch.test.mjs` (18, mocked Jev, fixture
+  `test/fixtures/grant-batch-as-described.json`, hand-made in the recorded TypeSafe response shape: quote (b) → 7
+  authorized, Undo uses 4 overreach, unmatched grant, quote (a) refused, all-or-nothing vs `--partial`, TTL = 45m,
+  `$0` cap, store pin, fail-closed) and `tests/test_chromecli_grant_batch.py` (CLI parsing, validation, preview,
+  request, exit 9, log lines, agent-help).
+
+### Changed
+
+- `--max-amount 0` is allowed (free only). `--ttl` defaults to the quote's time window, else 30m.
+
 ## 0.11.4 (2026-10-22)
 
 Hardening after 0.11.3: when `config.toml` gained `deny_except` and `frame_act_allow`, the still-running 0.10.2

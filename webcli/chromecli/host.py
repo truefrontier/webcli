@@ -104,6 +104,29 @@ def _target_summary(target: Any) -> str:
     return ""
 
 
+def _grant_summary(args: dict) -> str:
+    """One grant's fields for the audit line (values only as digests)."""
+    parts = [f"grant_op={redact_text(str(args.get('op')))[:10]} origin={redact_url(str(args.get('origin')))}"]
+    t = _target_summary(args.get("target"))
+    if t:
+        parts.append(t)
+    if args.get("value") is not None:
+        parts.append(f"value={digest(str(args['value']))}")
+    if args.get("urlPrefix"):
+        parts.append(f"url_prefix={redact_url(str(args['urlPrefix']))}")
+    if args.get("frameOrigin"):  # 0.11.3
+        parts.append(f"frame_origin={redact_url(str(args['frameOrigin']))}")
+    if args.get("maxAmount") is not None:
+        parts.append(f"max_amount={redact_text(str(args['maxAmount']))[:16]} {redact_text(str(args.get('currency') or 'USD'))[:3]}")
+    # 0.11.5: no ttlSec -> the quote's time window (else 30m), set in the extension
+    parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 'default')}")
+    return " ".join(parts)
+
+
+def _clause_log(text) -> str:
+    return json.dumps(redact_text(str(text))[:120], ensure_ascii=False)
+
+
 def _summary(op: str, args: dict) -> str:
     """The op's arguments for the audit line. Typed / filled / selected values and eval code appear only as
     <N chars sha256:8>; URLs go through redact_url."""
@@ -162,20 +185,16 @@ def _summary(op: str, args: dict) -> str:
     if op == "page.probe" and args.get("op"):
         parts.append(f"probe_op={redact_text(str(args['op']))[:10]}")
     if op == "grant.add":
-        parts.append(f"grant_op={redact_text(str(args.get('op')))[:10]} origin={redact_url(str(args.get('origin')))}")
-        t = _target_summary(args.get("target"))
-        if t:
-            parts.append(t)
-        if args.get("value") is not None:
-            parts.append(f"value={digest(str(args['value']))}")
-        if args.get("urlPrefix"):
-            parts.append(f"url_prefix={redact_url(str(args['urlPrefix']))}")
-        if args.get("frameOrigin"):  # 0.11.3
-            parts.append(f"frame_origin={redact_url(str(args['frameOrigin']))}")
-        if args.get("maxAmount") is not None:
-            parts.append(f"max_amount={redact_text(str(args['maxAmount']))[:16]} {redact_text(str(args.get('currency') or 'USD'))[:3]}")
-        parts.append(f"uses={args.get('uses', 1)} ttl_s={args.get('ttlSec', 1800)} user_approved={args.get('userApproved') is True}")
+        parts.append(_grant_summary(args))
+        parts.append(f"user_approved={args.get('userApproved') is True}")
         # Kevin's words, through the same redaction as everything else.
+        parts.append(f"quote={json.dumps(redact_text(str(args.get('quote') or ''))[:500], ensure_ascii=False)}")
+    if op == "grant.add_batch":  # 0.11.5: one quote, several grants
+        grants = args.get("grants") if isinstance(args.get("grants"), list) else []
+        parts.append(f"grants={len(grants)} partial={args.get('partial') is True} user_approved={args.get('userApproved') is True}")
+        for i, g in enumerate(grants[:20], 1):
+            if isinstance(g, dict):
+                parts.append(f"[{i}] {_grant_summary(g)}")
         parts.append(f"quote={json.dumps(redact_text(str(args.get('quote') or ''))[:500], ensure_ascii=False)}")
     if op == "grant.revoke":
         parts.append("all=1" if args.get("all") else f"id={redact_text(str(args.get('id')))[:20]}")
@@ -264,6 +283,7 @@ class Host:
                   f"origin={redact_url(str(msg.get('origin')))} verdict={redact_text(str(msg.get('verdict')))[:12]} "
                   f"confidence={msg.get('confidence')} narrowed={narrowed or '-'} "
                   + (f"reason={json.dumps(redact_text(str(msg.get('reason')))[:300], ensure_ascii=False)} " if msg.get("reason") else "")
+                  + (f"clause={_clause_log(msg['clause'])} " if msg.get("clause") else "")  # 0.11.5
                   + f"quote={json.dumps(redact_text(str(msg.get('quote') or ''))[:500], ensure_ascii=False)}")
         else:
             audit(f"event={redact_text(str(kind))}")
@@ -411,6 +431,21 @@ class Host:
                 gate += f" grant_amount={redact_text(str(g['amount']))[:16]}"
         if op == "grant.add" and reply.get("ok") and isinstance(result.get("grant"), dict):
             gate += f" grant={redact_text(str(result['grant'].get('id')))[:20]}"
+        if op == "grant.add" and isinstance(info.get("clause"), dict) and info["clause"].get("text"):  # 0.11.5
+            gate += f" clause={_clause_log(info['clause']['text'])}"
+        if op == "grant.add_batch" and isinstance(info.get("results"), list):
+            # 0.11.5: per grant: verdict:confidence, the matched clause, the stored grant id (or -)
+            if reply.get("ok"):
+                gate += f" added={info.get('added')} refused={info.get('refused')}"
+            for r in info["results"][:20]:
+                if not isinstance(r, dict):
+                    continue
+                g = r.get("grant") if isinstance(r.get("grant"), dict) else {}
+                cl = r.get("clause") if isinstance(r.get("clause"), dict) else {}
+                i = r.get("index")
+                gate += (f" g{i}={redact_text(str(r.get('verdict')))[:12]}:{r.get('confidence')}"
+                         f" grant{i}={redact_text(str(g.get('id') or '-'))[:20]}"
+                         f" clause{i}={_clause_log(cl['text']) if cl.get('text') else '-'}")
         jc = info.get("jevCheck") if op == "grant.add" and isinstance(info.get("jevCheck"), dict) else None
         if jc:  # 0.10.1: Jev's scope verdict on the grant (the quote itself is in the summary)
             narrowed = ",".join(str(n.get("field")) for n in (jc.get("narrowed") or []) if isinstance(n, dict))[:60]
