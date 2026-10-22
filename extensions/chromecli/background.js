@@ -21,6 +21,9 @@ import {
   GrantError, PAGE_GRANT_OPS, amountCheck, canSkip, fmtAmount, grantMatches, grantView, isLive, parseScope, scopeBody,
   validateGrant,
 } from "./grants.js";
+import {
+  BATCH_MAX, checkClause, clauseScopeBody, mapBody, pageContext, parseClauseScope, parseMap, quoteKey, splitQuote,
+} from "./clauses.js";
 
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
@@ -30,7 +33,7 @@ const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screens
   "page.find", "page.probe", "page.scroll", "grant.list"];
 const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
 const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
-const GRANT_WRITE_OPS = ["grant.add", "grant.revoke"];
+const GRANT_WRITE_OPS = ["grant.add", "grant.add_batch", "grant.revoke"];
 const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
 // Ops that change something: the CLI sends them only with --confirm (confirm: true); anything else is refused.
 const MUTATING = new Set([...TAB_OPS, ...PAGE_OPS, ...GRANT_WRITE_OPS]);
@@ -354,6 +357,7 @@ async function dispatch(op, args, req = {}) {
     case "page.probe": return pageProbeOp(args);
     case "page.scroll": return pageScrollOp(args);
     case "grant.add": return grantAdd(args);
+    case "grant.add_batch": return grantAddBatch(args);
     case "grant.list": return grantList();
     case "grant.revoke": return grantRevoke(args);
     default: return pageOp(op.slice(5), args, req);
@@ -1114,7 +1118,7 @@ async function pageOp(op, args, req) {
   let confirmedInBrowser = false;
   // A pre-approval grant can answer the gate, unless a reason is never skippable (secret / payment fields, eval).
   const g = reasons.length && canSkip(reasons)
-    ? await findGrant(op, { tab, origin, element, value: args.value, key: args.key, spec, fingerprint: d.fingerprint,
+    ? await findGrant(op, { tab, origin, url: tab.url, element, value: args.value, key: args.key, spec, fingerprint: d.fingerprint,
       frameId: frame.frameId, frameOrigin: frame.frameOrigin || null }) : {};
   if (g.used) {
     if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.", where);
@@ -1374,50 +1378,205 @@ async function grantUsedSideEffects(g, { op, name, origin, tab }) {
   } catch { /* notifications unavailable */ }
 }
 
+// 0.11.5: the tab a grant is for (title, URL path, store), shown to Jev. --tab names it (it must be on the grant's
+// origin and visible to chromecli: shared or bot-opened); otherwise the one chromecli-visible tab (or several on the same
+// store) on that origin. None found -> no page context.
+async function grantContext(origin, tabId) {
+  const bot = await getBotTabs();
+  const visible = async (tab) => !!bot[tab.id] || await access(tab).then(() => true, () => false);
+  if (tabId != null) {
+    if (!Number.isInteger(tabId)) throw new OpError("bad_request", "--tab must be a tab id.");
+    const tab = await resolveTab({ tab: tabId });
+    if (!(await visible(tab))) throw new OpError("not_shared", `Tab ${tab.id} is not shared or bot-opened.`, { tab: tab.id });
+    if (originOf(tab.url || "") !== origin) {
+      throw new OpError("bad_request", `Tab ${tab.id} is on ${originOf(tab.url || "") || "another page"}, not ${origin}.`, { tab: tab.id });
+    }
+    return pageContext(tab.url, tab.title);
+  }
+  const ctxs = [];
+  for (const tab of await chrome.tabs.query({})) {
+    if (originOf(tab.url || "") !== origin || !(await visible(tab))) continue;
+    const c = pageContext(tab.url, tab.title);
+    if (c) ctxs.push(c);
+  }
+  if (!ctxs.length) return null;
+  if (ctxs.length === 1) return ctxs[0];
+  const stores = new Set(ctxs.map((c) => c.store || ""));
+  // several tabs: only the shared store (no title / path, which differ) when they agree on one
+  if (stores.size === 1 && ctxs[0].store) {
+    const { store, pathPrefix } = ctxs[0];
+    return { url: `${origin}${pathPrefix || ""}`, path: pathPrefix || "", store, ...(pathPrefix ? { pathPrefix } : {}) };
+  }
+  return null;
+}
+
+// Per-clause uses already granted (session storage; revoking doesn't refund, Kevin restates to re-approve).
+const getLedger = async () => (await chrome.storage.session.get("clauseLedger")).clauseLedger || {};
+const ledgerKey = (quote, clauseId) => `${quoteKey(quote)}#${clauseId}`;
+
 async function grantAdd(args) {
-  let g;
-  try { g = validateGrant(args); } catch (e) {
-    if (e instanceof GrantError) throw new OpError(e.code, e.message);
-    throw e;
+  const r = await addGrants([args], { quote: args.quote, userApproved: args.userApproved, tab: args.tab, partial: false });
+  const x = r.results[0];
+  return { op: "grant.add", added: true, grant: x.grant, jevCheck: x.jevCheck, ...(x.clause ? { clause: x.clause } : {}),
+    confirmedInBrowser: false };
+}
+
+async function grantAddBatch(args) {
+  const list = Array.isArray(args.grants) ? args.grants : null;
+  if (!list || !list.length) throw new OpError("bad_request", "grant.add_batch needs a non-empty grants list.");
+  if (list.length > BATCH_MAX) throw new OpError("bad_request", `grant.add_batch takes at most ${BATCH_MAX} grants.`);
+  const r = await addGrants(list, { quote: args.quote, userApproved: args.userApproved, tab: args.tab, partial: args.partial === true });
+  return { op: "grant.add_batch", ...r, confirmedInBrowser: false };
+}
+
+// The shared path for grant.add (one grant) and grant.add_batch: validate all, then Jev. A quote with a list of items
+// (preamble: item, item, ...) is checked clause by clause; any other quote, grant by grant as before. Fail closed.
+async function addGrants(list, { quote, userApproved, tab, partial }) {
+  const now = Date.now();
+  const gs = [];
+  for (const [i, a] of list.entries()) {
+    try {
+      gs.push(validateGrant({ ...(a && typeof a === "object" ? a : {}), quote, userApproved }, { now }));
+    } catch (e) {
+      if (e instanceof GrantError) throw new OpError(e.code, list.length > 1 ? `grant ${i + 1}: ${e.message}` : e.message, list.length > 1 ? { index: i + 1 } : {});
+      throw e;
+    }
   }
   const st = await getPolicyState();
-  const why = denied(`${g.origin}/`, st.active) || (g.urlPrefix ? denied(g.urlPrefix, st.active) : null)
-    || (g.frameOrigin ? denied(`${g.frameOrigin}/`, st.active) : null);
-  if (why) throw new OpError("origin_blocked", `${g.origin} is denied (${why}); no grant can cover it.`, { origin: g.origin });
-  // Jev checks the grant's scope against the quote. No key or no answer: fail closed (nothing granted; prompts stay).
+  for (const g of gs) {
+    const why = denied(`${g.origin}/`, st.active) || (g.urlPrefix ? denied(g.urlPrefix, st.active) : null)
+      || (g.frameOrigin ? denied(`${g.frameOrigin}/`, st.active) : null);
+    if (why) throw new OpError("origin_blocked", `${g.origin} is denied (${why}); no grant can cover it.`, { origin: g.origin });
+  }
+  // page context per origin (title, path, store); a store pins the grant to that store's pages
+  const ctxBy = {};
+  for (const g of gs) {
+    if (!(g.origin in ctxBy)) ctxBy[g.origin] = await grantContext(g.origin, tab ?? null);
+    const c = ctxBy[g.origin];
+    if (c) { g.context = c; if (c.pathPrefix) g.pathPrefix = c.pathPrefix; }
+  }
+  const origin0 = gs[0].origin;
   const cfg = await getJev();
   if (!cfg.configured) {
-    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: "jev_not_configured" });
+    await auditAdd({ op: "grant-refused", tab: null, origin: origin0, outcome: "jev_not_configured" });
     throw new OpError("jev_not_configured", "Pre-approvals need Jev to check the quote against the grant, and no Jev key is set. Nothing was granted.",
-      { origin: g.origin, hint: "Kevin: save a TypeSafe key in chromecli's options. Until then every risky action asks you in Chrome." });
+      { origin: origin0, hint: "Kevin: save a TypeSafe key in chromecli's options. Until then every risky action asks you in Chrome." });
   }
-  let v;
+  const split = splitQuote(gs[0].quote);
+  let results;
   try {
-    v = parseScope(await callJev(globalThis.fetch, cfg.key, scopeBody({ model: cfg.model, grant: g })), g);
+    results = split.multi ? await clauseVerdicts(gs, split, cfg) : await singleVerdicts(gs, cfg);
   } catch (e) {
-    if (!(e instanceof JevError) && !(e instanceof GrantError)) throw e;
-    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: "jev_error" });
-    throw new OpError("jev_error", `Jev couldn't check the grant (${e.message}). Nothing was granted.`, { origin: g.origin });
+    if (e instanceof OpError) throw e;
+    await auditAdd({ op: "grant-refused", tab: null, origin: origin0, outcome: "jev_error" });
+    throw new OpError("jev_error", `Jev couldn't check the grant${gs.length > 1 ? "s" : ""} (${String(e?.message || e).slice(0, 200)}). Nothing was granted.`, { origin: origin0 });
   }
-  const jevCheck = { verdict: v.verdict, confidence: v.confidence, reason: v.reason, narrowed: v.narrowed };
-  if (!v.ok) {
-    await auditAdd({ op: "grant-refused", tab: null, origin: g.origin, outcome: `grant_${v.verdict}` });
-    post({ event: "grant_refused", op: g.op, origin: g.origin, quote: g.quote, verdict: v.verdict, confidence: v.confidence,
-      reason: v.reason });
-    throw new OpError(`grant_${v.verdict}`, v.reason, { origin: g.origin, jevCheck,
+  const okOnes = results.filter((r) => r.ok);
+  const refused = results.filter((r) => !r.ok);
+  const view = (r) => ({ index: r.index, op: r.g.op, target: r.g.target?.text ?? r.g.target?.selector ?? r.g.urlPrefix ?? r.g.origin,
+    verdict: r.verdict, confidence: r.confidence, reason: r.reason, ...(r.clause ? { clause: r.clause } : {}) });
+  for (const r of refused) {
+    post({ event: "grant_refused", op: r.g.op, origin: r.g.origin, quote: r.g.quote, verdict: r.verdict, confidence: r.confidence,
+      reason: r.reason, ...(r.clause ? { clause: r.clause.text } : {}) });
+  }
+  if (refused.length && (!partial || !okOnes.length)) {
+    await auditAdd({ op: "grant-refused", tab: null, origin: origin0, outcome: `${refused.length}/${results.length} refused` });
+    const code = refused.some((r) => r.verdict === "overreach") ? "grant_overreach" : "grant_unclear";
+    const first = refused[0];
+    const msg = gs.length === 1 ? first.reason
+      : `${refused.length} of ${gs.length} grants refused; nothing was granted${partial ? "" : " (all or nothing; --partial stores the authorized ones)"}. First: grant ${first.index}: ${first.reason}`;
+    throw new OpError(code, msg, { origin: origin0, ...(gs.length === 1 ? { jevCheck: first.jevCheck } : {}),
+      ...(split.multi ? { preamble: split.preamble } : {}), results: results.map(view),
       hint: "Nothing was granted. Ask Kevin to approve exactly this (or let the action ask him in Chrome)." });
   }
-  const n = { ...v.grant, jev: { verdict: v.verdict, confidence: v.confidence, narrowed: v.narrowed } };
-  await withLock(async () => {
+  const stored = await withLock(async () => {
     const grants = await getGrants();
-    if (Object.keys(grants).length >= 50) throw new OpError("bad_request", "Too many active pre-approvals (50); revoke some first.");
-    grants[n.id] = n;
+    if (Object.keys(grants).length + okOnes.length > 50) throw new OpError("bad_request", "Too many active pre-approvals (50); revoke some first.");
+    const ledger = await getLedger();
+    for (const [k, v] of Object.entries(ledger)) if (v.until <= Date.now()) delete ledger[k];
+    const out = [];
+    for (const r of okOnes) {
+      const n = { ...r.g, jev: { verdict: r.verdict, confidence: r.confidence, narrowed: r.narrowed || [],
+        ...(r.mapConfidence != null ? { mapConfidence: r.mapConfidence } : {}) }, ...(r.clause ? { clause: r.clause } : {}) };
+      grants[n.id] = n;
+      if (r.clause) {
+        const k = ledgerKey(n.quote, r.clause.id);
+        const until = Math.max(ledger[k]?.until || 0, n.expiresAt);
+        ledger[k] = { granted: (ledger[k]?.granted || 0) + n.uses, until };
+      }
+      out.push({ r, n });
+    }
     await setGrants(grants);
+    await chrome.storage.session.set({ clauseLedger: ledger });
+    return out;
   });
-  await auditAdd({ op: `grant-${n.op}`, tab: null, origin: n.origin, outcome: `${n.id} jev:${v.verdict}` });
-  post({ event: "grant_added", grant: n.id, op: n.op, origin: n.origin, quote: n.quote, verdict: v.verdict,
-    confidence: v.confidence, narrowed: v.narrowed.map((x) => x.field) });
-  return { op: "grant.add", added: true, grant: grantView(n), jevCheck, confirmedInBrowser: false };
+  for (const { r, n } of stored) {
+    await auditAdd({ op: `grant-${n.op}`, tab: null, origin: n.origin, outcome: `${n.id} jev:${r.verdict}${r.clause ? ` clause:${r.clause.id}` : ""}` });
+    post({ event: "grant_added", grant: n.id, op: n.op, origin: n.origin, quote: n.quote, verdict: r.verdict,
+      confidence: r.confidence, narrowed: (r.narrowed || []).map((x) => x.field), ...(r.clause ? { clause: r.clause.text } : {}) });
+  }
+  const added = new Map(stored.map(({ r, n }) => [r.index, n]));
+  // grant.add keeps the full grant view; the batch reply names the quote, preamble and page once, not per grant
+  const slim = (n) => {
+    if (gs.length === 1) return grantView(n);
+    const { quote: _q, context: _c, clause: _cl, ...rest } = grantView(n);
+    return rest;
+  };
+  return {
+    added: stored.length, refused: refused.length, ...(split.multi ? { preamble: split.preamble, windowSec: split.windowSec } : {}),
+    ...(gs.length > 1 && ctxBy[origin0] ? { page: ctxBy[origin0] } : {}),
+    results: results.map((r) => ({ ...view(r), stored: added.has(r.index),
+      ...(added.has(r.index) ? { grant: slim(added.get(r.index)) } : {}), jevCheck: r.jevCheck })),
+  };
+}
+
+// No item list: each grant against the whole quote (the 0.10.1 check, incl. narrowing), one call per grant.
+async function singleVerdicts(gs, cfg) {
+  const out = [];
+  for (const [i, g] of gs.entries()) {
+    const v = parseScope(await callJev(globalThis.fetch, cfg.key, scopeBody({ model: cfg.model, grant: g })), g);
+    out.push({ index: i + 1, g: v.grant, ok: v.ok, verdict: v.verdict, confidence: v.confidence, reason: v.reason, narrowed: v.narrowed,
+      jevCheck: { verdict: v.verdict, confidence: v.confidence, reason: v.reason, narrowed: v.narrowed } });
+  }
+  return out;
+}
+
+// An item list: Jev maps every grant to one clause (one call); code checks each clause's uses / amount / window;
+// Jev scores each remaining grant against the preamble plus only its clause (one call).
+async function clauseVerdicts(gs, split, cfg) {
+  const maps = parseMap(await callJev(globalThis.fetch, cfg.key, mapBody({ model: cfg.model, split, grants: gs })), split, gs.length);
+  const ledger = await getLedger();
+  const spent = {};
+  const out = gs.map((g, i) => ({ index: i + 1, g, mapConfidence: maps[i].confidence }));
+  const pairs = [];
+  for (const [i, r] of out.entries()) {
+    const m = maps[i];
+    const c = split.clauses.find((x) => x.id === m.clauseId);
+    if (!c) {
+      Object.assign(r, { ok: false, verdict: "unclear", confidence: m.confidence,
+        reason: m.rawChoice === "none" ? "Jev: no item in the quote approves this grant." : `Jev matched item ${m.rawChoice} only at ${m.confidence ?? "?"} (needs >= 0.8); treated as unclear.` });
+      continue;
+    }
+    r.clause = { id: c.id, text: c.text, uses: c.uses ?? 1, ...(c.amount != null ? { amount: c.amount } : {}),
+      ...(c.windowSec != null ? { windowSec: c.windowSec } : {}) };
+    const lk = ledgerKey(r.g.quote, c.id);
+    const used = (ledger[lk] && ledger[lk].until > Date.now() ? ledger[lk].granted : 0) + (spent[c.id] || 0);
+    const chk = checkClause(r.g, c, { used });
+    if (!chk.ok) { Object.assign(r, { ok: false, verdict: chk.verdict, confidence: null, reason: chk.reason }); continue; }
+    r.g = chk.grant;
+    spent[c.id] = (spent[c.id] || 0) + r.g.uses;
+    pairs.push({ key: `g${i + 1}`, grant: r.g, clause: c, r });
+  }
+  if (pairs.length) {
+    const resp = await callJev(globalThis.fetch, cfg.key, clauseScopeBody({ model: cfg.model, split, pairs }));
+    for (const p of pairs) {
+      const v = parseClauseScope(resp, p.key);
+      Object.assign(p.r, { ok: v.ok, verdict: v.verdict, confidence: v.confidence, reason: v.reason });
+    }
+  }
+  for (const r of out) r.jevCheck = { verdict: r.verdict, confidence: r.confidence, reason: r.reason, narrowed: [],
+    ...(r.clause ? { clause: r.clause.text, mapConfidence: r.mapConfidence } : {}) };
+  return out;
 }
 
 async function grantList() {

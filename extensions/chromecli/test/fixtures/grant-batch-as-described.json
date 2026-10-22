@@ -1,0 +1,41 @@
+{
+  "_about": "Jev (TypeSafe /v1/systemone) answers for the 2026-10-22 as-described-review take (Round 4c of qa/chromecli-testdrive-2026-10-22.md), in the response shape chromecli parses ({answers: {questionId: {type, choice, confidence, probabilities}}}). Keyed by grant target so the mock can answer any batch. No real API call is made in tests.",
+  "quoteB": "Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes: Install once, Approve on the $0 Starter plan once, Scan products once, Use the title or Use the size once, Use the description for all 3 once, Apply to 3 products once, and Undo 3 times.",
+  "quoteA": "i approve screencast clicks",
+  "tab": { "url": "https://admin.shopify.com/store/as-described-review/apps/as-described", "title": "As Described · as-described-review · Shopify" },
+  "frameOrigin": "https://asdescribed.truefrontier.app",
+  "grants": [
+    { "op": "click", "origin": "https://admin.shopify.com", "target": { "text": "Install", "role": "button" } },
+    { "op": "click", "origin": "https://admin.shopify.com", "target": { "text": "Approve", "role": "button" }, "maxAmount": 0, "currency": "USD" },
+    { "op": "click", "origin": "https://admin.shopify.com", "frameOrigin": "https://asdescribed.truefrontier.app", "target": { "text": "Scan products", "role": "button" } },
+    { "op": "click", "origin": "https://admin.shopify.com", "frameOrigin": "https://asdescribed.truefrontier.app", "target": { "text": "Use the title", "role": "button" } },
+    { "op": "click", "origin": "https://admin.shopify.com", "frameOrigin": "https://asdescribed.truefrontier.app", "target": { "text": "Use the description for all 3", "role": "button" } },
+    { "op": "click", "origin": "https://admin.shopify.com", "frameOrigin": "https://asdescribed.truefrontier.app", "target": { "text": "Apply to 3 products", "role": "button" } },
+    { "op": "click", "origin": "https://admin.shopify.com", "frameOrigin": "https://asdescribed.truefrontier.app", "target": { "text": "Undo", "role": "button" }, "uses": 3 }
+  ],
+  "map": {
+    "Install": { "type": "choice", "choice": "c1", "confidence": 0.97, "probabilities": { "c1": 0.97, "none": 0.02 } },
+    "Approve": { "type": "choice", "choice": "c2", "confidence": 0.95, "probabilities": { "c2": 0.95, "none": 0.03 } },
+    "Scan products": { "type": "choice", "choice": "c3", "confidence": 0.98, "probabilities": { "c3": 0.98 } },
+    "Use the title": { "type": "choice", "choice": "c4", "confidence": 0.96, "probabilities": { "c4": 0.96 } },
+    "Use the description for all 3": { "type": "choice", "choice": "c5", "confidence": 0.97, "probabilities": { "c5": 0.97 } },
+    "Apply to 3 products": { "type": "choice", "choice": "c6", "confidence": 0.97, "probabilities": { "c6": 0.97 } },
+    "Undo": { "type": "choice", "choice": "c7", "confidence": 0.98, "probabilities": { "c7": 0.98 } },
+    "Delete app": { "type": "choice", "choice": "none", "confidence": 0.94, "probabilities": { "none": 0.94 } }
+  },
+  "scope": {
+    "Install": { "type": "choice", "choice": "authorized", "confidence": 0.93, "probabilities": { "authorized": 0.93, "overreach": 0.03, "unclear": 0.04 } },
+    "Approve": { "type": "choice", "choice": "authorized", "confidence": 0.9, "probabilities": { "authorized": 0.9, "overreach": 0.06, "unclear": 0.04 } },
+    "Scan products": { "type": "choice", "choice": "authorized", "confidence": 0.94, "probabilities": { "authorized": 0.94 } },
+    "Use the title": { "type": "choice", "choice": "authorized", "confidence": 0.91, "probabilities": { "authorized": 0.91 } },
+    "Use the description for all 3": { "type": "choice", "choice": "authorized", "confidence": 0.92, "probabilities": { "authorized": 0.92 } },
+    "Apply to 3 products": { "type": "choice", "choice": "authorized", "confidence": 0.92, "probabilities": { "authorized": 0.92 } },
+    "Undo": { "type": "choice", "choice": "authorized", "confidence": 0.93, "probabilities": { "authorized": 0.93 } }
+  },
+  "fieldReport": {
+    "_about": "What the single-grant check answered on 2026-10-22 (round 4c): every grant judged against the WHOLE quote.",
+    "quoteA_Install": { "type": "choice", "choice": "authorized", "confidence": 0.77, "probabilities": { "authorized": 0.77, "unclear": 0.2, "overreach": 0.03 } },
+    "quoteB_Install": { "type": "choice", "choice": "unclear", "confidence": 0.94, "probabilities": { "authorized": 0.06, "unclear": 0.94 } },
+    "quoteB_Approve": { "type": "choice", "choice": "overreach", "confidence": 0.8, "probabilities": { "authorized": 0.11, "overreach": 0.8, "unclear": 0.09 } }
+  }
+}
