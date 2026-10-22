@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.12.0 (2026-10-22)
+
+`webcli messages` finds older conversations, can start a new 1:1 or group conversation (only with `--new-ok`), and
+keeps Google Messages to one web session. A send needs Kevin's own OK for that exact message.
+
+### Added
+
+- **Deeper lookups.** `search`, `read`, and `send --to` look past the newest 25 conversations. They use Messages' own
+  Start chat picker (the phone's contacts and its group search by member, both reads the guard already passed),
+  then paced, capped "Load more" pages (`--pages`, default 8, max 40, 750 ms apart). They stop once the contacts the
+  query names have their conversations listed. Phone numbers are normalized to E.164 (punctuation ignored, US +1 by
+  default). `search` rows gain `kind` (`conversation` or `contact`) and `number`, and `matched` can now say `group`
+  or `contact`. Ambiguous matches still exit 2 and list the candidates. `send --to` is stricter: a name that fits
+  two contacts exits 2.
+- **New conversations: `send --to NUMBER|CONTACT [--to ...] --text T --new-ok [--expect-recipient X ...]
+  [--confirm]`.**
+  - The dry run resolves each recipient (a number, or exactly one contact with exactly one number) and prints
+    `{dryRun, new, group, recipients, expectRecipients, expectRecipientsMatch, text}`. It types only into the
+    contact picker.
+  - `--confirm` needs `--expect-recipient` (alias `--expect-recipients`) for each recipient, matching exactly. A
+    mismatch exits 5 (`REFUSED (dry run)` without `--confirm`).
+  - Confirmed, Start chat picks each recipient by its exact number, and in a group the chips must be exactly the
+    recipients. Only then does the guard pass one `GET_OR_CREATE_CONVERSATION` (a new `SendScope(new_ok=True)`
+    slot, 10 s). The conversation that opens must be titled with exactly the recipients before anything is typed.
+    Then the usual send checks, verify, exit 8 if unverified, never retried.
+  - Without `--new-ok`: several `--to` exit 2, and no conversation exits 3. Nothing creates a conversation.
+- **One Messages session.** Every messages command holds `run/messages.session.lock` (an exclusive flock across
+  identities, daemon or not) while it has the app loaded. A second waits `--lock-wait`, then exits 5
+  `messages_busy`. `ProfileBusy` errors now carry an error name through the daemon.
+
+### Changed
+
+- **"Use here" is never clicked.** When Messages is open in another window or tab (its "Use here" button, or a
+  banner or dialog saying so), commands exit 5 `messages_open_elsewhere` instead of taking the session over.
+- The conversation title selector is now the live one (`[data-e2e-conversation-header] [data-e2e-header-title]`), so
+  send's title check runs for real.
+- agent-help and docs/messages-site.md: the new syntax and exit codes, and that a send needs Kevin's own OK for
+  that exact message.
+
+### Tests
+
+- `tests/test_messages_new.py`: normalization, deep search, ambiguity, new 1:1 and group dry runs and confirmed runs
+  (scripted page), recipient-mismatch refusal, no create without `--new-ok`, the guard's create slot, CLI exit
+  codes, and lock contention (in-process and another process).
+- `tests/test_messages_dom.py`: the page scripts on sanitized DOM fixtures (`tests/fixtures/messages`, made-up names
+  and 555-01xx numbers) in headless Chromium.
+
 ## 0.11.4 (2026-10-22)
 
 Hardening after 0.11.3: when `config.toml` gained `deny_except` and `frame_act_allow`, the still-running 0.10.2

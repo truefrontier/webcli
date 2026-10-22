@@ -274,6 +274,8 @@ def error_payload(exc: BaseException) -> dict:
                 "resets_at": exc.resets_at}
     if isinstance(exc, (NotFound, ConfigError, UsageError)):
         return {"type": type(exc).__name__, "message": message, "hint": exc.hint}
+    if isinstance(exc, ProfileBusy) and exc.error:
+        return {"type": "ProfileBusy", "message": message, "error": exc.error}
     for kind in (AuthRequired, ProfileBusy, Restarting, ValueError):
         if isinstance(exc, kind):
             return {"type": kind.__name__, "message": message}
@@ -292,6 +294,8 @@ def rebuild(error: dict) -> BaseException:
         return ConfigError(message, hint=error.get("hint"))
     if kind == "UsageError":
         return UsageError(message, hint=error.get("hint"))
+    if kind == "ProfileBusy":
+        return ProfileBusy(message, error=error.get("error") if isinstance(error.get("error"), str) else None)
     known = {"AuthRequired": AuthRequired, "ProfileBusy": ProfileBusy, "Restarting": Restarting,
              "ValueError": ValueError}
     return known.get(kind, RuntimeError)(message)

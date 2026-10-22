@@ -1,0 +1,64 @@
+<!doctype html>
+<!-- Sanitized Google Messages for web DOM (structure as seen live 2026-10-22). Every name and number is made up:
+     numbers are in the fictional 555-01xx range. -->
+<html><head><meta charset="utf-8"><title>Messages</title></head>
+<body>
+<nav>
+  <a data-e2e-start-button href="/web/conversations/new">Start chat</a>
+  <mws-conversations-list>
+    <div class="list">
+      <mws-conversation-list-item><a data-e2e-conversation href="/web/conversations/aaa1" data-e2e-is-unread="true">
+        <span data-e2e-conversation-name>Robin Sample</span><mws-conversation-snippet>See you then</mws-conversation-snippet>
+        <mws-relative-timestamp>2:14 PM</mws-relative-timestamp></a></mws-conversation-list-item>
+      <mws-conversation-list-item><a data-e2e-conversation href="/web/conversations/aaa2" data-e2e-is-unread="false">
+        <span data-e2e-conversation-name>(202) 555-0101</span><mws-conversation-snippet>Your code is ready</mws-conversation-snippet>
+        <mws-relative-timestamp>Mon</mws-relative-timestamp></a></mws-conversation-list-item>
+    </div>
+    <div class="load-more-container"><button class="load-more" type="button">Load more conversations</button></div>
+  </mws-conversations-list>
+</nav>
+<main>
+  <mw-new-conversation-container>
+    <mws-header><a data-e2e-header-back-button href="/web/conversations">Back</a></mws-header>
+    <mw-contact-chips-input>
+      <mat-chip-option><button role="option" aria-label="Contact: Casey Placeholder. Press backspace to remove contact.">Casey Placeholder</button><span class="mat-icon">cancel</span></mat-chip-option>
+      <mat-chip-option><button role="option" aria-label="Contact: 2025550142. Press backspace to remove contact.">2025550142</button><span class="mat-icon">cancel</span></mat-chip-option>
+      <input data-e2e-contact-input placeholder="Add more people" value="Placeholder">
+    </mw-contact-chips-input>
+    <button data-e2e-start-group-chat-button>Create group</button>
+    <button data-e2e-next-button>Next</button>
+    <mw-group-conversation-search-results>
+      <mw-skeleton-loader class="hide"></mw-skeleton-loader>
+      <a data-e2e-group-conversation-item href="/web/conversations/grp9"><h4 data-e2e-group-conversation-name>Casey Placeholder, Robin Sample</h4></a>
+    </mw-group-conversation-search-results>
+    <mw-contacts-list>
+      <mw-skeleton-loader class="hide"></mw-skeleton-loader>
+      <div data-e2e-contact-list>
+        <mw-contact-row><div role="checkbox" data-e2e-contact-row>
+          <span data-e2e-contact-icon></span><div class="info">
+          <span data-e2e-contact-name>Casey Placeholder</span>
+          <span class="info-number"><span data-e2e-contact-number>(202) 555-0123</span> Mobile</span></div></div></mw-contact-row>
+        <mw-contact-row><div role="checkbox" data-e2e-contact-row>
+          <div class="info shift"><span class="info-number"><span data-e2e-contact-number>(202) 555-0124</span> Work</span></div></div></mw-contact-row>
+        <mw-contact-row><div role="checkbox" data-e2e-contact-row onclick="window.__picked = 'jordan'">
+          <span data-e2e-contact-icon></span><div class="info">
+          <span data-e2e-contact-name>Jordan Placeholder</span>
+          <span class="info-number"><span data-e2e-contact-number>+1 202-555-0177</span> Mobile</span></div></div></mw-contact-row>
+      </div>
+    </mw-contacts-list>
+  </mw-new-conversation-container>
+  <mws-header data-e2e-conversation-header><div data-e2e-header-title><h2>Casey Placeholder, Robin Sample</h2></div></mws-header>
+</main>
+<script>
+  let extra = 2;
+  document.querySelector('button.load-more').addEventListener('click', () => {
+    if (!extra) return;
+    const list = document.querySelector('mws-conversations-list .list');
+    for (let i = 0; i < 2; i++, extra--) {
+      const item = document.createElement('mws-conversation-list-item');
+      item.innerHTML = `<a data-e2e-conversation href="/web/conversations/old${extra}"><span data-e2e-conversation-name>Older Person ${extra}</span><mws-conversation-snippet>hi</mws-conversation-snippet></a>`;
+      list.appendChild(item);
+    }
+  });
+</script>
+</body></html>
