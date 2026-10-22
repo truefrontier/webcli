@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.1 (2026-10-22)
+
+### Changed
+
+Kevin's call after using 0.9.0 live: "if I give it Act permissions I don't want to be prompted on every click."
+
+- Tabs Kevin Share-act'd himself (`tabKind: "act"`) are treated as consent to ordinary clicks and same-origin moves:
+  - Jev's click/press classification adds a gate only for purchase / destructive / send_publish / credential with confidence (or `probabilities[choice]`) ≥ the new **risk floor** (default 0.6). safe / submit / uncertain and low-confidence risky answers are informational only, in the result's `jevInfo`.
+  - A same-origin `navigate` isn't gated. Cross-origin navigate and `open` outside the allowlists still are, and the deny list always applies.
+  - If Jev fails under `--jev auto`, the fallback is heuristics only (no every-button `jev_unavailable`).
+- Bot-opened tabs (`tabKind: "bot"`, including those auto-shared via `act_allow`) keep the strict 0.9.0 rules: a `jev:<choice>` gate unless Jev says safe at ≥ 0.9, and the stricter fallback when Jev fails.
+- Unchanged: every heuristic gate in `gate.js` (submit-like clicks, Enter in a form, password / payment / one-time-code / card fields, eval), the deny list, and `--jev on` (exit 5 `jev_error`). Jev still never removes a heuristic gate.
+- Options: new "Risk floor" (0.5–0.95, default 0.6, `chrome.storage.local.jevRiskFloor`) next to the confidence floor.
+- Results gain `tabKind` and `jevInfo`; the host's audit line adds `tab_kind=` and `jev_info=<choice>:gate|info`.
+- Full table: docs/chromecli.md → "Tabs Kevin Share-act'd vs bot-opened tabs".
+
 ## 0.9.0 (2026-10-22)
 
 ### Added

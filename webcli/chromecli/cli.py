@@ -63,7 +63,8 @@ NOTES = [
     "eval; clicks on submit-like elements (form submit buttons, input[type=submit|image], names like buy, order, pay, "
     "send, post, reply, submit, confirm, delete, remove, subscribe, accept, approve, sign out, merge, deploy ...); "
     "Enter in a form field; type/fill into password, cc-*, current-password/new-password/one-time-code, or "
-    "card/cvv/cvc/iban/routing/ssn fields; open/navigate outside read_allow and act_allow. Deny: exit 4 declined; no "
+    "card/cvv/cvc/iban/routing/ssn fields; open, or cross-origin navigate, outside read_allow and act_allow (a "
+    "same-origin navigate is confirmed only in bot-opened tabs). Deny: exit 4 declined; no "
     "answer: exit 4 confirm_timeout; Pause while waiting: exit 4 paused. Never retry a declined action on your own.",
     "Post-checks: fill/type/select read the value back; --verify-url-prefix / --verify-text wait up to 10s. A check that "
     "fails after the action went out: exit 8 sent_unverified (don't repeat; read the page). Result JSON: {tab, origin, "
@@ -71,10 +72,13 @@ NOTES = [
     "eval is disabled (exit 7 eval_disabled): Chrome's MV3 isolated-world CSP forbids running code strings.",
     "Jev (optional, BYOK; Kevin saves a TypeSafe key in the extension's options): `find --tab TAB INTENT` and --find rank "
     "elements with Jev (source jev), else heuristics (source heuristic); click/press targets are classified "
-    "(safe/submit/purchase/destructive/send_publish/credential/uncertain) and anything not confidently safe adds a "
-    "jev:<choice> gate. Jev only adds gates, never removes one. --jev auto (default) uses Jev when a key is set; if "
-    "the call fails it falls back to heuristics with stricter gating (every button and anything in a form asks Kevin; "
-    "result jev.used false). --jev on: exit 7 jev_not_configured without a key, exit 5 jev_error on failure. "
+    "(safe/submit/purchase/destructive/send_publish/credential/uncertain). In tabs Kevin Share-act'd himself "
+    "(result tabKind act) Jev adds a jev:<choice> gate only for purchase/destructive/send_publish/credential at >= the "
+    "risk floor (default 0.6); in bot-opened tabs (tabKind bot, incl. auto-shared via act_allow) anything not "
+    "confidently safe (>= 0.9) adds one. Result jevInfo shows Jev's answer even when it isn't a gate. Jev only adds "
+    "gates, never removes one. --jev auto (default) uses Jev when a key is set; if the call fails: act tabs use "
+    "heuristics only, bot tabs gate more strictly (every button and anything in a form asks Kevin); result jev.used "
+    "false. --jev on: exit 7 jev_not_configured without a key, exit 5 jev_error on failure. "
     "--jev off: heuristics only. status.jevConfigured says whether a key is set; the key never leaves the extension.",
     "Put sensitive values in a file: --value-file FILE (or '-' for stdin), not --value on the command line.",
     "Pause agents (popup, or Cmd+Shift+Period) makes every command but `status` exit 4 (`paused`).",
@@ -464,7 +468,10 @@ def navigate_cmd(tab, url, expect_origin, expect_url, dry_run, confirm) -> None:
     _check_url(url)
     expect = _expect(expect_origin, expect_url, required=False)
     args = {"tab": tab, "url": url, **({"expect": expect} if expect else {})}
-    _execute("tab.navigate", args, {"op": "navigate", "tab": tab, **_destination_plan(url), "expect": expect or None},
+    nplan = _destination_plan(url)
+    if nplan["browserConfirm"]:
+        nplan["note"] += " Exception: a same-origin move in a tab Kevin Share-act'd himself isn't confirmed."
+    _execute("tab.navigate", args, {"op": "navigate", "tab": tab, **nplan, "expect": expect or None},
              dry_run, confirm)
 
 

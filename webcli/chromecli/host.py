@@ -328,6 +328,11 @@ class Host:
             gate = f" gated={reasons} confirmed={bool(info.get('confirmedInBrowser'))}"
         if code in ("declined", "confirm_timeout"):
             gate += f" confirm={code}"
+        if info.get("tabKind") in ("act", "bot", "read"):
+            gate += f" tab_kind={info['tabKind']}"
+        ji = info.get("jevInfo") if isinstance(info.get("jevInfo"), dict) else None
+        if ji and isinstance(ji.get("choice"), str):
+            gate += f" jev_info={redact_text(ji['choice'])[:20]}:{'gate' if ji.get('gated') else 'info'}"
         jev = info.get("jev") if isinstance(info.get("jev"), dict) else None
         if jev:
             gate += f" jev_used={bool(jev.get('used'))}" + (" jev_error=1" if jev.get("error") else "")

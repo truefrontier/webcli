@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  CLASSIFY_CRITERIA, JEV_URL, JevError, buildSnapshot, callJev, classifyBody, fallbackReasons, heuristicPick,
+  CLASSIFY_CRITERIA, JEV_URL, JevError, RISKY_CHOICES, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor,
+  fallbackReasons, heuristicPick,
   heuristicRank, jevConfig, locateBody, mergeReasons, parseClassify, parseLocate, snapshotItem,
 } from "../jev.js";
 import { loadBackground } from "./harness.mjs";
@@ -90,6 +91,33 @@ test("Jev never removes a heuristic gate; fallback gating is stricter", () => {
   assert.deepEqual(fallbackReasons({ tag: "a", role: "link", inForm: false }), []);
 });
 
+test("classifyGate: act-shared tabs gate only risky choices >= riskFloor; bot tabs gate unless safe >= floor", () => {
+  const C = (choice, confidence) => ({ choice, confidence });
+  const cfg = { floor: 0.9, riskFloor: 0.6 };
+  assert.deepEqual(RISKY_CHOICES, ["purchase", "destructive", "send_publish", "credential"]);
+  // Kevin's own Share-act
+  for (const ch of ["safe", "submit", "uncertain"]) {
+    assert.equal(classifyGate(C(ch, 0.99), "act", cfg), null, ch);
+    assert.equal(classifyGate(C(ch, 0.3), "act", cfg), null, ch);
+  }
+  for (const ch of RISKY_CHOICES) {
+    assert.equal(classifyGate(C(ch, 0.6), "act", cfg), `jev:${ch}`, ch);
+    assert.equal(classifyGate(C(ch, 0.59), "act", cfg), null, ch);
+    assert.equal(classifyGate(C(ch, null), "act", cfg), null, ch);
+  }
+  assert.equal(classifyGate(C("destructive", 0.7), "act", { floor: 0.9, riskFloor: 0.8 }), null);
+  // bot-opened (and read): strict, as in 0.9.0
+  assert.equal(classifyGate(C("safe", 0.95), "bot", cfg), null);
+  assert.equal(classifyGate(C("safe", 0.7), "bot", cfg), "jev:safe");
+  assert.equal(classifyGate(C("safe", null), "bot", cfg), "jev:safe");
+  assert.equal(classifyGate(C("submit", 0.99), "bot", cfg), "jev:submit");
+  assert.equal(classifyGate(C("uncertain", 0.2), "bot", cfg), "jev:uncertain");
+  // fallback: strict only for bot tabs
+  const btn = { tag: "button", type: "button", inForm: true };
+  assert.deepEqual(fallbackFor("act", btn), []);
+  assert.deepEqual(fallbackFor("bot", btn), ["jev_unavailable"]);
+});
+
 test("heuristics rank the email field and the delete button", () => {
   assert.equal(heuristicPick(heuristicRank("the email field", SNAP)).el.id, "e1");
   assert.equal(heuristicPick(heuristicRank("the delete account button", SNAP)).el.id, "e6");
@@ -98,7 +126,10 @@ test("heuristics rank the email field and the delete button", () => {
 });
 
 test("config: key presence, model and floor defaults", () => {
-  assert.deepEqual(jevConfig({}), { configured: false, key: "", model: "jev-latest", floor: 0.9 });
+  assert.deepEqual(jevConfig({}), { configured: false, key: "", model: "jev-latest", floor: 0.9, riskFloor: 0.6 });
+  assert.equal(jevConfig({ jevRiskFloor: 0.8 }).riskFloor, 0.8);
+  assert.equal(jevConfig({ jevRiskFloor: 0.99 }).riskFloor, 0.6); // outside 0.5-0.95
+  assert.equal(jevConfig({ jevRiskFloor: 0.4 }).riskFloor, 0.6);
   assert.equal(jevConfig({ typesafeApiKey: KEY, jevModel: "jev-1.14.0", jevFloor: 0.8 }).model, "jev-1.14.0");
   assert.equal(jevConfig({ jevFloor: 3 }).floor, 0.9);
 });
@@ -232,8 +263,9 @@ test("Jev 'safe' on a plain link: no prompt", async () => {
   assert.equal(r.result.jev.choice, "safe");
 });
 
-test("--jev auto with a failing Jev: falls back (used false) and a plain <button> in a form becomes gated", async () => {
+test("--jev auto with a failing Jev on a BOT-OPENED tab: falls back (used false) and a plain <button> in a form becomes gated", async () => {
   const h = await setup({ key: KEY });
+  await h.chrome.storage.session.set({ botTabs: { 1: { at: 1 } } });
   jevFetch(h, 500);
   const id = h.start("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT, jev: "auto" });
   const cid = await h.confirmWindow();
@@ -300,4 +332,97 @@ test("options page may ask for Jev status / test, nothing else; it never gets th
   assert.equal(t.ok, true);
   assert.equal(await h.message({ type: "share", tabId: 2, level: "act" }, "options.html", { id: 5 }), undefined);
   assert.equal(await h.message({ type: "pause", paused: true }, "options.html", { id: 5 }), undefined);
+});
+
+// ---- 0.9.1: Kevin's own Share-act tabs vs bot-opened tabs
+const answer = (choice, confidence) => ({ answers: { target: { choice, confidence } } });
+
+test("act-shared: Jev 'safe' below the floor (the dev.shopify.com case) -> no prompt, jevInfo says what Jev thought", async () => {
+  const h = await setup({ key: KEY });
+  jevFetch(h, answer("safe", 0.72));
+  const r = await h.call("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.result.gated, false);
+  assert.deepEqual(r.result.reasons, []);
+  assert.equal(r.result.tabKind, "act");
+  assert.equal(r.result.jevInfo.reason, "jev:safe");
+  assert.equal(r.result.jevInfo.gated, false);
+  assert.equal(r.result.jevInfo.confidence, 0.72);
+  assert.equal(h.windowsCreated.length, 0);
+});
+
+for (const [choice, conf] of [["submit", 0.99], ["uncertain", 0.9], ["destructive", 0.55], ["purchase", 0.4]]) {
+  test(`act-shared: Jev ${choice} @${conf} on a plain button -> no Jev gate`, async () => {
+    const h = await setup({ key: KEY });
+    jevFetch(h, answer(choice, conf));
+    const r = await h.call("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.result.gated, false);
+    assert.equal(r.result.jevInfo.reason, `jev:${choice}`);
+  });
+}
+
+for (const choice of ["purchase", "destructive", "send_publish", "credential"]) {
+  test(`act-shared: Jev ${choice} @0.65 -> gated jev:${choice}`, async () => {
+    const h = await setup({ key: KEY });
+    jevFetch(h, answer(choice, 0.65));
+    const id = h.start("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT });
+    const cid = await h.confirmWindow();
+    const got = await h.message({ type: "confirmGet", id: cid }, `confirm.html?id=${cid}`, { id: 999 });
+    assert.deepEqual(got.info.reasons, [`jev:${choice}`]);
+    await h.answer(cid, "deny");
+    const r = await h.reply(id);
+    assert.equal(r.error.code, "declined");
+    assert.equal(r.error.jevInfo.gated, true);
+  });
+}
+
+test("act-shared: the risk floor comes from options (jevRiskFloor)", async () => {
+  const h = await setup({ key: KEY });
+  await h.chrome.storage.local.set({ jevRiskFloor: 0.8 });
+  jevFetch(h, answer("destructive", 0.7));
+  const r = await h.call("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT });
+  assert.equal(r.result.gated, false);
+});
+
+test("act-shared: heuristic gates stay even when Jev says safe with full confidence", async () => {
+  const h = await setup({ key: KEY });
+  jevFetch(h, answer("safe", 1));
+  const id = h.start("page.click", { tab: 1, target: { ref: "e6" }, expect: EXPECT }); // Delete account
+  const cid = await h.confirmWindow();
+  const got = await h.message({ type: "confirmGet", id: cid }, `confirm.html?id=${cid}`, { id: 999 });
+  assert.ok(got.info.reasons.includes("submit_word:delete"));
+  assert.ok(!got.info.reasons.some((x) => x.startsWith("jev")));
+  await h.answer(cid, "deny");
+  await h.reply(id);
+});
+
+test("act-shared: Jev failing under auto -> heuristics only (no every-button fallback); --jev on still exit 5", async () => {
+  const h = await setup({ key: KEY });
+  jevFetch(h, 503);
+  const r = await h.call("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.result.gated, false);
+  assert.equal(r.result.jev.used, false);
+  assert.match(r.result.jev.error, /503/);
+  const f = await h.call("page.fill", { tab: 1, target: { find: "the email field" }, value: "x", expect: EXPECT });
+  assert.equal(f.ok, true, JSON.stringify(f));
+  assert.equal(f.result.gated, false);
+  assert.equal((await h.call("page.click", { tab: 1, target: { selector: "#plain" }, expect: EXPECT, jev: "on" })).error.code, "jev_error");
+  noKeyAnywhere(h);
+});
+
+test("bot-opened (auto-shared): strict as before; Jev 'safe' below the floor gates jev:safe", async () => {
+  const h = await setup({ key: KEY });
+  await h.chrome.storage.session.set({ botTabs: { 1: { at: 1 } } });
+  jevFetch(h, answer("safe", 0.72));
+  const id = h.start("page.click", { tab: 1, target: { ref: "e4" }, expect: EXPECT });
+  const cid = await h.confirmWindow();
+  const got = await h.message({ type: "confirmGet", id: cid }, `confirm.html?id=${cid}`, { id: 999 });
+  assert.deepEqual(got.info.reasons, ["jev:safe"]);
+  await h.answer(cid, "allow");
+  const r = await h.reply(id);
+  assert.equal(r.ok, true);
+  assert.equal(r.result.tabKind, "bot");
+  assert.equal(r.result.jevInfo.gated, true);
 });

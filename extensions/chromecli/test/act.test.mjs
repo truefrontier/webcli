@@ -134,6 +134,31 @@ test("navigate to a non-allowlisted origin is gated; cross-origin makes it bot-o
   assert.deepEqual(r.result.reasons, ["origin_not_allowlisted"]);
 });
 
+test("0.9.1: same-origin navigate in a tab Kevin Share-act'd is not gated; cross-origin still is", async () => {
+  const h = await loadBackground();
+  await actTab(h, 2);
+  const r = await h.call("tab.navigate", { tab: 2, url: "https://example.com/other/page", expect: { origin: "https://example.com" } });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.result.gated, false);
+  assert.equal(r.result.crossOrigin, false);
+  assert.equal(h.windowsCreated.length, 0);
+  assert.equal(h.tabsUpdated.length, 1);
+  // the deny list still applies to same-origin moves (path: patterns)
+  const d = await h.call("tab.navigate", { tab: 2, url: "https://example.com/checkout/pay" });
+  assert.equal(d.error.code, "origin_blocked");
+});
+
+test("0.9.1: same-origin navigate in a bot-opened tab outside the allowlists stays gated", async () => {
+  const h = await loadBackground();
+  await h.chrome.storage.session.set({ botTabs: { 2: { at: 1 } } });
+  const id = h.start("tab.navigate", { tab: 2, url: "https://example.com/b" });
+  const cid = await h.confirmWindow();
+  await h.answer(cid, "deny");
+  const r = await h.reply(id);
+  assert.equal(r.error.code, "declined");
+  assert.deepEqual(r.error.reasons ?? ["origin_not_allowlisted"], ["origin_not_allowlisted"]);
+});
+
 test("navigate needs act-share or bot-opened, and honors expect", async () => {
   const h = await loadBackground();
   await h.share(2, "read");

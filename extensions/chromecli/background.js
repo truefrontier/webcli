@@ -10,7 +10,7 @@ import { displayValue, gateReasons } from "./gate.js";
 import { pageAction, pageProbe } from "./page/actions.js";
 import { pageSnapshot } from "./page/snapshot.js";
 import {
-  JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, fallbackReasons, heuristicPick, heuristicRank, jevConfig,
+  JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor, heuristicPick, heuristicRank, jevConfig,
   jevMode, locateBody, mergeReasons, parseClassify, parseLocate,
 } from "./jev.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
@@ -536,6 +536,13 @@ async function autoShare(tabId, url) {
   return { level };
 }
 
+// "bot": opened (or cross-origin navigated) by an agent, even if auto-shared via act_allow: strict gating.
+// "act": Kevin Share-act'd it himself in the popup. "read": anything else.
+async function tabKind(tab) {
+  if ((await getBotTabs())[tab.id]) return "bot";
+  return (await getShares())[tab.id]?.level === "act" ? "act" : "read";
+}
+
 // close / focus / navigate need Share-act or a bot-opened tab (never a denied origin).
 async function requireActOrBot(tab) {
   const st = await getPolicyState();
@@ -626,8 +633,10 @@ async function tabNavigate(args, req) {
   await requireActOrBot(tab);
   checkExpect(tab, args.expect, false);
   const url = String(args.url || "");
-  const { origin, level } = await checkDestination(url);
-  const reasons = gateReasons("navigate", null, { allowlisted: !!level });
+  const { origin, level } = await checkDestination(url); // the deny list always applies
+  // 0.9.1: a same-origin move in a tab Kevin Share-act'd himself isn't gated; cross-origin and bot tabs are as before.
+  const sameOriginAct = originOf(tab.url || "") === origin && (await tabKind(tab)) === "act";
+  const reasons = gateReasons("navigate", null, { allowlisted: !!level || sameOriginAct });
   let confirmedInBrowser = false;
   if (reasons.length) {
     await confirmOrThrow({ op: "navigate", origin, url, reasons, title: tab.title || "", from: originOf(tab.url || "") },
@@ -708,8 +717,10 @@ async function pageOp(op, args, req) {
   let target = normTarget(args.target, op === "press");
   if (op === "press" && !String(args.key || "")) throw new OpError("bad_request", "press needs a key.");
   const { tab, origin } = await pagePre(args);
+  const kind = await tabKind(tab);
   const j = await jevFor(args.jev);
   let jev = { used: false, mode: j.mode, ...(j.why ? { reason: j.why } : {}) };
+  let jevInfo = null;
   let jevFailed = false;
   let found = null;
   if (target?.find != null) {
@@ -732,18 +743,23 @@ async function pageOp(op, args, req) {
       const resp = await callJev(globalThis.fetch, j.cfg.key, classifyBody({ model: j.cfg.model, page: { origin, title: tab.title || "" },
         element: classifyElement(element) }));
       const c = parseClassify(resp, j.cfg.floor);
-      if (c.reason) extra.push(c.reason);
+      const gate = classifyGate(c, kind, j.cfg);
+      if (gate) extra.push(gate);
       jev = { ...jev, used: true, choice: c.choice, confidence: c.confidence };
+      // What Jev said, shown even when it isn't a gate (e.g. "safe" below the floor on a tab Kevin shared).
+      jevInfo = { reason: `jev:${c.choice}`, choice: c.choice, confidence: c.confidence, gated: !!gate,
+        policy: kind === "act" ? `act-shared: gates only ${"purchase/destructive/send_publish/credential"} at >= ${j.cfg.riskFloor}`
+          : `bot-opened: gates unless safe at >= ${j.cfg.floor}` };
     } catch (e) {
       if (!(e instanceof JevError)) throw e;
       jev = { ...jev, ...jevFail(j, e, { tab: tab.id, origin, element }) };
       jevFailed = true;
     }
   }
-  if (jevFailed) extra.push(...fallbackReasons(element));
+  if (jevFailed) extra.push(...fallbackFor(kind, element));
   // Jev only adds gates; the heuristic ones always stay.
   const reasons = mergeReasons(gateReasons(op, element, { key: args.key }), extra);
-  const where = { tab: tab.id, origin, element, reasons, jev };
+  const where = { tab: tab.id, origin, element, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
   let confirmedInBrowser = false;
   if (reasons.length) {
     const value = ["type", "fill", "select"].includes(op) ? displayValue(args.value, element) : null;
@@ -757,7 +773,7 @@ async function pageOp(op, args, req) {
   const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
     { afterDispatch: true });
   const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true,
-    verified: null, jev, ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
+    verified: null, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}), ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
   // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
   if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
   const failed = [];

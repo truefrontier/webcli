@@ -1,6 +1,6 @@
 [project]
 name = "truefrontier-webcli"
-version = "0.9.0"
+version = "0.9.1"
 description = "Agent-native CLIs (webcli, llmcli, chromecli) over your own signed-in Chrome sessions."
 readme = "README.md"
 license = "MIT"
