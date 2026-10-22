@@ -24,14 +24,15 @@ HOST_TO_EXT_MAX = 1 * 2**20
 EXT_TO_HOST_MAX = 64 * 2**20
 CLI_REQUEST_MAX = 1 * 2**20
 
-READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait")
+READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
+            "page.find")
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
 OPS = READ_OPS + TAB_OPS + PAGE_OPS
 # Ops that change a tab or page: sent only with --confirm (confirm: true); the extension refuses them otherwise.
 MUTATING_OPS = TAB_OPS + PAGE_OPS
-# P4 (Jev) adds these; until then they are bad_request.
-FUTURE_OPS = ("page.find", "page.elements")
+# Not in this version: bad_request.
+FUTURE_OPS = ("page.elements",)
 EVENTS_FROM_EXT = ("hello", "share_changed", "paused_changed", "policy_ack", "error")
 
 # Spec section 4: one table, every error code the host or extension can answer with.
@@ -70,6 +71,8 @@ ERROR_HINTS: dict[str, str] = {
     "eval_disabled": "Chrome's MV3 isolated-world CSP forbids running code strings; use click/type/fill/select/press.",
     "ambiguous_target": "Narrow the target: a more specific --selector, a --ref from `read --elements`, or --role.",
     "element_not_found": "Refs die on navigation; run `chromecli read TAB --elements` again.",
+    "jev_not_configured": "Kevin: open chromecli's options (popup → Jev → Options) and save a TypeSafe API key, or use --jev auto.",
+    "jev_error": "Jev failed. --jev auto falls back to heuristics (with stricter gating).",
 }
 
 

@@ -49,7 +49,11 @@ def page():
         pg = browser.new_page()
         pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/form.html")
         src = "".join((EXT / f).read_text().replace("export function", "function") for f in ("page/actions.js", "page/extract.js"))
-        pg.evaluate(src + "; window.__pa = pageAction; window.__ex = extractPage;")
+        snap = (EXT / "page/snapshot.js").read_text().replace("export function", "function")
+        full = (src + "; window.__pa = pageAction; window.__ex = extractPage;"
+                "window.__snap = (function () {" + snap + "; return pageSnapshot; })();")
+        pg.evaluate(full)
+        pg.evaluate("s => { window.__src = s; }", full)
         yield pg
         browser.close()
     srv.shutdown()
@@ -115,3 +119,28 @@ def test_refs_submit_and_fingerprint(page):
     page.evaluate("document.getElementById('delete').textContent = 'Delete everything'")
     r = act(page, mode="do", op="click", target={"selector": "#delete"}, fingerprint=d["fingerprint"])
     assert r["code"] == "element_not_found" and "changed" in r["message"]
+
+
+def test_snapshot_has_no_values_and_shares_refs(page):
+    # A fresh copy of the fixture: earlier tests change the module page's DOM (fingerprint guard, submit).
+    fresh = page.context.browser.new_page()
+    fresh.goto(page.url.split("?")[0])
+    fresh.evaluate(page.evaluate("() => window.__src"))
+    page = fresh
+    secret = "snapshot-secret-value-77"
+    assert act(page, mode="do", op="fill", target={"selector": "#email"}, value=secret)["ok"]
+    snap = page.evaluate("() => window.__snap({max: 300})")
+    assert snap["ok"] and snap["elements"]
+    assert secret not in json.dumps(snap)
+    email = next(e for e in snap["elements"] if e.get("type") == "email")
+    assert email["valueKind"] == "filled"
+    refs = {e["ref"] for e in page.evaluate("() => window.__ex({elements: true}).elements")}
+    assert email["id"] in refs  # the same ref `read --elements` shows, usable with --ref
+    js = (f"import({json.dumps((EXT / 'jev.js').as_uri())}).then(m => {{ const els = {json.dumps(snap['elements'])};"
+          " const p = (i) => m.heuristicPick(m.heuristicRank(i, els))?.el.name ?? null;"
+          " console.log(JSON.stringify([p('the email field'), p('the delete account button'), "
+          "p('place order button'), JSON.stringify(m.buildSnapshot(els)).length])); })")
+    out = json.loads(subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True,
+                                    check=True).stdout)
+    assert out[0].lower().startswith("email") and "delete" in out[1].lower() and "order" in out[2].lower()
+    assert out[3] <= 24 * 1024

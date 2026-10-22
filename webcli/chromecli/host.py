@@ -125,6 +125,10 @@ def _summary(op: str, args: dict) -> str:
             parts.append(f"code={digest(str(args['code']))}")
         if args.get("key"):
             parts.append(f"key={redact_text(str(args['key']))[:20]}")
+        if args.get("intent") is not None:
+            parts.append(f"intent={digest(str(args['intent']))}")
+        if args.get("jev"):
+            parts.append(f"jev={redact_text(str(args['jev']))[:4]}")
         if op == "page.wait":
             for k in ("selector", "text"):
                 if args.get(k) is not None:
@@ -324,6 +328,9 @@ class Host:
             gate = f" gated={reasons} confirmed={bool(info.get('confirmedInBrowser'))}"
         if code in ("declined", "confirm_timeout"):
             gate += f" confirm={code}"
+        jev = info.get("jev") if isinstance(info.get("jev"), dict) else None
+        if jev:
+            gate += f" jev_used={bool(jev.get('used'))}" + (" jev_error=1" if jev.get("error") else "")
         audit(f"op={op} {_summary(op, args)} {where}{gate} outcome={'ok' if code is None else code} "
               f"exit={0 if code is None else protocol.exit_code(code)} ms={ms:.0f}")
 

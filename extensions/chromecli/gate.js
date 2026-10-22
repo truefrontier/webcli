@@ -1,7 +1,8 @@
 // chromecli gate heuristics (spec 6.7): which actions need Kevin's in-browser "Allow once".
 // Pure ES module (node --test). Input: the op and an element descriptor built in the page by page/actions.js
 // (tag, type, role, name, value, title, id, nameAttr, label, autocomplete, inForm, defaultSubmit, isField).
-// Output: reasons (empty = not gated). Later layers (Jev, P4) may add reasons; nothing here is ever removed.
+// Output: reasons (empty = not gated). Jev (jev.js) may add reasons (jev:<choice>,
+// jev_unavailable); it never removes these.
 
 export const SUBMIT_WORDS = /\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy)\b/i;
 export const SENSITIVE_NAME = /card|cvv|cvc|iban|routing|ssn/i;
@@ -95,6 +96,9 @@ export function reasonLabel(r) {
   const s = String(r || "");
   if (LABELS[s]) return LABELS[s];
   if (s.startsWith("submit_word:")) return `Label says “${s.slice(12)}” (commits, sends, or deletes)`;
+  if (s === "jev:safe") return "Jev isn't confident it's safe";
+  if (s === "jev:uncertain") return "Jev isn't sure what it does";
   if (s.startsWith("jev:")) return `Jev classified it as ${s.slice(4).replace(/_/g, " ")}`;
+  if (s === "jev_unavailable") return "Jev didn't answer; stricter gating for buttons and forms";
   return s.replace(/_/g, " ");
 }

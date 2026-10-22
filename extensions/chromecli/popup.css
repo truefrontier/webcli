@@ -278,6 +278,11 @@ kbd {
 .switch[aria-checked="true"] .knob { transform: translateX(14px); }
 .pause-card.on { border-color: color-mix(in srgb, var(--act) 35%, transparent); }
 
+/* Jev */
+.jev-card { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.chip.jev { background: var(--paused-tint); color: var(--paused); }
+.chip.jev[data-on="true"] { background: var(--ok-tint); color: var(--ok); }
+
 /* shared tabs */
 .shared { padding: 4px 0 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 4px; }

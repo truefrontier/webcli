@@ -1,5 +1,5 @@
 """chromecli P2 (tab actions) and P3 (page actions), offline: preview shapes (nothing sent to the extension),
---dry-run beats --confirm, request shapes, CLI-side validation (missing_expect, bad_target, --find = P4), the exit
+--dry-run beats --confirm, request shapes, CLI-side validation (missing_expect, bad_target), the exit
 codes the extension's answers map to (declined / confirm_timeout 4, url_mismatch 5, eval_disabled 7, sent_unverified 8),
 typed values absent from chromecli.log, and agent-help. The extension's own logic is tested by node --test
 (extensions/chromecli/test/act.test.mjs, gate.test.mjs)."""
@@ -93,7 +93,7 @@ def test_confirm_sends_the_request(ext):
     assert all(m["confirm"] is True for m in sent)
     assert sent[0]["args"] == {"url": f"{FORM}/form.html", "active": False, "window": None}
     assert sent[1]["args"] == {"tab": 7, "target": {"text": "Place order", "role": "button"}, "expect": {"origin": FORM},
-                               "verify": {"text": "submitted"}}
+                               "verify": {"text": "submitted"}, "jev": "auto"}
     assert sent[2]["args"]["target"] is None and sent[2]["args"]["key"] == "Escape"
     # long enough for the in-browser confirm (confirm_timeout 60 + post-checks)
     assert sent[1]["deadlineMs"] / 1000 - t0 >= 85
@@ -128,8 +128,7 @@ def test_bad_targets_are_exit_2(ext):
     assert err(run("click", "--tab", "7", *e))["error"] == "bad_target"
     assert err(run("click", "--tab", "7", "--selector", "a", "--ref", "e1", *e))["error"] == "bad_target"
     assert err(run("click", "--tab", "7", "--selector", "a", "--role", "button", *e))["error"] == "bad_target"
-    r = run("click", "--tab", "7", "--find", "the next link", *e)
-    assert r.exit_code == 2 and err(r)["error"] == "bad_target" and "P4" in err(r)["message"]
+    assert err(run("click", "--tab", "7", "--find", "the next link", "--selector", "a", *e))["error"] == "bad_target"
     assert run("open", "chrome://settings", "--confirm").exit_code == 2
     assert run("fill", "--tab", "7", "--selector", "#email", *e).exit_code == 2  # no value
     assert ops_sent(fake) == []

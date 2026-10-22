@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0 (2026-10-22)
+
+### Added
+
+- chromecli P4, Jev (bring your own key): `chromecli find --tab TAB 'INTENT' [--jev auto|on|off] [--limit 5]` (read-only; rows `ref score source tag role name`), `--find INTENT` as a target on `click`/`type`/`fill`/`select`/`press`, and `--jev auto|on|off` on every page action. Heuristics rank the page's elements; with a key, Jev (`POST https://api.typesafe.ai/v1/systemone`) answers one `noul` question per candidate (top 12) and picks the best when it clears the confidence floor by 0.2, else exit 3 `ambiguous_target` with candidates. For `click`/`press`, Jev classifies the target (safe / submit / purchase / destructive / send_publish / credential / uncertain) and anything but a confident `safe` adds a `jev:<choice>` gate. Jev only adds gates; the heuristic gates always stay.
+- Extension options page (`options.html`, same design as the popup, light/dark): "Jev (TypeSafe) API key", model (default `jev-latest`), confidence floor (default 0.9), Save (asks Chrome for the optional host permission `https://api.typesafe.ai/*`), Remove key, Test key. Popup: a Jev On/Off row with an Options button. `status` reports `jevConfigured`.
+- Error codes: `jev_not_configured` (exit 7, `--jev on` without a key), `jev_error` (exit 5, `--jev on` when Jev fails). Under `--jev auto` a failed Jev call falls back to heuristics with stricter gating (`jev_unavailable`: every button and anything in a form asks Kevin) and `jev.used: false`.
+- `read --elements` and `find` share the same element refs.
+
+### Security
+
+- The TypeSafe key is stored in `chrome.storage.local` and used only by the service worker's `fetch`; it is never sent to the native host, the CLI, logs, or pages, and the options page never shows it again. Tests assert it never appears in any port message.
+- Jev sees no field values (only `valueKind` empty/filled) and at most 60 elements / 24 KB per page. Intents are logged as `<N chars sha256:8>`.
+
 ## 0.8.0 (2026-10-22)
 
 ### Added

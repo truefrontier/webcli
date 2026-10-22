@@ -145,7 +145,7 @@ def test_frame_limits():
 
 def test_validate_request():
     assert protocol.validate_request({"v": 1, "op": "tabs.list"})["args"] == {}
-    for bad in ({"v": 2, "op": "status"}, {"v": 1, "op": "page.find"}, {"v": 1, "op": "x"},
+    for bad in ({"v": 2, "op": "status"}, {"v": 1, "op": "page.elements"}, {"v": 1, "op": "x"},
                 {"v": 1, "op": "status", "args": []}, [], {"v": 1, "op": "status", "confirm": "yes"}):
         with pytest.raises(protocol.ProtocolError) as exc:
             protocol.validate_request(bad)
@@ -457,7 +457,7 @@ def test_agent_help_lists_p1_commands():
     names = {c["name"] for c in ref["commands"]}
     assert {"status", "list", "show", "read", "screenshot", "history", "install-host", "uninstall-host",
             "doctor"} <= names
-    assert "find" not in names  # P4
+    assert "find" in names  # P4 (Jev)
     assert any("bridge_down 5" in n for n in ref["notes"])
 
 

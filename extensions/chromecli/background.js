@@ -8,13 +8,19 @@ import {
 } from "./policy.js";
 import { displayValue, gateReasons } from "./gate.js";
 import { pageAction, pageProbe } from "./page/actions.js";
+import { pageSnapshot } from "./page/snapshot.js";
+import {
+  JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, fallbackReasons, heuristicPick, heuristicRank, jevConfig,
+  jevMode, locateBody, mergeReasons, parseClassify, parseLocate,
+} from "./jev.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
 import { extractPage } from "./page/extract.js";
 
 const HOST = "com.truefrontier.chromecli";
 const VERSION = chrome.runtime.getManifest().version;
 const AUDIT_MAX = 200;
-const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait"];
+const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",
+  "page.find"];
 const TAB_OPS = ["tab.open", "tab.focus", "tab.close", "tab.navigate"];
 const PAGE_OPS = ["page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval"];
 const OPS = new Set([...READ_OPS, ...TAB_OPS, ...PAGE_OPS]);
@@ -101,10 +107,15 @@ function connect() {
   sendHello();
 }
 
+// Jev settings from chrome.storage.local. The key stays in this worker: only `configured` is ever reported.
+async function getJev() {
+  return jevConfig(await chrome.storage.local.get(["typesafeApiKey", "jevModel", "jevFloor"]));
+}
+
 async function sendHello() {
-  const [paused, shares, st] = [await getPaused(), await getShares(), await getPolicyState()];
+  const [paused, shares, st, jev] = [await getPaused(), await getShares(), await getPolicyState(), await getJev()];
   post({
-    event: "hello", extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: false,
+    event: "hello", extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: jev.configured,
     shares: Object.entries(shares).map(([tab, s]) => ({ tab: Number(tab), origin: s.origin, level: s.level })),
     policyHash: st.active.hash, policyPending: !!st.pending,
   });
@@ -304,15 +315,16 @@ async function dispatch(op, args, req = {}) {
     case "tab.close": return tabClose(args);
     case "tab.navigate": return tabNavigate(args, req);
     case "page.wait": return pageWait(args);
+    case "page.find": return pageFind(args);
     default: return pageOp(op.slice(5), args, req);
   }
   throw new OpError("bad_request", `Unknown op ${op}.`);
 }
 
 async function statusInfo() {
-  const [paused, shares, st] = [await getPaused(), await getShares(), await getPolicyState()];
+  const [paused, shares, st, jev] = [await getPaused(), await getShares(), await getPolicyState(), await getJev()];
   return {
-    extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: false, confirmsPending: pendingConfirms(),
+    extVersion: VERSION, extensionId: chrome.runtime.id, paused, jevConfigured: jev.configured, confirmsPending: pendingConfirms(),
     chromeVersion: (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || null,
     shares: Object.entries(shares).map(([tab, s]) => ({ tab: Number(tab), origin: s.origin, level: s.level })),
     policy: { hash: st.active.hash, pending: !!st.pending, pendingLoosening: st.pending?.loosening || [],
@@ -649,10 +661,9 @@ async function tabNavigate(args, req) {
 // ---- page actions (P3)
 function normTarget(t, optional) {
   const tt = t && typeof t === "object" ? t : {};
-  if (tt.find != null) throw new OpError("bad_target", "--find needs Jev (P4), which this version doesn't have; use --selector, --ref, or --text.");
-  const given = ["selector", "ref", "text"].filter((k) => tt[k] != null && tt[k] !== "");
+  const given = ["selector", "ref", "text", "find"].filter((k) => tt[k] != null && tt[k] !== "");
   if (given.length === 0 && optional) return null;
-  if (given.length !== 1) throw new OpError("bad_target", "Give exactly one target: selector, ref, or text (+ role).");
+  if (given.length !== 1) throw new OpError("bad_target", "Give exactly one target: selector, ref, text (+ role), or find.");
   const k = given[0];
   return k === "text" ? { text: String(tt.text), ...(tt.role ? { role: String(tt.role) } : {}) } : { [k]: String(tt[k]) };
 }
@@ -694,14 +705,45 @@ async function pageOp(op, args, req) {
     // Chrome's fixed CSP for extension isolated worlds forbids eval / new Function, so user code can't run there.
     throw new OpError("eval_disabled", "eval is disabled: Chrome's MV3 isolated-world CSP blocks running code strings, and chromecli won't run them in the page's own world.", { tab: args.tab });
   }
-  const target = normTarget(args.target, op === "press");
+  let target = normTarget(args.target, op === "press");
   if (op === "press" && !String(args.key || "")) throw new OpError("bad_request", "press needs a key.");
   const { tab, origin } = await pagePre(args);
+  const j = await jevFor(args.jev);
+  let jev = { used: false, mode: j.mode, ...(j.why ? { reason: j.why } : {}) };
+  let jevFailed = false;
+  let found = null;
+  if (target?.find != null) {
+    const r = await locate(tab, origin, String(target.find), j);
+    jev = { ...jev, ...r.jev };
+    jevFailed = !!r.jev.error;
+    if (!r.pick) {
+      throw new OpError("ambiguous_target", `No element clearly matches that description (${r.list[0] ? r.list[0].source : "no candidates"}).`,
+        { tab: tab.id, origin, candidates: r.list.slice(0, 5), jev });
+    }
+    found = { ref: r.pick, source: r.list.find((c) => c.ref === r.pick)?.source || "heuristic" };
+    target = { ref: r.pick };
+  }
   const spec = { mode: "describe", op, target, key: args.key };
   const d = await inject(tab, origin, pageAction, spec);
   const element = d.element;
-  const reasons = gateReasons(op, element, { key: args.key });
-  const where = { tab: tab.id, origin, element, reasons };
+  const extra = [];
+  if ((op === "click" || op === "press") && j.use) {
+    try {
+      const resp = await callJev(globalThis.fetch, j.cfg.key, classifyBody({ model: j.cfg.model, page: { origin, title: tab.title || "" },
+        element: classifyElement(element) }));
+      const c = parseClassify(resp, j.cfg.floor);
+      if (c.reason) extra.push(c.reason);
+      jev = { ...jev, used: true, choice: c.choice, confidence: c.confidence };
+    } catch (e) {
+      if (!(e instanceof JevError)) throw e;
+      jev = { ...jev, ...jevFail(j, e, { tab: tab.id, origin, element }) };
+      jevFailed = true;
+    }
+  }
+  if (jevFailed) extra.push(...fallbackReasons(element));
+  // Jev only adds gates; the heuristic ones always stay.
+  const reasons = mergeReasons(gateReasons(op, element, { key: args.key }), extra);
+  const where = { tab: tab.id, origin, element, reasons, jev };
   let confirmedInBrowser = false;
   if (reasons.length) {
     const value = ["type", "fill", "select"].includes(op) ? displayValue(args.value, element) : null;
@@ -715,7 +757,7 @@ async function pageOp(op, args, req) {
   const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
     { afterDispatch: true });
   const out = { tab: tab.id, origin, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, dispatched: true,
-    verified: null, ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
+    verified: null, jev, ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
   // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
   if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
   const failed = [];
@@ -745,6 +787,86 @@ async function pageOp(op, args, req) {
   return out;
 }
 
+// ---- Jev (P4): find, --find, classification. The key goes only into callJev's fetch, never into a reply or log.
+async function jevFor(mode) {
+  const m = jevMode(mode);
+  const cfg = await getJev();
+  if (m === "off") return { use: false, mode: m, why: "off", cfg: null };
+  if (!cfg.configured) {
+    if (m === "on") {
+      throw new OpError("jev_not_configured", "--jev on, but no Jev key is set.", {
+        hint: "Kevin: open chromecli's options (popup → Jev → Options) and paste a TypeSafe API key." });
+    }
+    return { use: false, mode: m, why: "not_configured", cfg: null };
+  }
+  return { use: true, mode: m, cfg };
+}
+
+// Under --jev on a failure is exit 5 jev_error; under auto it is recorded and the caller gates more strictly.
+function jevFail(j, e, where) {
+  if (j.mode === "on") throw new OpError("jev_error", e.message, where);
+  return { used: false, error: e.message };
+}
+
+function classifyElement(el) {
+  const out = {};
+  for (const k of ["tag", "role", "type", "name", "label", "autocomplete", "inForm", "formAction"]) {
+    if (el?.[k] != null && el[k] !== "") out[k] = typeof el[k] === "string" ? el[k].slice(0, 120) : el[k];
+  }
+  if (el?.ref) out.id = el.ref;
+  return out;
+}
+
+const candidateRow = (el, score, source) => ({ ref: el.id, score, source, tag: el.tag, role: el.role || null, name: el.name || "" });
+
+async function locate(tab, origin, intent, j) {
+  if (!intent.trim()) throw new OpError("bad_target", "find needs a description (intent).");
+  const snap = await inject(tab, origin, pageSnapshot, { max: 300 });
+  const ranked = heuristicRank(intent, snap.elements || []);
+  let list = ranked.map((r) => candidateRow(r.el, r.score, "heuristic"));
+  let pick = heuristicPick(ranked)?.el.id ?? null;
+  let jev = { used: false };
+  if (j.use) {
+    const snapshot = buildSnapshot(ranked.map((r) => r.el));
+    const cands = snapshot.slice(0, LOCATE_MAX).map((e) => e.id);
+    try {
+      const resp = await callJev(globalThis.fetch, j.cfg.key, locateBody({ model: j.cfg.model, intent,
+        page: { origin, title: snap.title || tab.title || "" }, elements: snapshot, candidates: cands }));
+      const p = parseLocate(resp, cands, j.cfg.floor);
+      const byId = new Map((snap.elements || []).map((e) => [e.id, e]));
+      list = p.ranked.map((r) => candidateRow(byId.get(r.id), r.noul, "jev"));
+      pick = p.pick;
+      jev = { used: true };
+    } catch (e) {
+      if (!(e instanceof JevError)) throw e;
+      jev = jevFail(j, e, { tab: tab.id, origin });
+    }
+  }
+  return { list, pick, jev };
+}
+
+async function pageFind(args) {
+  const { tab, origin } = await pagePre(args, "read");
+  const j = await jevFor(args.jev);
+  const limit = Math.min(Math.max(1, Number(args.limit) || 5), 50);
+  const r = await locate(tab, origin, String(args.intent || ""), j);
+  return { tab: tab.id, origin, results: r.list.slice(0, limit), pick: r.pick,
+    jev: { mode: j.mode, ...(j.why ? { reason: j.why } : {}), ...r.jev } };
+}
+
+async function jevTest() {
+  const cfg = await getJev();
+  if (!cfg.configured) return { ok: false, error: "No key saved." };
+  try {
+    const resp = await callJev(globalThis.fetch, cfg.key, classifyBody({ model: cfg.model, page: { origin: "https://example.com", title: "Example" },
+      element: { id: "e1", tag: "a", role: "link", name: "Next page" } }));
+    const c = parseClassify(resp, cfg.floor);
+    return { ok: true, choice: c.choice, confidence: c.confidence };
+  } catch (e) {
+    return { ok: false, error: e instanceof JevError ? e.message : "Unexpected error." };
+  }
+}
+
 async function pageWait(args) {
   const { tab, origin } = await pagePre(args, "read");
   const ms = Math.min(Math.max(100, Number(args.timeoutMs) || 15000), 120000);
@@ -772,7 +894,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const url = String(sender.url || "");
   if (sender.id !== chrome.runtime.id || !url.startsWith(chrome.runtime.getURL(""))) return false;
   const fromConfirm = url.startsWith(chrome.runtime.getURL("confirm.html"));
-  if (fromConfirm ? !["confirmGet", "confirmAnswer"].includes(msg?.type) : !!sender.tab) return false;
+  const fromOptions = url.startsWith(chrome.runtime.getURL("options.html"));
+  if (fromConfirm ? !["confirmGet", "confirmAnswer"].includes(msg?.type)
+    : fromOptions ? !["jevStatus", "jevTest"].includes(msg?.type) : !!sender.tab) return false;
   popupMessage(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e?.message || e) }));
   return true;
 });
@@ -798,8 +922,10 @@ async function popupMessage(msg) {
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus,
         shareCount: Object.keys(shares).length, audit: audit.slice(-20).reverse(), version: VERSION,
-        confirms: pendingConfirms() };
+        confirms: pendingConfirms(), jevConfigured: (await getJev()).configured };
     }
+    case "jevStatus": { const j = await getJev(); return { ok: true, configured: j.configured, model: j.model, floor: j.floor }; }
+    case "jevTest": return jevTest();
     case "showConfirm": {
       if (confirmActive?.windowId != null) await chrome.windows.update(confirmActive.windowId, { focused: true }).catch(() => {});
       return { ok: true };
@@ -884,6 +1010,10 @@ chrome.windows.onRemoved.addListener((windowId) => {
   if (confirmActive && confirmActive.windowId === windowId) finishConfirm(confirmActive, "deny");
 });
 chrome.tabs.onReplaced.addListener((_added, removed) => revoke(removed, "replaced"));
+// A new / removed Jev key changes status.jevConfigured: tell the host (never the key).
+chrome.storage.onChanged?.addListener((changes, area) => {
+  if (area === "local" && ("typesafeApiKey" in changes)) sendHello();
+});
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === "pause-agents") await setPaused(!(await getPaused()));
 });

@@ -1,5 +1,5 @@
 import { allowToPermission, permissionPattern } from "./policy.js";
-import { auditRow, confirmsLabel, hostOf, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
+import { auditRow, confirmsLabel, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
 let tab = null;
@@ -97,6 +97,12 @@ function render() {
   $("pause-label").textContent = state.paused ? "Agents paused" : "Pause agents";
   document.querySelector(".pause-card").classList.toggle("on", !!state.paused);
 
+  // Jev
+  const jv = jevView(!!state.jevConfigured);
+  $("jev-chip").textContent = jv.chip;
+  $("jev-chip").dataset.on = String(jv.on);
+  $("jev-sub").textContent = jv.sub;
+
   // pending policy
   $("pending").hidden = !state.pending;
   $("pending-list").replaceChildren(...(state.pending?.loosening || []).map((l) =>
@@ -186,6 +192,7 @@ $("seg").addEventListener("keydown", (e) => {
 });
 
 $("confirms").addEventListener("click", async () => { await send({ type: "showConfirm" }); window.close(); });
+$("jev-options").addEventListener("click", () => { chrome.runtime.openOptionsPage?.(); window.close(); });
 $("unshare-all").addEventListener("click", async () => { await send({ type: "unshareAll" }); msg("All tabs unshared."); await load(); });
 $("pause").addEventListener("click", async () => { await send({ type: "pause", paused: !state.paused }); await load(); });
 $("retry").addEventListener("click", async () => {

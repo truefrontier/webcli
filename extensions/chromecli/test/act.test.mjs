@@ -163,14 +163,14 @@ test("page actions: missing expect -> missing_expect; wrong origin / prefix -> u
   assert.equal(h.injected.length, 0);
 });
 
-test("page actions: target must be exactly one; --find is P4", async () => {
+test("page actions: target must be exactly one (selector, ref, text, find)", async () => {
   const h = await loadBackground({ page: fakePage() });
   await actTab(h, 1);
   assert.equal((await h.call("page.click", { tab: 1, target: {}, expect: EXPECT })).error.code, "bad_target");
   assert.equal((await h.call("page.click", { tab: 1, target: { selector: "a", ref: "e1" }, expect: EXPECT })).error.code, "bad_target");
-  const f = await h.call("page.click", { tab: 1, target: { find: "the next link" }, expect: EXPECT });
+  const f = await h.call("page.click", { tab: 1, target: { find: "the next link", selector: "a" }, expect: EXPECT });
   assert.equal(f.error.code, "bad_target");
-  assert.match(f.error.message, /Jev \(P4\)/);
+  assert.equal(h.injected.length, 0);
 });
 
 test("click a plain link: no prompt, dispatched in the ISOLATED world", async () => {

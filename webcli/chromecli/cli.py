@@ -1,6 +1,6 @@
 """`chromecli`: read and act in the Chrome tabs Kevin shares, through the chromecli extension.
 
-Read: status, list, show, read, screenshot, history, wait. Tab actions (P2): open, focus, close, navigate. Page actions
+Read: status, list, show, read, screenshot, history, wait, find (Jev or heuristics). Tab actions (P2): open, focus, close, navigate. Page actions
 (P3): click, type, fill, select, press, eval (disabled). Management: install-host, uninstall-host, doctor, agent-help.
 Every action previews unless --confirm; risky ones also wait for Kevin's Allow in Chrome.
 """
@@ -8,6 +8,7 @@ Every action previews unless --confirm; risky ones also wait for Kevin's Allow i
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 from datetime import datetime
@@ -55,7 +56,8 @@ NOTES = [
     "read if in read_allow, else left unshared (metadata only in `list`).",
     "Page actions (click/type/fill/select/press/eval) need --tab, Share-act, and --expect-origin or --expect-url "
     "(missing: exit 2 missing_expect; tab elsewhere: exit 5 url_mismatch). Targets: exactly one of --selector, --ref "
-    "(from `read TAB --elements`; refs die on navigation), --text [--role]. --find needs Jev (P4; not yet, exit 2). "
+    "(from `read TAB --elements` or `find`; refs die on navigation), --text [--role], or --find INTENT (resolved like "
+    "`find`; no clear winner: exit 3 ambiguous_target with candidates). "
     "They run in the extension's isolated world with synthetic events (isTrusted=false; some sites ignore them).",
     "In-browser confirm (Kevin clicks Allow once / Deny in a chromecli window; 60s = confirm_timeout): always for "
     "eval; clicks on submit-like elements (form submit buttons, input[type=submit|image], names like buy, order, pay, "
@@ -67,6 +69,13 @@ NOTES = [
     "fails after the action went out: exit 8 sent_unverified (don't repeat; read the page). Result JSON: {tab, origin, "
     "op, element, gated, reasons, confirmedInBrowser, dispatched, verified}.",
     "eval is disabled (exit 7 eval_disabled): Chrome's MV3 isolated-world CSP forbids running code strings.",
+    "Jev (optional, BYOK; Kevin saves a TypeSafe key in the extension's options): `find --tab TAB INTENT` and --find rank "
+    "elements with Jev (source jev), else heuristics (source heuristic); click/press targets are classified "
+    "(safe/submit/purchase/destructive/send_publish/credential/uncertain) and anything not confidently safe adds a "
+    "jev:<choice> gate. Jev only adds gates, never removes one. --jev auto (default) uses Jev when a key is set; if "
+    "the call fails it falls back to heuristics with stricter gating (every button and anything in a form asks Kevin; "
+    "result jev.used false). --jev on: exit 7 jev_not_configured without a key, exit 5 jev_error on failure. "
+    "--jev off: heuristics only. status.jevConfigured says whether a key is set; the key never leaves the extension.",
     "Put sensitive values in a file: --value-file FILE (or '-' for stdin), not --value on the command line.",
     "Pause agents (popup, or Cmd+Shift+Period) makes every command but `status` exit 4 (`paused`).",
     "Denied origins (built-in: every non-http(s) scheme and the Chrome Web Store; config: banks, sign-in pages, "
@@ -98,6 +107,7 @@ WRITES = [
 ]
 TAB_FIELDS = ["id", "title", "url", "origin", "share", "active", "windowId", "botOpened"]
 HISTORY_FIELDS = ["title", "url", "lastVisit", "visitCount"]
+FIND_FIELDS = ["ref", "score", "source", "tag", "role", "name"]
 
 
 def _env() -> dict[str, str]:
@@ -261,10 +271,11 @@ def _local_policy() -> dict | None:
         return None
 
 
-def _write_timeout() -> float:
-    """Long enough for an in-browser confirm (confirm_timeout) plus the post-checks (<= 10s each)."""
+def _write_timeout(jev: str = "off") -> float:
+    """Long enough for an in-browser confirm (confirm_timeout) plus the post-checks (<= 10s each), plus two Jev calls
+    (<= 25s each) unless --jev off."""
     pol = _local_policy() or {}
-    return max(bridge.timeout_seconds(), float(pol.get("confirm_timeout") or 60) + 30)
+    return max(bridge.timeout_seconds(), float(pol.get("confirm_timeout") or 60) + 30 + (0 if jev == "off" else 55))
 
 
 def _preview(plan: dict) -> None:
@@ -330,19 +341,16 @@ def _expect(expect_origin: str | None, expect_url: str | None, required: bool) -
 
 
 def _page_target(selector, ref, text, role, find, optional: bool = False) -> dict | None:
-    if find is not None:
-        die("--find needs Jev (P4), which this version doesn't have. Use --selector, --ref (from read --elements), or "
-            "--text [--role].", EXIT_USAGE, error="bad_target")
-    given = [k for k, v in (("selector", selector), ("ref", ref), ("text", text)) if v not in (None, "")]
+    given = [k for k, v in (("selector", selector), ("ref", ref), ("text", text), ("find", find)) if v not in (None, "")]
     if role and text in (None, ""):
         die("--role goes with --text.", EXIT_USAGE, error="bad_target")
     if not given and optional:
         return None
     if len(given) != 1:
-        die("Give exactly one target: --selector, --ref, or --text (+ --role).", EXIT_USAGE, error="bad_target")
+        die("Give exactly one target: --selector, --ref, --text (+ --role), or --find.", EXIT_USAGE, error="bad_target")
     if given[0] == "text":
         return {"text": text, **({"role": role} if role else {})}
-    return {given[0]: selector if given[0] == "selector" else ref}
+    return {given[0]: {"selector": selector, "ref": ref, "find": find}[given[0]]}
 
 
 def _verify(prefix, text) -> dict:
@@ -377,7 +385,11 @@ def page_options(f):
         click.option("--ref", default=None, help="Target: a ref (e1..eN) from `read TAB --elements` (dies on navigation)."),
         click.option("--text", "target_text", default=None, help="Target: the element's accessible name (exact, else contains)."),
         click.option("--role", default=None, help="With --text: only elements with this role (button, link, textbox, ...)."),
-        click.option("--find", default=None, help="Target by intent: needs Jev (P4); not in this version (exit 2)."),
+        click.option("--find", default=None, help="Target by description ('the email field'): heuristics, or Jev when a key "
+                     "is set. No clear winner: exit 3 ambiguous_target with candidates."),
+        click.option("--jev", type=click.Choice(["auto", "on", "off"]), default="auto", show_default=True,
+                     help="Jev for --find and click/press classification: auto = if a key is set; on = required "
+                          "(exit 7 no key, exit 5 on failure); off. Jev only adds confirm prompts."),
         click.option("--expect-origin", default=None, help="Required (or --expect-url): the origin the tab must be on."),
         click.option("--expect-url", default=None, help="Required (or --expect-origin): a prefix the tab's URL must have."),
         click.option("--verify-url-prefix", default=None, help="After: wait <=10s for the tab URL to start with this (else exit 8)."),
@@ -394,18 +406,18 @@ def _page_plan(op, tab, target, expect, verify, **extra) -> dict:
                               "Enter in a form field)"}
 
 
-def _page(op, tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix, verify_text,
-          dry_run, confirm, *, optional_target=False, value=None, key=None, plan_extra=None) -> None:
+def _page(op, tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
+          verify_text, dry_run, confirm, *, optional_target=False, value=None, key=None, plan_extra=None) -> None:
     target = _page_target(selector, ref, target_text, role, find, optional=optional_target)
     expect = _expect(expect_origin, expect_url, required=True)
     verify = _verify(verify_url_prefix, verify_text)
-    args = {"tab": tab, "target": target, "expect": expect, "verify": verify}
+    args = {"tab": tab, "target": target, "expect": expect, "verify": verify, "jev": jev}
     if value is not None:
         args["value"] = value
     if key is not None:
         args["key"] = key
-    plan = _page_plan(op, tab, target, expect, verify, **(plan_extra or {}))
-    _execute(f"page.{op}", args, plan, dry_run, confirm)
+    plan = _page_plan(op, tab, target, expect, verify, jev=jev, **(plan_extra or {}))
+    _execute(f"page.{op}", args, plan, dry_run, confirm, timeout=_write_timeout(jev))
 
 
 @group.command("open")
@@ -459,11 +471,11 @@ def navigate_cmd(tab, url, expect_origin, expect_url, dry_run, confirm) -> None:
 @group.command("click")
 @page_options
 @write_options
-def click_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix, verify_text,
+def click_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix, verify_text,
               dry_run, confirm) -> None:
     """Click an element in an act-shared tab (WRITES; preview unless --confirm). Submit-like elements (form submit
     buttons; labels such as Buy, Order, Pay, Send, Post, Delete, Confirm, Sign out, ...) wait for Kevin in Chrome."""
-    _page("click", tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+    _page("click", tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
           verify_text, dry_run, confirm)
 
 
@@ -473,13 +485,13 @@ def click_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect
 @click.option("--value-file", "--text-file", "value_file", type=click.Path(path_type=Path, dir_okay=False,
               allow_dash=True), default=None, help="Read the value from a file ('-' = stdin). Use this for anything sensitive.")
 @write_options
-def fill_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix, verify_text,
+def fill_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix, verify_text,
              value, value_file, dry_run, confirm) -> None:
     """Set a field's value (WRITES; preview unless --confirm), then read it back (mismatch: exit 8). Password, payment
     (cc-*), one-time-code, and card/CVV/IBAN/routing/SSN fields wait for Kevin in Chrome, value masked. The value is
     logged only as <N chars sha256:8>."""
     v = _value(value, value_file)
-    _page("fill", tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+    _page("fill", tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
           verify_text, dry_run, confirm, value=v, plan_extra={"value": _digest(v)})
 
 
@@ -489,12 +501,12 @@ def fill_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_
 @click.option("--value-file", "--text-file", "value_file", type=click.Path(path_type=Path, dir_okay=False,
               allow_dash=True), default=None, help="Read the text from a file ('-' = stdin). Use this for anything sensitive.")
 @write_options
-def type_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix, verify_text,
+def type_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix, verify_text,
              value, value_file, dry_run, confirm) -> None:
     """Type text into a field key by key (WRITES; preview unless --confirm), then read it back (exit 8 if it differs).
     Same gates as fill. Logged only as <N chars sha256:8>."""
     v = _value(value, value_file)
-    _page("type", tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+    _page("type", tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
           verify_text, dry_run, confirm, value=v, plan_extra={"value": _digest(v)})
 
 
@@ -502,10 +514,10 @@ def type_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_
 @page_options
 @click.option("--value", required=True, help="The option's value, or its visible label.")
 @write_options
-def select_cmd(tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix, verify_text,
+def select_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix, verify_text,
                value, dry_run, confirm) -> None:
     """Choose an option in a <select> (WRITES; preview unless --confirm), then read it back (exit 8 if it differs)."""
-    _page("select", tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+    _page("select", tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
           verify_text, dry_run, confirm, value=value, plan_extra={"value": _digest(value)})
 
 
@@ -513,11 +525,11 @@ def select_cmd(tab, selector, ref, target_text, role, find, expect_origin, expec
 @click.argument("key")
 @page_options
 @write_options
-def press_cmd(key, tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+def press_cmd(key, tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
               verify_text, dry_run, confirm) -> None:
     """Press KEY (Enter, Escape, Tab, a letter, ...) on the target, or the focused element when no target is given
     (WRITES; preview unless --confirm). Enter in a form field submits the form, so it waits for Kevin in Chrome."""
-    _page("press", tab, selector, ref, target_text, role, find, expect_origin, expect_url, verify_url_prefix,
+    _page("press", tab, selector, ref, target_text, role, find, jev, expect_origin, expect_url, verify_url_prefix,
           verify_text, dry_run, confirm, optional_target=True, key=key, plan_extra={"key": key})
 
 
@@ -541,6 +553,29 @@ def wait_cmd(tab, selector, text, url_prefix, timeout, fmt, quiet) -> None:
     else:
         args["urlPrefix"] = url_prefix
     emit_json(bridge.request("page.wait", args, timeout=timeout + max(bridge.timeout_seconds(), 10)))
+    raise SystemExit(EXIT_OK)
+
+
+@group.command("find")
+@click.option("--tab", type=int, required=True, help="Chrome tab id (Share-read is enough).")
+@click.argument("intent")
+@click.option("--jev", type=click.Choice(["auto", "on", "off"]), default="auto", show_default=True,
+              help="auto = Jev if a key is set in the extension's options; on = required (exit 7 no key, exit 5 on "
+                   "failure); off = heuristics only.")
+@click.option("--limit", type=click.IntRange(1, 50), default=5, show_default=True)
+@agent_output_options()
+def find_cmd(tab, intent, jev, limit, fmt, compact, select, as_csv, quiet) -> None:
+    """Find the element INTENT describes ('the email field') in a shared tab (read-only). Rows: ref, score, source
+    (jev|heuristic), tag, role, name; use the ref with --ref. Jev never sees field values."""
+    res = bridge.request("page.find", {"tab": tab, "intent": intent, "jev": jev, "limit": limit},
+                         timeout=max(bridge.timeout_seconds(), 45))
+    info = (res or {}).get("jev") or {}
+    if info.get("error"):
+        click.echo(json.dumps({"warning": "jev_unavailable", "message": info["error"],
+                               "hint": "Results are heuristic (--jev auto fallback)."}), err=True)
+    emit_rows((res or {}).get("results") or [], title="Candidates", fields=FIND_FIELDS,
+              compact_fields=("ref", "score", "name"), columns=["ref", "score", "source", "role", "name"],
+              noun="candidates", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
     raise SystemExit(EXIT_OK)
 
 

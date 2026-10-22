@@ -84,16 +84,21 @@ export function extractPage(opts) {
     const sel = "a[href], button, input:not([type=hidden]), select, textarea, summary, [contenteditable=''], " +
       "[contenteditable=true], [role=button], [role=link], [role=checkbox], [role=radio], [role=tab], " +
       "[role=menuitem], [role=switch], [role=combobox], [role=textbox], [role=option]";
-    const refs = new Map();
+    // Stable refs per element for this document, shared with page/snapshot.js (find): a ref from either keeps
+    // pointing at the same element.
+    const refs = globalThis.__chromecliRefs instanceof Map ? globalThis.__chromecliRefs : new Map();
+    const ids = globalThis.__chromecliIds instanceof WeakMap ? globalThis.__chromecliIds : new WeakMap();
+    globalThis.__chromecliRefs = refs;
+    globalThis.__chromecliIds = ids;
+    globalThis.__chromecliNext = globalThis.__chromecliNext || refs.size;
     const out = [];
-    let n = 0;
     for (const el of document.querySelectorAll(sel)) {
       if (out.length >= 300) break;
       if (hidden(el)) continue;
       const r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) continue;
-      const ref = `e${++n}`;
-      refs.set(ref, el);
+      let ref = ids.get(el);
+      if (!ref || refs.get(ref) !== el) { ref = `e${++globalThis.__chromecliNext}`; ids.set(el, ref); refs.set(ref, el); }
       const tag = el.tagName.toLowerCase();
       const item = { ref, tag, role: el.getAttribute("role") || null, name: accessibleName(el).slice(0, 120) };
       if (tag === "input") item.type = (el.getAttribute("type") || "text").toLowerCase();
@@ -109,8 +114,7 @@ export function extractPage(opts) {
       item.rect = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
       out.push(item);
     }
-    // Refs live in this isolated world for this document only (later phases act on them).
-    globalThis.__chromecliRefs = refs;
+    // Refs live in this isolated world for this document only; page actions resolve them (--ref).
     return out;
   }
 
