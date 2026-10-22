@@ -33,6 +33,7 @@ export function detailRows(info) {
   const rows = [];
   if (!info) return rows;
   rows.push(["Origin", String(info.origin || ""), "mono"]);
+  if (info.frameOrigin) rows.push(["Inside frame", `${info.frameOrigin} (frame ${info.frameId})`, "mono"]);
   if (info.title) rows.push(["Tab", trunc(info.title, 120)]);
   if (info.op === "navigate" && info.from) rows.push(["From", hostOf(info.from), "mono"]);
   if (info.url && (info.op === "open" || info.op === "navigate")) rows.push(["URL", trunc(info.url, 300), "mono"]);

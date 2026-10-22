@@ -44,9 +44,37 @@ export function shortcutKeys(shortcut) {
 
 // Pending policy loosening entry -> readable label.
 const KIND_LABEL = { read_allow_added: "Allow read", act_allow_added: "Allow act", deny_removed: "Remove deny",
-  implicit_active: "Implicit active tab", history_enabled: "History" };
+  deny_except_added: "Deny exception", frame_act_allow_added: "Act in frames", implicit_active: "Implicit active tab", history_enabled: "History" };
 export function loosenLabel(l) {
   return KIND_LABEL[l?.kind] || String(l?.kind || "").replace(/_/g, " ");
+}
+
+// 0.11.3: a deny_except pattern in plain words for the pending card, e.g. "https://admin.shopify.com/store/*/oauth/install"
+// -> "Lets agents into admin.shopify.com/store/(any store)/oauth/install, any query, despite the /oauth deny ...".
+export function exceptWords(pattern) {
+  const p = String(pattern || "");
+  const m = /^https:\/\/([^/]+)(\/.*)$/i.exec(p);
+  if (!m) return p;
+  const segs = m[2].split("/").slice(1);
+  const path = segs.map((g, i) => g === "*" ? `(any ${segs[i - 1] ? segs[i - 1].replace(/s$/, "") : "one part"})`
+    : g.includes("*") ? `${g.replace(/\*/g, "…")} (… = anything within this part)` : g).join("/");
+  return `Agents may open and use https://${m[1]}/${path} (any query string), even though a path deny such as /oauth `
+    + "covers it. Only this exact path shape on this one host; every other deny rule still applies, and clicks there "
+    + "still ask you first.";
+}
+
+// Plain-words detail line for a pending loosening entry ("" when the label + value already say it).
+export function loosenWords(l) {
+  if (l?.kind === "deny_except_added") return exceptWords(l.value);
+  if (l?.kind === "frame_act_allow_added") return frameActWords(l.value);
+  return "";
+}
+
+// 0.11.3: a frame_act_allow origin in plain words.
+export function frameActWords(origin) {
+  return `Let agents act inside ${hostOf(origin)} frames on act-shared tabs (tabs you set to Act yourself). `
+    + "Clicks and typing there get the same checks as the page itself: risky ones still ask you first. "
+    + "Accepting also asks Chrome for access to that site.";
 }
 
 // Audit entry -> { time, op, target, outcome, tone }.
@@ -56,7 +84,9 @@ export function auditRow(a) {
   const outcome = String(a?.outcome ?? "");
   // Ops log "ok" or an error code (not_shared, origin_blocked, ...); unshares log a reason; policy acks a hash.
   const tone = outcome === "ok" ? "ok" : /^[a-z]+(?:_[a-z]+)+$|^paused$/.test(outcome) ? "bad" : "neutral";
-  return { time, op: String(a?.op || ""), target, outcome, tone };
+  // 0.11.3: a deny exception let this URL through
+  const shown = a?.denyExcept ? `${outcome} · via deny exception` : outcome;
+  return { time, op: String(a?.op || ""), target, outcome: shown, tone, ...(a?.denyExcept ? { denyExcept: String(a.denyExcept) } : {}) };
 }
 
 // ---- 0.10.0 pre-approvals
@@ -74,7 +104,8 @@ export function grantScope(g) {
     try { cap = ` · ≤ ${new Intl.NumberFormat("en-US", { style: "currency", currency: g.currency || "USD" }).format(g.maxAmount)}`; }
     catch { cap = ` · ≤ ${g.maxAmount} ${g.currency || ""}`.trimEnd(); }
   }
-  return `${verb} ${what}${cap}`.trim();
+  const inFrame = g?.frameOrigin ? ` in ${hostOf(g.frameOrigin)} frame` : "";
+  return `${verb} ${what}${inFrame}${cap}`.trim();
 }
 
 // "1 use left · 28m left" / "3 uses left · 1h 5m left" / "expired".

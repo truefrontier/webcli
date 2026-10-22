@@ -64,7 +64,8 @@ NOTES = [
     "`find`; no clear winner: exit 3 ambiguous_target with candidates). "
     "They run in the extension's isolated world with synthetic events (isTrusted=false; some sites ignore them).",
     "In-browser confirm (Kevin clicks Allow once / Deny in a chromecli window; 60s = confirm_timeout): clicks on submit-like elements (form submit buttons, input[type=submit|image], names like buy, order, pay, "
-    "send, post, reply, submit, confirm, delete, remove, subscribe, accept, approve, sign out, merge, deploy ...); "
+    "send, post, reply, submit, confirm, delete, remove, subscribe, accept, approve, install, uninstall, authorize, sign "
+    "out, merge, deploy ...); "
     "Enter in a form field; type/fill into password, cc-*, current-password/new-password/one-time-code, or "
     "card/cvv/cvc/iban/routing/ssn fields; open, or cross-origin navigate, outside read_allow and act_allow (a "
     "same-origin navigate is confirmed only in bot-opened tabs). Deny: exit 4 declined; no "
@@ -93,7 +94,13 @@ NOTES = [
     "grant {id, quote, usesLeft, amount?}, Kevin gets a Chrome notification, and the log has the grant id and quote. "
     "With --max-amount the amount is read from --amount-selector (else best effort: the largest amount near the target "
     "or in 'total / amount due' text); only a read amount <= the cap skips the confirm, otherwise Kevin sees the "
-    "normal confirm with the grant and amount. Never skippable by a grant: typing/filling password, one-time-code, "
+    "normal confirm with the grant and amount. Frame targets (0.11.3): add --frame-origin https://app.example "
+    "(page ops only, exact https origin): the grant then matches only that element inside a frame from that origin, "
+    "and a grant without it never covers a frame; Jev's scope check sees the frame too. One approval covering several "
+    "steps is ONE grant per target, each quoting it, e.g. Kevin: 'approved to click Scan, Review fixes, Apply and Undo "
+    "in As Described on the as-described-review store' -> a grant per button with --frame-origin "
+    "https://asdescribed.truefrontier.app (or one with --uses N for a button pressed N times). There is no other "
+    "bypass. Never skippable by a grant: typing/filling password, one-time-code, "
     "cc-*, card/cvv/cvc/iban/routing/ssn fields; eval; denied origins (incl. checkout/cart paths). `grant list`; "
     "`grant revoke ID|--all --confirm`.",
     "Tabs opened by a click/press on a tab Kevin Share-act'd (window.open / target=_blank, openerTabId) are shared "
@@ -107,8 +114,15 @@ NOTES = [
     "are on the tab's origin, or on the same site (e.g. cdn.signnow.com in app.signnow.com) when Chrome already "
     "grants chromecli access to that origin; never other sites, denied origins, or frames inside a skipped frame. "
     "read appends each frame's content after a `[frame N: url WxH]` line (md: an HTML comment) and lists frames "
-    "[{frameId, origin, url, chars, rect, offset}]; their elements have refs like f5:e3 (read-only: page actions take "
-    "top-frame refs only, a frame ref exits 2 bad_target reason frame_ref). Replies list what chromecli couldn't "
+    "[{frameId, origin, url, chars, rect, offset}]; their elements have refs like f5:e3. Page actions take "
+    "top-frame refs, plus (0.11.3) frame refs in frames whose exact https origin is in frame_act_allow, only on tabs "
+    "Kevin shared Act himself (tabKind act, or a tab inheriting his Act share), never denied origins, and only with "
+    "Chrome host access to that origin (else exit 4 permission_needed; it is requested in the popup, never silently). "
+    "Listed frame origins on act tabs are also readable. Any other frame ref exits 2 bad_target reason frame_ref "
+    "(frameReason denied for a listed but denied origin; a frame_act_allow entry still waiting for Kevin's Accept: "
+    "exit 4 policy_pending). Frame actions go through exactly the same gates as the page: heuristics, Jev (>= 0.7 safe "
+    "on act tabs), the confirm window (which names the frame) and --confirm; results and the log carry frameId / "
+    "frame=N and frameOrigin. Replies list what chromecli couldn't "
     "read: skipped [{kind iframe|canvas|plugin|closed_shadow_host, frameId?, origin?, url?, rect {x,y,w,h}, reason "
     "other_site|no_host_permission|denied|opaque_origin|parent_skipped|load_error|not_loaded|frame_unreachable|"
     "too_many_frames|canvas_pixels|plugin_content|closed_shadow_root, detail?}]. A page that read gives ~0 chars "
@@ -133,9 +147,14 @@ NOTES = [
     "Put sensitive values in a file: --value-file FILE (or '-' for stdin), not --value on the command line.",
     "Pause agents (popup, or Cmd+Shift+Period) makes every command but `status` exit 4 (`paused`).",
     "Denied origins (built-in: every non-http(s) scheme and the Chrome Web Store; config: banks, sign-in pages, "
-    "password managers, checkout/cart paths) can't be shared, and `history` leaves them out.",
+    "password managers, checkout/cart paths) can't be shared, and `history` leaves them out. deny_except (0.11.3) lifts "
+    "a PATH deny (path:/x or host/path) for one exact URL shape: full https origin + path, * only within one path "
+    "segment, query ignored (e.g. https://admin.shopify.com/store/*/oauth/install). Host/origin denies (banks, "
+    "sign-in, password managers) and the built-in deny always win; an exception never removes a gate. Results and "
+    "the log carry denyExcept / deny_except=PATTERN when an exception is what allowed access.",
     f"Config: [{CONFIG_SECTION}] in ~/.webcli/config.toml: implicit_active (\"off\"|\"read\"), history (bool), "
-    "confirm_timeout, read_allow, act_allow, deny. Changes that widen access wait for Kevin to Accept in the popup "
+    "confirm_timeout, read_allow, act_allow, deny, deny_except (0.11.3: https URL patterns), frame_act_allow (0.11.3: "
+    "exact https origins, no wildcards). Changes that widen access wait for Kevin to Accept in the popup "
     "(ops on affected origins exit 4 `policy_pending`); tightening applies at once. Invalid config: exit 7.",
     "TAB is Chrome's integer tab id (from `list`); `--active` means the active tab of the last-focused window.",
     "`screenshot` needs the tab to be the active tab of a focused window (else exit 4 `not_visible`); chromecli never "
@@ -951,6 +970,9 @@ def grant_group() -> None:
 @click.option("--value-file", type=click.Path(path_type=Path, dir_okay=False, allow_dash=True), default=None,
               help="Read --value from a file ('-' = stdin).")
 @click.option("--url-prefix", default=None, help="navigate/open: only URLs starting with this (on --origin).")
+@click.option("--frame-origin", default=None,
+              help="click/fill/type/select/press (0.11.3): the element is inside an iframe from this exact https origin "
+                   "(it must be in frame_act_allow); the grant then covers only that frame, never the top page.")
 @click.option("--max-amount", type=click.FloatRange(min=0.01), default=None,
               help="click/press: skip the confirm only if the amount on the page is <= this.")
 @click.option("--currency", default=None, help="With --max-amount (default USD).")
@@ -962,8 +984,8 @@ def grant_group() -> None:
 @click.option("--user-approved", "user_approved", is_flag=True, default=False,
               help="Required: you state --quote is Kevin's own words, said to you. chromecli trusts this flag.")
 @write_options
-def grant_add_cmd(op, origin, target_text, role, selector, value, value_file, url_prefix, max_amount, currency,
-                  amount_selector, uses, ttl, quote, user_approved, dry_run, confirm) -> None:
+def grant_add_cmd(op, origin, target_text, role, selector, value, value_file, url_prefix, frame_origin, max_amount,
+                  currency, amount_selector, uses, ttl, quote, user_approved, dry_run, confirm) -> None:
     """Add a pre-approval (preview unless --confirm). Bots may only create one quoting Kevin's own words from the
     current conversation, with --user-approved. Jev then checks the grant's scope against the quote (exit 9 if it
     goes beyond it)."""
@@ -988,6 +1010,14 @@ def grant_add_cmd(op, origin, target_text, role, selector, value, value_file, ur
         die(f"A {op} grant needs --target-text NAME [--role R] or --selector S.", EXIT_USAGE, error="bad_target")
     if not page_op and (target_text or selector):
         die(f"{op} grants match on --origin (and --url-prefix), not an element.", EXIT_USAGE, error="bad_target")
+    fo = None
+    if frame_origin is not None:
+        fo = policy.origin_of(frame_origin)
+        if not page_op:
+            die("--frame-origin only applies to click, fill, type, select, and press.", EXIT_USAGE, error="bad_request")
+        if policy.frame_origin_error(frame_origin) or fo != frame_origin.strip().lower().rstrip("/"):
+            die(f"--frame-origin {frame_origin!r} must be an exact https origin like https://app.example.com.", EXIT_USAGE,
+                error="bad_request")
     val = _value(value, value_file, required=False)
     if (currency or amount_selector) and max_amount is None:
         die("--currency and --amount-selector need --max-amount.", EXIT_USAGE, error="bad_request")
@@ -999,6 +1029,8 @@ def grant_add_cmd(op, origin, target_text, role, selector, value, value_file, ur
         args["value"] = val
     if url_prefix:
         args["urlPrefix"] = url_prefix
+    if fo:
+        args["frameOrigin"] = fo
     if max_amount is not None:
         args["maxAmount"] = max_amount
         args["currency"] = (currency or "USD").upper()

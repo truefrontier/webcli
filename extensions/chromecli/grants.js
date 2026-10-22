@@ -51,6 +51,16 @@ export function validateGrant(input, { now = Date.now(), id } = {}) {
   if (PAGE_GRANT_OPS.includes(op) && !target) bad(`A ${op} grant needs --target-text NAME [--role R] or --selector S.`);
   if (!PAGE_GRANT_OPS.includes(op) && target) bad(`${op} grants match on origin (and --url-prefix), not an element.`);
   const g = { id: id || `g${Math.random().toString(16).slice(2, 8)}`, op, origin, target, quote, createdAt: now };
+  // 0.11.3: --frame-origin: the grant covers that element inside an iframe from this exact https origin (on `origin`'s
+  // tab) and nothing in the top frame; a grant without it never covers a frame action.
+  if (a.frameOrigin != null) {
+    if (!PAGE_GRANT_OPS.includes(op)) bad("--frame-origin only applies to click, fill, type, select, and press.");
+    const fo = httpOrigin(a.frameOrigin);
+    if (!fo || !fo.startsWith("https://") || fo !== String(a.frameOrigin).trim().toLowerCase().replace(/\/$/, "")) {
+      bad("--frame-origin must be an exact https origin like https://app.example.com.");
+    }
+    g.frameOrigin = fo;
+  }
   if (a.value != null) {
     if (!["fill", "type", "select", "press"].includes(op)) bad("--value only applies to fill, type, select, and press (the key).");
     g.value = String(a.value);
@@ -102,6 +112,7 @@ export function grantMatches(g, ctx) {
   if (!isLive(g, ctx.now ?? Date.now())) return { ok: false, why: "expired_or_used" };
   if (g.op !== ctx.op) return { ok: false, why: "op" };
   if (g.origin !== ctx.origin) return { ok: false, why: "origin" };
+  if ((g.frameOrigin || null) !== (ctx.frameOrigin || null)) return { ok: false, why: "frame_origin" };
   if (PAGE_GRANT_OPS.includes(g.op)) {
     const el = ctx.element;
     if (!el) return { ok: false, why: "no_element" };
@@ -180,7 +191,7 @@ export function fmtAmount(n, currency) {
 // What the popup and `grant list` show (no secrets in grants by design; values are digests).
 export function grantView(g, now = Date.now()) {
   return {
-    id: g.id, op: g.op, origin: g.origin, target: g.target, quote: g.quote,
+    id: g.id, op: g.op, origin: g.origin, ...(g.frameOrigin ? { frameOrigin: g.frameOrigin } : {}), target: g.target, quote: g.quote,
     ...(g.value != null ? { value: `<${g.value.length} chars>` } : {}),
     ...(g.urlPrefix ? { urlPrefix: g.urlPrefix } : {}),
     ...(g.maxAmount != null ? { maxAmount: g.maxAmount, currency: g.currency, ...(g.amountSelector ? { amountSelector: g.amountSelector } : {}) } : {}),
@@ -205,6 +216,7 @@ const VERB = { click: "click", fill: "fill in", type: "type into", select: "choo
 // What Jev sees of a grant (never a --value for fill/type: only that one is pinned).
 export function scopeView(g) {
   const out = { action: VERB[g.op] || g.op, site: g.origin };
+  if (g.frameOrigin) out.insideEmbeddedFrameFrom = `${g.frameOrigin} (an app embedded in a page on ${g.origin})`;
   if (g.target?.text) out.target = `the element named "${g.target.text}"${g.target.role ? ` (role ${g.target.role})` : ""}`;
   else if (g.target?.selector) out.target = `the element matching CSS ${g.target.selector}`;
   if (g.urlPrefix) out.onlyUrlsStartingWith = g.urlPrefix;

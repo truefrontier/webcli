@@ -179,12 +179,13 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .banner code { color: var(--text); }
 .pending-list { list-style: none; margin: 8px 0 0 26px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .pending-list li {
-  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0;
   padding: 4px 8px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border);
   font-size: 12px;
 }
 .pending-list .k { color: var(--muted); flex: none; }
 .pending-list .v { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; min-width: 0; }
+.pending-list .w { flex-basis: 100%; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
 .banner-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
 /* current tab */

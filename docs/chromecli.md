@@ -87,8 +87,9 @@ chromecli agent-help [--format json]
   until resumed. **Unshare all** in the popup.
 - **Deny**: built-in (any non-http(s) scheme, Chrome Web Store) can't be removed; the default list (banks, sign-in,
   password managers, checkout/cart/oauth/login paths) is editable in config. Denied origins can't be shared; history
-  leaves them out.
-- **Loosening needs Kevin**: a pushed policy that adds to `read_allow`/`act_allow`, removes a deny, turns
+  leaves them out. `deny_except` (0.11.3) lifts a path deny for one exact URL shape; see below.
+- **Loosening needs Kevin**: a pushed policy that adds to `read_allow`/`act_allow`/`frame_act_allow`, adds or changes a
+  `deny_except` pattern, removes a deny, turns
   `implicit_active` on, or turns `history` on is held pending (global badge "!", popup Accept/Reject); ops on affected
   origins exit 4 `policy_pending`. Tightening applies at once.
 - The host and CLI are untrusted callers; the extension enforces everything. Popup messages are accepted only from the
@@ -145,7 +146,7 @@ Jev never removes a heuristic gate on any tab kind.
   every precondition is checked again (tab, share, pause, origin, `--expect-*`, the element's fingerprint).
 - **Always gated** (`extensions/chromecli/gate.js`, spec 6.7): `eval`; clicks on submit-like elements (`button`
   default-submit in a form, `input[type=submit|image]`, or name/value/title matching
-  `\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy)\b`);
+  `\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy|install|uninstall|authori[sz]e)\b`; install/uninstall/authorize are new in 0.11.3);
   Enter (or Space) on such a button; `press Enter` in a form field; `type`/`fill`/`select` into `input[type=password]`,
   `autocomplete` `cc-*` / `current-password` / `new-password` / `one-time-code`, or name/id/label matching
   `card|cvv|cvc|iban|routing|ssn`; `open`/`navigate` to an origin outside `read_allow ∪ act_allow` (since 0.9.1 a
@@ -354,8 +355,9 @@ window (1042/1042, nothing to scroll), and `--container` failed with a bare `scr
   starts in `content`; `url` without query). Subframe elements have refs `f<frameId>:e<n>` and `frame: N`.
   `maxChars` applies to the merged text. With only the top frame the reply is exactly the 0.10.2 shape.
 - **find / wait.** `find` ranks elements from every readable frame (refs `f5:e3`, `frame: 5`); `wait --selector /
-  --text` holds when any readable frame matches. **Page actions stay in the top frame**: a frame ref (or a `--find`
-  pick in a frame) exits 2 `bad_target` with `reason: "frame_ref"`; nothing is dispatched.
+  --text` holds when any readable frame matches. **Page actions stay in the top frame** unless the frame's origin
+  is in `frame_act_allow` (0.11.3, below): any other frame ref (or a `--find` pick in a frame) exits 2 `bad_target`
+  with `reason: "frame_ref"`; nothing is dispatched.
 - **scroll / --full-page.** Auto-detect surveys every readable frame: an inner scroller (an element in any frame, or
   an iframe's own scrolling document) covering ≥ 30% of the tab's viewport beats the top window, largest first; else
   the window if it scrolls; else the largest inner scroller. The target reply adds `frameId`, `frameOrigin`,
@@ -384,6 +386,59 @@ window (1042/1042, nothing to scroll), and `--container` failed with a bare `scr
   iframe whose document scrolls 8 × 1000px and has a canvas; `?other=PORT` adds `frames-other.html` from a second
   127.0.0.1 port; two small `.dup` scrollers, a non-scrolling `main#flat`, a closed-shadow `x-closed`).
 
+## Deny exceptions and acting in listed frames (0.11.3)
+
+Two narrow loosenings, both held pending until Kevin clicks **Accept** in the popup (the pending list says each one in
+plain words); removing an entry is tightening and applies at once. Neither removes a gate.
+
+### `deny_except`: one URL shape through a path deny
+
+```toml
+deny_except = ["https://admin.shopify.com/store/*/oauth/install"]
+```
+
+- Each entry is a full `https://` origin plus a path: exact host (no `*.`, no port, no user info), at least one path
+  segment, `*` matches within exactly one segment (`[^/]*`; no `**`, no all-wildcard path, no empty, `.` or `..`
+  segments, no trailing slash), no query or fragment in the pattern; the URL's query and fragment are ignored when
+  matching. Case-insensitive; the URL must have the same number of segments (one trailing slash allowed).
+- Refused: `http://`, whole origins (`https://admin.shopify.com`), wildcard hosts, the Chrome Web Store
+  (`chromewebstore.google.com`, `chrome.google.com/webstore`). Invalid config: exit 7.
+- A matching URL is not denied **for that URL only**, and only when every deny hit is a **path** deny (`path:/oauth`,
+  `host/path`). Host and origin denies (banks, sign-in pages, password managers) and the built-in deny always win.
+- Shares, heuristics, Jev, the confirm window and `--confirm` work as on any allowed page: clicking **Install** on the
+  OAuth page still asks Kevin (`submit_word`), and grants still never skip password/OTP/card fields.
+- Audit: the reply carries `denyExcept: PATTERN`, the host log `deny_except=PATTERN`, and the popup's activity row
+  "· via deny exception" when an exception is what allowed access (shares, auto/inherited shares, ops).
+- Popup wording: "Agents may open and use https://admin.shopify.com/store/(any store)/oauth/install (any query
+  string), even though a path deny such as /oauth covers it. Only this exact path shape on this one host; every other
+  deny rule still applies, and clicks there still ask you first."
+
+### `frame_act_allow`: click/fill/type/select/press inside a listed iframe
+
+```toml
+frame_act_allow = ["https://asdescribed.truefrontier.app"]
+```
+
+- Exact `https://` origins, no wildcards, no paths. Popup wording: "Let agents act inside
+  asdescribed.truefrontier.app frames on act-shared tabs (tabs you set to Act yourself). Clicks and typing there get
+  the same checks as the page itself: risky ones still ask you first."
+- A frame ref (`f5:e3` from `read --elements` / `find`, or a `--find` pick) is acted on only when **all** hold:
+  the top tab is Share-act'd by Kevin or inherits his Act share (`tabKind act`; never bot-opened tabs); the frame's
+  origin is exactly listed and not denied; chromecli has Chrome host access to that origin. Access is only requested
+  through the popup (Accept on the pending change, or setting the tab to Act), never silently. Missing access: exit 4
+  `permission_needed`. Otherwise `bad_target` `frame_ref` (`frameReason: "denied"` for a listed but denied origin;
+  `tabKind` for a non-act tab); an entry still pending: exit 4 `policy_pending`.
+- Listed frames on act tabs are also readable (even cross-site), so their refs show up in `read` / `find`.
+- Same gates as the top frame on act tabs: heuristics, Jev (safe needs ≥ 0.7; Jev sees the frame's origin as the
+  page), the confirm window (it shows "Inside frame ORIGIN (frame N)"), `--confirm`. After Allow the frame is checked
+  again. Results carry `frameId` and `frameOrigin`; the host log `frame=N frame_origin=ORIGIN`.
+- **Grants for frame targets**: `grant add ... --frame-origin https://asdescribed.truefrontier.app` (page ops only).
+  Such a grant matches only that element inside a frame from that origin; a grant without `--frame-origin` never
+  covers a frame. Jev's scope check sees `insideEmbeddedFrameFrom`, so the quote must cover the embedded app.
+  **Batch path**: when Kevin says, e.g., "approved to click Scan, Review fixes, Apply and Undo in As Described on the
+  as-described-review store", add one grant per button (each with that quote and `--frame-origin`), with `--uses N`
+  where a button is pressed N times. There is no other bypass.
+
 ## Config
 
 ```toml
@@ -394,6 +449,8 @@ confirm_timeout = 60      # seconds for the in-browser confirm (10-600)
 read_allow = []           # bot-opened tabs here are auto Share-read; open/navigate here isn't browser-confirmed
 act_allow  = []           # bot-opened tabs here are auto Share-act;  open/navigate here isn't browser-confirmed
 deny = [ ...defaults... ] # replaces the default list; the built-in deny always applies
+deny_except = []          # 0.11.3: https://host/seg/*/path patterns let through a path deny (see above)
+frame_act_allow = []      # 0.11.3: exact https origins whose iframes can be acted in on act-shared tabs
 ```
 
 Patterns: `host`, `*.host` (includes the bare host), `scheme://host[:port]`, `host/path` (path prefix),

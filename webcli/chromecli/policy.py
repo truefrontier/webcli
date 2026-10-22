@@ -13,8 +13,20 @@ Built-in deny, which config can't remove: every scheme other than http and https
 file://, devtools://, view-source:, about:, data:, ...), the Chrome Web Store (chromewebstore.google.com,
 chrome.google.com/webstore).
 
-Loosening (adding to read_allow / act_allow, removing a default or previous deny, implicit_active off -> read, history
-false -> true) is held as "pending" by the extension until Kevin clicks Accept in its popup; tightening applies at once.
+Deny exceptions (0.11.3, `deny_except`): `https://exact.host/path/glob`, e.g.
+"https://admin.shopify.com/store/*/oauth/install". https only, an exact host (no wildcard, no port), a path of one or
+more non-empty segments with at least one literal segment, `*` matching within one segment, no query or fragment (the
+URL's query is ignored when matching). The Chrome Web Store can't be excepted, and the built-in deny is checked first.
+A URL matching an exception isn't denied when every deny rule that hits it is a path deny (`path:/x`, `host/path`);
+host and origin denies (banks, sign-in, password managers) always win. Gating is unchanged.
+
+Frame acting (0.11.3, `frame_act_allow`): exact https origins (no wildcard, path or port), e.g.
+"https://asdescribed.truefrontier.app". On a tab Kevin shared Act, iframes from these origins (not denied, with host
+access granted) can be read and acted in, under the same gates as the top frame. The Chrome Web Store can't be listed.
+
+Loosening (adding to read_allow / act_allow, removing a default or previous deny, adding a deny exception or a
+frame_act_allow origin,
+implicit_active off -> read, history false -> true) is held as "pending" by the extension until Kevin clicks Accept in its popup; tightening applies at once.
 """
 
 from __future__ import annotations
@@ -43,6 +55,8 @@ DEFAULTS: dict[str, Any] = {
     "read_allow": [],
     "act_allow": [],
     "deny": list(DEFAULT_DENY),
+    "deny_except": [],
+    "frame_act_allow": [],
 }
 KEYS = tuple(DEFAULTS)
 
@@ -122,15 +136,126 @@ def builtin_denied(url: str) -> str | None:
     return None
 
 
+_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+_EXCEPT_RE = re.compile(rf"^https://({_LABEL}(?:\.{_LABEL})*)((?:/[^/\s?#]*)+)$")
+_SEGMENT_RE = re.compile(r"^[a-z0-9._~%@:+,=!$&'()*-]+$")
+_EXCUSABLE = ("path", "host_path")
+
+
+def _glob(seg: str) -> re.Pattern:
+    return re.compile("^" + "[^/]*".join(re.escape(x) for x in seg.split("*")) + "$")
+
+
+def except_error(pattern: Any) -> str | None:
+    """Why `pattern` isn't a valid deny exception (a short reason), or None when it is. Mirrors policy.js."""
+    if not isinstance(pattern, str):
+        return "not a string"
+    p = pattern.strip().lower()
+    if not p.startswith("https://"):
+        return "must start with https:// (no other scheme)"
+    if "?" in p or "#" in p:
+        return "no query or fragment (queries are ignored when matching)"
+    host = p[8:].split("/")[0]
+    if "*" in host:
+        return "the host must be exact (no wildcard)"
+    if ":" in host:
+        return "no port (https on 443 only)"
+    if "@" in host:
+        return "no user info"
+    m = _EXCEPT_RE.match(p)
+    if not m:
+        return "not a valid https URL pattern" if "/" in p[8:] else "a path is required (whole origins can't be excepted)"
+    segs = m.group(2).split("/")[1:]
+    if any(g == "" for g in segs):
+        return "empty path segment (no trailing or double slash)"
+    if not all(_SEGMENT_RE.match(g) for g in segs):
+        return "path segments take letters, digits, - . _ ~ % and * only"
+    if any(g in (".", "..") for g in segs):
+        return "no . or .. segments"
+    if any("**" in g for g in segs):
+        return "** isn't supported (* matches within one segment)"
+    if all("*" in g for g in segs):
+        return "needs at least one literal path segment (too close to a whole origin)"
+    for b in BUILTIN_DENY_HOSTS:
+        bhost, _, bpath = b.partition("/")
+        if bhost == m.group(1) and (not bpath or _glob(segs[0]).match(bpath)):
+            return "can't except a built-in deny (Chrome Web Store)"
+    return None
+
+
+_FRAME_ORIGIN_RE = re.compile(rf"^https://({_LABEL}(?:\.{_LABEL})*)$")
+
+
+def frame_origin_error(origin: Any) -> str | None:
+    """Why `origin` can't be a frame_act_allow entry, or None. Mirrors policy.js frameOriginError."""
+    if not isinstance(origin, str):
+        return "not a string"
+    p = origin.strip().lower()
+    if not p.startswith("https://"):
+        return "must be an https:// origin"
+    rest = p[8:]
+    if "*" in rest:
+        return "no wildcards (an exact origin)"
+    if "/" in rest:
+        return "an origin only (no path, no trailing slash)"
+    if any(c in rest for c in ":@?#"):
+        return "no port, user info, query or fragment"
+    m = _FRAME_ORIGIN_RE.match(p)
+    if not m:
+        return "not a valid https origin"
+    if any(b.split("/")[0] == m.group(1) for b in BUILTIN_DENY_HOSTS):
+        return "can't be the Chrome Web Store"
+    return None
+
+
+def except_matches(pattern: str, url: str) -> bool:
+    """Whether `url` falls under deny exception `pattern`: https, exact host, default port, the same number of path
+    segments, each matching its glob. Query, fragment and one trailing / are ignored."""
+    if except_error(pattern) is not None:
+        return False
+    m = _EXCEPT_RE.match(pattern.strip().lower())
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme.lower() != "https" or port is not None or parts.username or parts.password:
+        return False
+    if (parts.hostname or "").lower() != m.group(1):
+        return False
+    path = (parts.path or "/").lower()
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+    have = path.split("/")[1:]
+    want = m.group(2).split("/")[1:]
+    if len(have) != len(want) or any(g == "" for g in have):
+        return False
+    return all(_glob(w).match(h) for w, h in zip(want, have))
+
+
+def _deny_hits(url: str, policy: dict) -> list[str]:
+    return [pat for pat in policy.get("deny", ()) if matches(pat, url)]
+
+
+def deny_exception(url: str, policy: dict) -> str | None:
+    """The deny exception that lets `url` through a configured (path) deny, or None."""
+    if builtin_denied(url):
+        return None
+    hits = _deny_hits(url, policy)
+    if not hits or not all(pattern_kind(h) in _EXCUSABLE for h in hits):
+        return None
+    return next((e for e in policy.get("deny_except", ()) if except_matches(e, url)), None)
+
+
 def denied(url: str, policy: dict) -> str | None:
-    """Why `url` is denied under `policy` (built-in first, then its deny list), or None."""
+    """Why `url` is denied under `policy` (built-in first, then its deny list less deny_except), or None."""
     reason = builtin_denied(url)
     if reason:
         return reason
-    for pat in policy.get("deny", ()):
-        if matches(pat, url):
-            return f"deny: {pat}"
-    return None
+    hits = _deny_hits(url, policy)
+    if not hits or deny_exception(url, policy):
+        return None
+    return f"deny: {next((h for h in hits if pattern_kind(h) not in _EXCUSABLE), hits[0])}"
 
 
 def origin_of(url: str) -> str | None:
@@ -178,9 +303,37 @@ def _strings(section: dict, key: str, *, allow_paths: bool) -> list[str]:
     return out
 
 
+def _excepts(section: dict) -> list[str]:
+    value = section["deny_except"]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(f"[{CONFIG_SECTION}] deny_except must be a list of strings.", hint=_hint())
+    out = []
+    for v in value:
+        why = except_error(v)
+        if why:
+            raise ConfigError(f"[{CONFIG_SECTION}] deny_except: {v!r}: {why}.", hint=_hint())
+        if v.strip().lower() not in out:
+            out.append(v.strip().lower())
+    return out
+
+
+def _frame_origins(section: dict) -> list[str]:
+    value = section["frame_act_allow"]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(f"[{CONFIG_SECTION}] frame_act_allow must be a list of strings.", hint=_hint())
+    out = []
+    for v in value:
+        why = frame_origin_error(v)
+        if why:
+            raise ConfigError(f"[{CONFIG_SECTION}] frame_act_allow: {v!r}: {why}.", hint=_hint())
+        if v.strip().lower() not in out:
+            out.append(v.strip().lower())
+    return out
+
+
 def _hint() -> str:
     return (f"Fix [{CONFIG_SECTION}] in ~/.webcli/config.toml (keys: {', '.join(KEYS)}; patterns: host, *.host, "
-            "scheme://host[:port], host/path, path:/prefix).")
+            "scheme://host[:port], host/path, path:/prefix; deny_except: https://exact.host/path/with/*/segments; frame_act_allow: https://exact.host).")
 
 
 def parse(section: Any) -> dict:
@@ -204,6 +357,8 @@ def parse(section: Any) -> dict:
     merged["read_allow"] = _strings(merged, "read_allow", allow_paths=False)
     merged["act_allow"] = _strings(merged, "act_allow", allow_paths=False)
     merged["deny"] = _strings(merged, "deny", allow_paths=True)
+    merged["deny_except"] = _excepts(merged)
+    merged["frame_act_allow"] = _frame_origins(merged)
     return _finish(merged)
 
 
@@ -220,6 +375,10 @@ def loosening(old: dict, new: dict) -> list[dict]:
     for key in ("read_allow", "act_allow"):
         out += [{"kind": f"{key}_added", "value": v} for v in new[key] if v not in old[key]]
     out += [{"kind": "deny_removed", "value": v} for v in old["deny"] if v not in new["deny"]]
+    old_ex = old.get("deny_except", [])
+    out += [{"kind": "deny_except_added", "value": v} for v in new.get("deny_except", []) if v not in old_ex]
+    old_fa = old.get("frame_act_allow", [])
+    out += [{"kind": "frame_act_allow_added", "value": v} for v in new.get("frame_act_allow", []) if v not in old_fa]
     if old["implicit_active"] == "off" and new["implicit_active"] == "read":
         out.append({"kind": "implicit_active", "value": "read"})
     if not old["history"] and new["history"]:
@@ -236,5 +395,7 @@ def tighten(old: dict, new: dict) -> dict:
         "read_allow": [v for v in new["read_allow"] if v in old["read_allow"]],
         "act_allow": [v for v in new["act_allow"] if v in old["act_allow"]],
         "deny": [*new["deny"], *[v for v in old["deny"] if v not in new["deny"]]],
+        "deny_except": [v for v in new.get("deny_except", []) if v in old.get("deny_except", [])],
+        "frame_act_allow": [v for v in new.get("frame_act_allow", []) if v in old.get("frame_act_allow", [])],
     }
     return _finish(merged)

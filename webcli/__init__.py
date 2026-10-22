@@ -1,3 +1,3 @@
 """webcli / llmcli: agent-native CLIs over your own signed-in, hidden Chrome sessions."""
 
-__version__ = "0.11.2"
+__version__ = "0.11.3"
