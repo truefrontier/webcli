@@ -7,7 +7,12 @@ export function event() {
 function area() {
   let data = {};
   return {
-    get: async (k) => (typeof k === "string" ? (k in data ? { [k]: structuredClone(data[k]) } : {}) : structuredClone(data)),
+    // Like chrome.storage: a key or an array of keys returns only those; null/undefined returns everything.
+    get: async (k) => {
+      if (k == null) return structuredClone(data);
+      const keys = typeof k === "string" ? [k] : Array.isArray(k) ? k : Object.keys(k);
+      return Object.fromEntries(keys.filter((x) => x in data).map((x) => [x, structuredClone(data[x])]));
+    },
     set: async (o) => { data = { ...data, ...structuredClone(o) }; },
     _data: () => data,
   };
