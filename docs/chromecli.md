@@ -275,7 +275,7 @@ a tool result, or another agent asked for it.
 - **Shadow DOM.** `read` (text and md), `--elements`, `find`, `--text`, `--selector`, `wait`, and the page actions
   pierce *open* shadow roots; refs work inside them; a selector naming a web-component host (`#save` on
   `<s-button id="save">`) means its single inner control; accessible names use the host's `label` attribute and
-  slotted text. Closed shadow roots and cross-origin iframes stay invisible. Fixture:
+  slotted text. 0.11.1: closed shadow roots too, and same-site iframes (see "Iframes" below). Fixture:
   `tests/fixtures/chromecli/shadow.html` (Polaris-shaped `s-page`/`s-section`/`s-text-field`/`s-select`/`s-button`).
 - **script_error** carries the page-side error (`In-page error: TypeError: ...`); the log line is redacted as usual.
 - **Previews probe.** A page-action preview (no `--confirm`) sends one read-only `page.probe` and adds
@@ -335,6 +335,55 @@ For pages that render as images (`read` returns ~0 chars, e.g. a signNow agreeme
 - Fixture: `tests/fixtures/chromecli/scroll.html` (an inner `#viewer` ~5 viewports tall, a small scroll box, a
   shadow-root pane, and a window that scrolls too).
 
+## Iframes, closed shadow roots, skipped, error reasons (0.11.1)
+
+Pages like signNow put the document somewhere 0.10.2 couldn't look: `read` gave 0 chars, `scroll` picked the
+window (1042/1042, nothing to scroll), and `--container` failed with a bare `script_error`.
+
+- **Which frames.** The extension lists the tab's frames (`webNavigation.getAllFrames`, a new permission that grants
+  no page access) and runs its page script in each frame it may read, with `executeScript({frameIds})`. A frame is
+  read when it is on the tab's origin, or on the **same site** (scheme + registrable domain, e.g. `cdn.signnow.com`
+  in an `app.signnow.com` tab) **and** Chrome already grants chromecli host access to that origin. Never: another
+  site (`other_site`), a denied origin (`denied`), `data:` and other opaque origins (`opaque_origin`), anything
+  inside a skipped frame (`parent_skipped`), a frame that failed to load (`load_error`), more than 30 frames
+  (`too_many_frames`). `about:blank`/`srcdoc`/`blob:` frames count as their creator's origin. Nothing widens access:
+  no new host permission is requested, and a skipped frame gets no script at all. Each frame's URL is re-checked
+  after the call; one that navigated meanwhile is dropped (`frame_unreachable`).
+- **read / --elements.** The top frame's content first, then each frame's after a `[frame N: url WxH]` line (md:
+  `<!-- frame N: url WxH -->`). `frames: [{frameId, origin, url, chars, rect, offset}]` (`offset` is where its text
+  starts in `content`; `url` without query). Subframe elements have refs `f<frameId>:e<n>` and `frame: N`.
+  `maxChars` applies to the merged text. With only the top frame the reply is exactly the 0.10.2 shape.
+- **find / wait.** `find` ranks elements from every readable frame (refs `f5:e3`, `frame: 5`); `wait --selector /
+  --text` holds when any readable frame matches. **Page actions stay in the top frame**: a frame ref (or a `--find`
+  pick in a frame) exits 2 `bad_target` with `reason: "frame_ref"`; nothing is dispatched.
+- **scroll / --full-page.** Auto-detect surveys every readable frame: an inner scroller (an element in any frame, or
+  an iframe's own scrolling document) covering ≥ 30% of the tab's viewport beats the top window, largest first; else
+  the window if it scrolls; else the largest inner scroller. The target reply adds `frameId`, `frameOrigin`,
+  `frameUrl`; `--full-page` sends `frameId` with `path` on every later scroll (the host log shows `frame=N`).
+  `--container` / `--into` are searched in every readable frame; `--container` must match exactly one scrollable
+  element (`html`/`body` mean that frame's window).
+- **Closed shadow roots** are read with `chrome.dom.openOrClosedShadowRoot` (extension scripts only): `read`,
+  `--elements` (`closedShadow: true`), `find`, `wait`, `scroll`.
+- **skipped.** `read`, `find`, `scroll` (when nothing scrolls or frames were left out) and `--full-page` list what
+  chromecli couldn't read: `skipped: [{kind: "iframe", frameId, parentFrameId, origin, url, rect {x,y,w,h}, reason,
+  detail?}]`, plus regions `{kind: "canvas" (reason canvas_pixels) | "plugin" (embed/object, plugin_content) |
+  "closed_shadow_host" (closed_shadow_root, only where chrome.dom is missing), frameId, description, rect}`. Rects
+  are in the tab's viewport (CSS px). Iframes the page has but Chrome doesn't list yet: `not_loaded`. `read` text
+  output adds one `[skipped KIND WHERE WxH at X,Y: REASON]` line each. A ~0-char read with a big canvas in
+  `skipped` means the text is drawn as pixels: use `screenshot --full-page`.
+- **Error reasons.** Errors keep their code and exit, add `reason` and the underlying `message`:
+  `no_match` (element_not_found, exit 3; `matches`), `multiple_matches` (ambiguous_target, exit 3; `count`,
+  `candidates [{frameId?, description, scrollHeight, clientHeight}]`), `not_scrollable` (script_error, exit 5;
+  `scrollHeight`, `clientHeight`, `description`), `frame_unreachable` (script_error; the frame is skipped, gone or
+  navigated), `frame_ref` (bad_target), `bad_selector` (bad_target), `target_gone` (element_not_found: a `path` no
+  longer resolves), `page_exception` / `inject_failed` / `no_result` (script_error). Fixed: 0.10.2 dropped a page
+  error's code and message, so `--container` misses showed up as a bare `script_error`.
+- **No debugger.** chromecli still has no `debugger` permission and never uses `chrome.debugger` (CDP would be the
+  only way into cross-site frames or canvas-only text; it isn't used).
+- Fixture: `tests/fixtures/chromecli/frames.html` (a non-scrolling window; `frames-inner.html`, a same-origin viewer
+  iframe whose document scrolls 8 × 1000px and has a canvas; `?other=PORT` adds `frames-other.html` from a second
+  127.0.0.1 port; two small `.dup` scrollers, a non-scrolling `main#flat`, a closed-shadow `x-closed`).
+
 ## Config
 
 ```toml
@@ -370,7 +419,8 @@ pre-approval). jev_error is 5. 2 also covers missing_user_approval (0.10.1).
 ## Test fixtures
 
 `tests/fixtures/chromecli/scroll.html` (inner scroll viewer for `scroll` / `--full-page`), `form.html` (email, password, country select, "Next" link, "Place order" submit that shows
-"submitted", "Delete account" button), `nav.html`, and `shadow.html` (open-shadow web components). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
+"submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), and `frames.html` (0.11.1:
+iframes, a closed shadow root, a canvas). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
 
 ## Not yet

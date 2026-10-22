@@ -11,11 +11,17 @@ export function pageAction(spec) {
   try {
   // Open shadow roots (web components like Shopify Polaris): deep queries, deep parents, deep text.
   const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const shadowOf = (n) => {
+    if (n.shadowRoot) return n.shadowRoot;
+    const d = globalThis.chrome && globalThis.chrome.dom;
+    if (!d || typeof d.openOrClosedShadowRoot !== "function") return null;
+    try { return d.openOrClosedShadowRoot(n) || null; } catch { return null; }
+  };
   const deepAll = (sel) => {
     const out = [];
     const visit = (root) => {
       out.push(...root.querySelectorAll(sel));
-      for (const n of root.querySelectorAll("*")) if (n.shadowRoot) visit(n.shadowRoot);
+      for (const n of root.querySelectorAll("*")) { const r = shadowOf(n); if (r) visit(r); }
     };
     visit(document);
     return out;
@@ -24,7 +30,7 @@ export function pageAction(spec) {
   const byId = (el, id) => (el.getRootNode && el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : null) || document.getElementById(id);
   const deepText = (n) => {
     const t = [n.innerText || ""];
-    const walk = (x) => { if (x.shadowRoot) for (const c of x.shadowRoot.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
+    const walk = (x) => { const sr = shadowOf(x); if (sr) for (const c of sr.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
     walk(n);
     return t.join(" ");
   };
@@ -41,7 +47,8 @@ export function pageAction(spec) {
         if (cs.display === "none" || cs.visibility === "hidden") return;
         if (x.tagName === "SLOT") { const a = x.assignedNodes({ flatten: true }); (a.length ? a : Array.from(x.childNodes)).forEach(walk); return; }
       }
-      for (const c of (x.shadowRoot ? x.shadowRoot.childNodes : x.childNodes)) walk(c);
+      const sr = x.nodeType === 1 ? shadowOf(x) : null;
+      for (const c of (sr ? sr.childNodes : x.childNodes)) walk(c);
     };
     walk(n);
     return out.join(" ");
@@ -303,11 +310,17 @@ export function pageProbe(spec) {
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
   // Open shadow roots (web components like Shopify Polaris): deep queries, deep parents, deep text.
   const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const shadowOf = (n) => {
+    if (n.shadowRoot) return n.shadowRoot;
+    const d = globalThis.chrome && globalThis.chrome.dom;
+    if (!d || typeof d.openOrClosedShadowRoot !== "function") return null;
+    try { return d.openOrClosedShadowRoot(n) || null; } catch { return null; }
+  };
   const deepAll = (sel) => {
     const out = [];
     const visit = (root) => {
       out.push(...root.querySelectorAll(sel));
-      for (const n of root.querySelectorAll("*")) if (n.shadowRoot) visit(n.shadowRoot);
+      for (const n of root.querySelectorAll("*")) { const r = shadowOf(n); if (r) visit(r); }
     };
     visit(document);
     return out;
@@ -316,7 +329,7 @@ export function pageProbe(spec) {
   const byId = (el, id) => (el.getRootNode && el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : null) || document.getElementById(id);
   const deepText = (n) => {
     const t = [n.innerText || ""];
-    const walk = (x) => { if (x.shadowRoot) for (const c of x.shadowRoot.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
+    const walk = (x) => { const sr = shadowOf(x); if (sr) for (const c of sr.children) { t.push(c.innerText || ""); walk(c); } for (const c of x.children || []) walk(c); };
     walk(n);
     return t.join(" ");
   };

@@ -22,10 +22,11 @@ const EXT_ID = "ileggcomhbnofnapippaanhimdhchhci";
 const EXT = `chrome-extension://${EXT_ID}/`;
 let n = 0;
 
-// page(tabId, spec, func) -> the injected function's result (a fake page).
+// page(tabId, spec, func, frameId) -> the injected function's result (a fake page). h.frames: tabId -> the
+// webNavigation.getAllFrames rows (default: the top frame only); h.frameThrows: frameIds whose injection throws.
 export async function loadBackground({ page } = {}) {
   const h = { posted: [], granted: new Set(), windowsCreated: [], windowsRemoved: [], tabsCreated: [], tabsRemoved: [],
-    tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })) };
+    tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })), frames: new Map(), frameThrows: new Map() };
   globalThis.__chromecliOpenWaitMs = 40;
   globalThis.__chromecliCaptureGapMs = 0;
   h.port = { onMessage: event(), onDisconnect: event(), postMessage: (m) => h.posted.push(structuredClone(m)) };
@@ -76,9 +77,15 @@ export async function loadBackground({ page } = {}) {
     permissions: { contains: async ({ origins }) => origins.every((o) => h.granted.has(o)) },
     scripting: {
       executeScript: async ({ target, func, args, world }) => {
-        h.injected.push({ tabId: target.tabId, name: func.name, spec: structuredClone(args?.[0]), world });
-        return [{ result: await h.page(target.tabId, args?.[0], func.name) }];
+        const frameId = target.frameIds ? target.frameIds[0] : 0;
+        h.injected.push({ tabId: target.tabId, name: func.name, spec: structuredClone(args?.[0]), world, frameId });
+        if (h.frameThrows.has(frameId)) throw new Error(h.frameThrows.get(frameId));
+        return [{ frameId, result: await h.page(target.tabId, args?.[0], func.name, frameId) }];
       },
+    },
+    webNavigation: {
+      getAllFrames: async ({ tabId }) => structuredClone(h.frames.get(tabId)
+        || [{ frameId: 0, parentFrameId: -1, url: h.tabs.get(tabId)?.url || "", errorOccurred: false }]),
     },
     history: { search: async () => [] },
     action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {}, setTitle: async () => {} },

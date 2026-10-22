@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>chromecli fixture: frames (viewer)</title>
+<style>
+  /* The viewer's own document scrolls (8 pages of 1000px); page 1 has a canvas the text can't be read from. */
+  body { margin: 0; font: 14px sans-serif; }
+  .page { height: 1000px; border-bottom: 2px solid #999; box-sizing: border-box; padding: 16px; }
+  canvas { display: block; width: 600px; height: 400px; background: #fafafa; }
+</style>
+</head>
+<body>
+<div class="page" id="page-1"><h2>Page 1 of 8</h2><p>Mutual NDA between the parties.</p><canvas id="sig" width="600" height="400"></canvas></div>
+<div class="page" id="page-2"><h2>Page 2 of 8</h2><button type="button" id="next">Next page</button></div>
+<div class="page" id="page-3"><h2>Page 3 of 8</h2></div>
+<div class="page" id="page-4"><h2>Page 4 of 8</h2></div>
+<div class="page" id="page-5"><h2>Page 5 of 8</h2></div>
+<div class="page" id="page-6"><h2>Page 6 of 8</h2></div>
+<div class="page" id="page-7"><h2>Page 7 of 8</h2></div>
+<div class="page" id="page-8"><h2>Page 8 of 8</h2><p>Signature block.</p></div>
+</body>
+</html>

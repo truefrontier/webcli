@@ -16,6 +16,7 @@ import {
 } from "./jev.js";
 import { badgeFor, levelAllows, revokeReason } from "./shares.js";
 import { extractPage } from "./page/extract.js";
+import { classifyFrames, frameGeometry, frameOrigin, mergeRead, parseFrameRef, pickScrollTarget, shortUrl, skippedList } from "./frames.js";
 import {
   GrantError, PAGE_GRANT_OPS, amountCheck, canSkip, fmtAmount, grantMatches, grantView, isLive, parseScope, scopeBody,
   validateGrant,
@@ -41,6 +42,9 @@ let hostStatus = { connected: false, lastError: null, since: null };
 
 class OpError extends Error {
   constructor(code, message, extra = {}) { super(message); this.code = code; this.extra = extra; }
+}
+function dropUndefined(o) {
+  return Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => v !== undefined && k !== "code" && k !== "message" && k !== "ok"));
 }
 
 // ---- serialized storage access
@@ -158,7 +162,9 @@ async function handleRequest(req) {
     origin = result?.origin || null;
     reply = { v: 1, id: req.id, ok: true, result };
   } catch (e) {
-    const err = e instanceof OpError ? { code: e.code, message: e.message, ...e.extra }
+    // The code and message always win over same-named extra fields (0.10.2 let a page reply's undefined code and
+    // message through, so agents saw a bare script_error).
+    const err = e instanceof OpError ? { ...dropUndefined(e.extra), code: e.code, message: e.message }
       : { code: "script_error", message: String(e?.message || e) };
     origin = err.origin || null;
     reply = { v: 1, id: req.id, ok: false, error: err };
@@ -389,24 +395,97 @@ async function readTab(args) {
   }
   const opts = { as: args.as === "md" ? "md" : "text", maxChars: Math.min(Math.max(1, Number(args.maxChars) || 200000), 5000000),
     elements: !!args.elements };
-  let res;
-  try {
-    [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func: extractPage, args: [opts] });
-  } catch (e) {
-    const m = String(e?.message || e);
-    if (/permission|cannot access|must request/i.test(m)) throw new OpError("permission_needed", m, { tab: tab.id, origin });
-    throw new OpError("script_error", m, { tab: tab.id, origin });
-  }
-  const out = res?.result;
-  if (!out) throw new OpError("script_error", noResultMessage(res), { tab: tab.id, origin });
-  if (out.ok === false) throw new OpError(out.code || "script_error", out.message || "The page script failed.", { tab: tab.id, origin });
+  // 0.11.1: every frame the share covers (see frames.js), each read on its own, merged with a frame tag.
+  const fr = await tabFrames(tab, origin);
+  const runs = await injectFrames(tab, origin, fr.allowed, extractPage, opts);
+  const top = runs.find((r) => r.frameId === 0);
+  if (top.error) throw top.error;
+  const out = top.result;
   // The page may have navigated while we read: re-check before handing anything back.
   const st = await getPolicyState();
   if (originOf(out.url) !== origin || denied(out.url, st.active)) {
     await revoke(tab.id, "origin changed during read");
     throw new OpError("not_shared", `Tab ${tab.id} navigated away during the read.`, { tab: tab.id });
   }
-  return { tab: tab.id, origin, share: level, ...out };
+  const { parts, failed, reports } = frameRuns(runs, fr);
+  const { geo, unmatched } = frameGeometry(reports, fr.rows);
+  const merged = mergeRead(parts, { as: opts.as, maxChars: opts.maxChars, geo });
+  const skipped = skippedList({ frameSkips: fr.skipped, failed, unmatched, reports, geo });
+  const { diag, content, chars, truncated, elements, ...rest } = out;
+  return { tab: tab.id, origin, share: level, ...rest, content: merged.content, chars: merged.chars, truncated: merged.truncated,
+    ...(merged.elements ? { elements: merged.elements } : {}),
+    ...(fr.allowed.length > 1 || fr.skipped.length ? { frames: merged.frames } : {}),
+    ...(skipped.length ? { skipped } : {}) };
+}
+
+// ---- frames (0.11.1)
+// The tab's frames an op may read and the ones it skips (frames.js has the rule). Without webNavigation (or when
+// Chrome lists nothing) it's the top frame only, as before 0.11.1.
+async function tabFrames(tab, origin) {
+  const topOnly = { allowed: [{ frameId: 0, parentFrameId: -1, url: tab.url || "", origin, depth: 0 }], skipped: [],
+    rows: [{ frameId: 0, parentFrameId: -1, url: tab.url || "" }], listed: false };
+  if (!chrome.webNavigation?.getAllFrames) return topOnly;
+  let rows;
+  try { rows = await chrome.webNavigation.getAllFrames({ tabId: tab.id }); } catch { return topOnly; }
+  if (!Array.isArray(rows) || !rows.some((f) => f.frameId === 0)) return topOnly;
+  const st = await getPolicyState();
+  const { allowed, skipped } = await classifyFrames(rows, { tabOrigin: origin, policy: st.active, hasPermission: hasHostPermission });
+  return { allowed, skipped, rows, listed: true };
+}
+
+// One injection into one frame: {frameId, origin, url, result} or {frameId, origin, error: OpError} (reason set).
+async function injectOne(tab, origin, frame, func, spec) {
+  const where = { tab: tab.id, origin, ...(frame.frameId ? { frameId: frame.frameId, frameOrigin: frame.origin } : {}) };
+  let res;
+  try {
+    [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [frame.frameId] }, world: "ISOLATED", func, args: [spec] });
+  } catch (e) {
+    const m = String(e?.message || e);
+    if (/permission|cannot access|must request/i.test(m)) {
+      return { ...frame, error: new OpError(frame.frameId ? "script_error" : "permission_needed", m,
+        { ...where, reason: frame.frameId ? "frame_unreachable" : "no_host_permission" }) };
+    }
+    return { ...frame, error: new OpError("script_error", m, { ...where, reason: frame.frameId ? "frame_unreachable" : "inject_failed" }) };
+  }
+  const out = res?.result;
+  if (!out) return { ...frame, error: new OpError("script_error", noResultMessage(res), { ...where, reason: frame.frameId ? "frame_unreachable" : "no_result" }) };
+  if (out.ok === false) {
+    const { ok, code, message, diag, ...extra } = out;
+    return { ...frame, error: new OpError(code || "script_error", message || "The page script failed.", { ...where, reason: "page_exception", ...extra }), diag };
+  }
+  // A subframe that navigated elsewhere since we listed it is dropped.
+  if (frame.frameId && frameOrigin(out.url, frame.origin) !== frame.origin) {
+    return { ...frame, error: new OpError("script_error", "The frame navigated during the call.", { ...where, reason: "frame_unreachable" }) };
+  }
+  return { ...frame, result: out };
+}
+
+const injectFrames = (tab, origin, frames, func, spec) => Promise.all(frames.map((f) => injectOne(tab, origin, f, func, spec)));
+
+// Split per-frame runs into results (in frame order), failures (as skipped rows), and each frame's page diag.
+function frameRuns(runs, fr) {
+  const parts = [];
+  const failed = [];
+  const reports = new Map();
+  for (const r of runs) {
+    const diag = r.result?.diag || r.diag;
+    if (diag) reports.set(r.frameId, diag);
+    if (r.error) {
+      if (r.frameId !== 0) {
+        failed.push({ kind: "iframe", frameId: r.frameId, parentFrameId: r.parentFrameId, origin: r.origin, url: shortUrl(r.url),
+          reason: "frame_unreachable", detail: String(r.error.message || "").slice(0, 200) });
+      }
+      continue;
+    }
+    parts.push(r);
+  }
+  return { parts, failed, reports };
+}
+
+function frameError(frameId, fr) {
+  const sk = fr.skipped.find((s) => s.frameId === frameId);
+  return new OpError("script_error", sk ? `Frame ${frameId} is skipped (${sk.reason}).` : `No frame ${frameId} in this tab (it navigated or closed); start again.`,
+    { reason: "frame_unreachable", frameId, ...(sk ? { skipped: [sk] } : {}) });
 }
 
 async function screenshot(args) {
@@ -491,6 +570,9 @@ function scrollSpec(args) {
     if (!ok) throw new OpError("bad_request", "path must be \"document\" or the target.path of an earlier scroll reply.");
     spec.path = args.path;
   }
+  if (args.frameId != null && !(Number.isInteger(args.frameId) && args.frameId >= 0)) {
+    throw new OpError("bad_request", "frameId must be the target.frameId of an earlier scroll reply.");
+  }
   if (args.overlap != null) spec.overlap = Math.min(Math.max(0, Number(args.overlap) || 0), 400);
   spec.settleMs = Math.min(Math.max(0, Number(args.settleMs) || 0), 3000);
   return spec;
@@ -504,14 +586,99 @@ async function pageScrollOp(args) {
   if (!(await hasHostPermission(origin))) {
     throw new OpError("permission_needed", `chromecli has no host access to ${origin}.`, { tab: tab.id, origin });
   }
-  const out = await inject(tab, origin, pageScroll, spec);
+  // 0.11.1: the target can be in any frame the share covers. One frame: one call, as before. Several: survey them
+  // (auto), or find the --container / --into match, then scroll in that frame only.
+  const fr = await tabFrames(tab, origin);
+  const where = { tab: tab.id, origin };
+  let frame = fr.allowed[0];
+  let run = spec;
+  let auto = false;
+  let surveyed = null;
+  if (args.frameId != null && args.frameId !== 0) {
+    frame = fr.allowed.find((f) => f.frameId === args.frameId);
+    if (!frame) { const e = frameError(args.frameId, fr); e.extra = { ...where, ...e.extra }; throw e; }
+  } else if (fr.allowed.length > 1 && spec.path == null) {
+    if (spec.container) {
+      const runs = await injectFrames(tab, origin, fr.allowed, pageScroll, { locate: spec.container });
+      surveyed = runs;
+      const top = runs.find((r) => r.frameId === 0);
+      if (top.error && top.error.code === "bad_target") throw top.error;
+      const ok = runs.filter((r) => r.result);
+      const matches = ok.reduce((n, r) => n + (r.result.matches || 0), 0);
+      const scroll = ok.flatMap((r) => (r.result.scrollable || []).map((c) => ({ ...c, frameId: r.frameId, frame: r })));
+      const extra = () => ({ ...where, skipped: skipsFrom(runs, fr) });
+      if (!matches) throw new OpError("element_not_found", "No element matches --container in any frame chromecli can read.", { ...extra(), reason: "no_match", matches: 0 });
+      if (scroll.length > 1) {
+        throw new OpError("ambiguous_target", `--container matches ${scroll.length} scrollable elements; give a narrower selector.`,
+          { ...where, reason: "multiple_matches", count: scroll.length, matches,
+            candidates: scroll.slice(0, 5).map((c) => ({ frameId: c.frameId, description: c.description, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight })) });
+      }
+      if (!scroll.length) {
+        const f = ok.find((r) => r.result.first)?.result.first;
+        if (!ok.some((r) => r.result.shown)) {
+          throw new OpError("element_not_found", `--container matches ${matches} element(s), none visible.`, { ...extra(), reason: "no_match", matches, shown: 0 });
+        }
+        throw new OpError("script_error", `--container matched ${f?.description || "an element"}, which doesn't scroll (scrollHeight ${f?.scrollHeight}, clientHeight ${f?.clientHeight}).`,
+          { ...extra(), reason: "not_scrollable", matches, scrollHeight: f?.scrollHeight ?? null, clientHeight: f?.clientHeight ?? null, description: f?.description || null });
+      }
+      frame = scroll[0].frame;
+      run = { ...spec, container: undefined, path: scroll[0].path };
+      delete run.container;
+    } else if (spec.into) {
+      const runs = await injectFrames(tab, origin, fr.allowed, pageScroll, { locateInto: spec.into });
+      const top = runs.find((r) => r.frameId === 0);
+      if (top.error && top.error.code === "bad_target") throw top.error;
+      const hit = runs.find((r) => r.result?.shown) || runs.find((r) => r.result?.matches);
+      if (!hit) throw new OpError("element_not_found", "No element matches --into in any frame chromecli can read.", { ...where, reason: "no_match", matches: 0, skipped: skipsFrom(runs, fr) });
+      frame = hit;
+    } else {
+      const runs = await injectFrames(tab, origin, fr.allowed, pageScroll, { survey: true });
+      surveyed = runs;
+      const top = runs.find((r) => r.frameId === 0);
+      if (top.error) throw top.error;
+      const surveys = new Map(runs.filter((r) => r.result).map((r) => [r.frameId, r.result]));
+      const reports = new Map(runs.filter((r) => r.result?.diag).map((r) => [r.frameId, r.result.diag]));
+      const pick = pickScrollTarget(surveys, frameGeometry(reports, fr.rows).geo);
+      frame = fr.allowed.find((f) => f.frameId === pick.frameId) || fr.allowed[0];
+      run = { ...spec, path: pick.path };
+      auto = true;
+    }
+  }
+  const r = await injectOne(tab, origin, frame, pageScroll, run);
+  if (r.error) {
+    if (r.diag || surveyed) r.error.extra = { ...r.error.extra, skipped: skipsFrom(surveyed || [r], fr, r.diag ? new Map([[r.frameId, r.diag]]) : null) };
+    throw r.error;
+  }
+  const out = r.result;
   const st = await getPolicyState();
-  if (originOf(out.url) !== origin || denied(out.url, st.active)) {
+  const topUrl = frame.frameId === 0 ? out.url : (await chrome.tabs.get(tab.id).catch(() => ({ url: "" }))).url;
+  if (originOf(topUrl) !== origin || denied(topUrl, st.active)) {
     await revoke(tab.id, "origin changed during scroll");
     throw new OpError("not_shared", `Tab ${tab.id} navigated away during the scroll.`, { tab: tab.id });
   }
-  const { ok, ...rest } = out;
-  return { tab: tab.id, origin, share: level, op: "scroll", ...rest };
+  const { ok, diag, scrolls, ...rest } = out;
+  const target = { ...rest.target, auto: auto || !!rest.target?.auto };
+  if (frame.frameId !== 0) {
+    target.frameId = frame.frameId;
+    target.frameOrigin = frame.origin;
+    target.frameUrl = shortUrl(frame.url);
+    target.description = `${target.description} in iframe ${shortUrl(frame.url)}`.slice(0, 240);
+  }
+  const reply = { tab: tab.id, origin, share: level, op: "scroll", ...rest, target };
+  if (frame.frameId !== 0) { reply.url = tab.url; reply.title = tab.title || rest.title; reply.frameUrl = shortUrl(out.url); }
+  // Nothing scrolls, or frames were left out: say what chromecli couldn't look into.
+  const skipped = skipsFrom(surveyed || [{ ...frame, result: out }], fr);
+  if (skipped.length && (!scrolls || fr.skipped.length)) reply.skipped = skipped;
+  if (!scrolls) reply.scrollable = false;
+  return reply;
+}
+
+// The skipped list from per-frame page runs (each run's diag) and the frames the share left out.
+function skipsFrom(runs, fr, extraReports = null) {
+  const { failed, reports } = frameRuns(runs, fr);
+  if (extraReports) for (const [k, v] of extraReports) reports.set(k, v);
+  const { geo, unmatched } = frameGeometry(reports, fr.rows);
+  return skippedList({ frameSkips: fr.skipped, failed, unmatched, reports, geo });
 }
 
 async function historySearch(args) {
@@ -780,7 +947,19 @@ function normTarget(t, optional) {
   if (given.length === 0 && optional) return null;
   if (given.length !== 1) throw new OpError("bad_target", "Give exactly one target: selector, ref, text (+ role), or find.");
   const k = given[0];
+  if (k === "ref") topFrameRef(String(tt.ref));
   return k === "text" ? { text: String(tt.text), ...(tt.role ? { role: String(tt.role) } : {}) } : { [k]: String(tt[k]) };
+}
+
+// Page actions stay in the top frame (0.11.1 reads frames, it doesn't act in them): a frame ref ("f12:e3", from
+// read --elements or find) is refused.
+function topFrameRef(ref) {
+  const f = parseFrameRef(ref);
+  if (f && f.frameId !== 0) {
+    throw new OpError("bad_target", `${ref} is in iframe ${f.frameId}; chromecli reads iframes but only acts in the top frame.`,
+      { reason: "frame_ref", frameId: f.frameId, ref });
+  }
+  return ref;
 }
 
 async function pagePre(args, need = "act") {
@@ -808,16 +987,20 @@ async function inject(tab, origin, func, spec, { afterDispatch = false } = {}) {
     [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func, args: [spec] });
   } catch (e) {
     const m = String(e?.message || e);
-    if (/permission|cannot access|must request/i.test(m)) throw new OpError("permission_needed", m, { tab: tab.id, origin });
+    if (/permission|cannot access|must request/i.test(m)) throw new OpError("permission_needed", m, { tab: tab.id, origin, reason: "no_host_permission" });
     if (afterDispatch) return { ok: true, dispatched: true, lost: m };
-    throw new OpError("script_error", m, { tab: tab.id, origin });
+    throw new OpError("script_error", m, { tab: tab.id, origin, reason: "inject_failed" });
   }
   const out = res?.result;
   if (!out) {
     if (afterDispatch) return { ok: true, dispatched: true, lost: "no result" };
-    throw new OpError("script_error", noResultMessage(res), { tab: tab.id, origin });
+    throw new OpError("script_error", noResultMessage(res), { tab: tab.id, origin, reason: "no_result" });
   }
-  if (!out.ok) throw new OpError(out.code || "script_error", out.message || "Page action failed.", { tab: tab.id, origin, ...out, ok: undefined, code: undefined, message: undefined });
+  if (!out.ok) {
+    // 0.10.2 spread the reply with code/message set to undefined, which wiped them from the error (a bare script_error).
+    const { ok, code, message, diag, ...extra } = out;
+    throw new OpError(code || "script_error", message || "Page action failed.", { tab: tab.id, origin, ...extra });
+  }
   return out;
 }
 
@@ -844,6 +1027,7 @@ async function pageOp(op, args, req) {
       throw new OpError("ambiguous_target", `No element clearly matches that description (${r.list[0] ? r.list[0].source : "no candidates"}).`,
         { tab: tab.id, origin, candidates: r.list.slice(0, 5), jev });
     }
+    topFrameRef(r.pick);
     found = { ref: r.pick, source: r.list.find((c) => c.ref === r.pick)?.source || "heuristic" };
     target = { ref: r.pick };
   }
@@ -956,11 +1140,28 @@ function classifyElement(el) {
   return out;
 }
 
-const candidateRow = (el, score, source) => ({ ref: el.id, score, source, tag: el.tag, role: el.role || null, name: el.name || "" });
+const candidateRow = (el, score, source) => ({ ref: el.id, score, source, tag: el.tag, role: el.role || null, name: el.name || "",
+  ...(el.frame ? { frame: el.frame } : {}) });
+
+// One snapshot across the frames the share covers (0.11.1): subframe ids become "f<frameId>:e<n>".
+async function snapshotFrames(tab, origin, spec) {
+  const fr = await tabFrames(tab, origin);
+  if (fr.allowed.length === 1) return { ...(await inject(tab, origin, pageSnapshot, spec)), skipped: fr.skipped };
+  const runs = await injectFrames(tab, origin, fr.allowed, pageSnapshot, spec);
+  const top = runs.find((r) => r.frameId === 0);
+  if (top.error) throw top.error;
+  const elements = [];
+  for (const r of runs) {
+    if (!r.result) continue;
+    for (const el of r.result.elements || []) elements.push(r.frameId ? { ...el, id: `f${r.frameId}:${el.id}`, frame: r.frameId } : el);
+  }
+  const failed = frameRuns(runs, fr).failed;
+  return { ...top.result, elements, skipped: [...fr.skipped, ...failed] };
+}
 
 async function locate(tab, origin, intent, j) {
   if (!intent.trim()) throw new OpError("bad_target", "find needs a description (intent).");
-  const snap = await inject(tab, origin, pageSnapshot, { max: 300 });
+  const snap = await snapshotFrames(tab, origin, { max: 300 });
   const ranked = heuristicRank(intent, snap.elements || []);
   let list = ranked.map((r) => candidateRow(r.el, r.score, "heuristic"));
   let pick = heuristicPick(ranked)?.el.id ?? null;
@@ -981,7 +1182,7 @@ async function locate(tab, origin, intent, j) {
       jev = jevFail(j, e, { tab: tab.id, origin });
     }
   }
-  return { list, pick, jev };
+  return { list, pick, jev, skipped: snap.skipped || [] };
 }
 
 async function pageFind(args) {
@@ -990,7 +1191,7 @@ async function pageFind(args) {
   const limit = Math.min(Math.max(1, Number(args.limit) || 5), 50);
   const r = await locate(tab, origin, String(args.intent || ""), j);
   return { tab: tab.id, origin, results: r.list.slice(0, limit), pick: r.pick,
-    jev: { mode: j.mode, ...(j.why ? { reason: j.why } : {}), ...r.jev } };
+    jev: { mode: j.mode, ...(j.why ? { reason: j.why } : {}), ...r.jev }, ...(r.skipped.length ? { skipped: r.skipped } : {}) };
 }
 
 async function jevTest() {
@@ -1018,11 +1219,15 @@ async function pageWait(args) {
     const t = await chrome.tabs.get(tab.id);
     await access(t, "read");
     if (args.urlPrefix) return String(t.url || "").startsWith(String(args.urlPrefix));
-    const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", func: pageProbe, args: [probe] });
-    if (r?.result && r.result.ok === false) { lastErr = r.result; return true; }
-    return !!r?.result?.found;
+    // Any frame the share covers (0.11.1); a bad selector is reported from the top frame.
+    const fr = await tabFrames(t, origin);
+    const runs = await Promise.all(fr.allowed.map((f) => chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [f.frameId] },
+      world: "ISOLATED", func: pageProbe, args: [probe] }).then(([r]) => ({ frameId: f.frameId, r }), () => ({ frameId: f.frameId, r: null }))));
+    const top = runs.find((x) => x.frameId === 0)?.r;
+    if (top?.result && top.result.ok === false) { lastErr = top.result; return true; }
+    return runs.some((x) => x.r?.result?.found);
   }, ms, 250);
-  if (lastErr) throw new OpError(lastErr.code || "bad_target", lastErr.message || "Bad probe.", { tab: tab.id, origin });
+  if (lastErr) throw new OpError(lastErr.code || "bad_target", lastErr.message || "Bad probe.", { tab: tab.id, origin, ...(lastErr.reason ? { reason: lastErr.reason } : {}) });
   if (!ok) throw new OpError("timeout", `Waited ${ms / 1000}s; the condition didn't hold.`, { tab: tab.id, origin });
   return { tab: tab.id, origin, found: true, waitedMs: Date.now() - start };
 }
@@ -1191,6 +1396,7 @@ async function pageProbeOp(args) {
   if (target?.find != null) {
     const r = await locate(tab, origin, String(target.find), { use: false, mode: "off" });
     if (!r.pick) return { ...base, found: false, wouldFail: "ambiguous_target", candidates: r.list.slice(0, 5) };
+    if (parseFrameRef(r.pick)?.frameId) return { ...base, found: false, wouldFail: "bad_target", reason: "frame_ref", candidates: r.list.slice(0, 5) };
     target = { ref: r.pick };
   }
   let d;

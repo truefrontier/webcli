@@ -148,6 +148,8 @@ def _summary(op: str, args: dict) -> str:
         for k in ("into", "container"):
             if args.get(k):
                 parts.append(f"{k}={redact_text(str(args[k]))[:120]}")
+        if isinstance(args.get("frameId"), int) and args["frameId"] > 0:  # 0.11.1
+            parts.append(f"frame={args['frameId']}")
         if args.get("path") is not None:
             parts.append("path=1")
     if op == "tabs.screenshot" and args.get("part"):  # one viewport of `screenshot --full-page`
