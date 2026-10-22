@@ -102,7 +102,7 @@ def test_091_navigate_preview_and_notes(ext):
     plan = json.loads(r.stdout)
     assert plan["browserConfirm"] is True and "same-origin move in a tab Kevin Share-act'd" in plan["note"]
     notes = " ".join(json.loads(run("agent-help", "--format", "json").stdout)["notes"])
-    for w in ("risk floor", "tabKind", "jevInfo", "bot tabs gate more strictly", "same-origin navigate"):
+    for w in ("act-tab safe floor", "tabKind", "jevInfo", "bot tabs gate more strictly", "same-origin navigate"):
         assert w in notes, w
 
 

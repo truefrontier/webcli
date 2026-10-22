@@ -57,11 +57,11 @@
             <input id="floor" type="number" min="0.5" max="0.99" step="0.01" placeholder="0.9">
           </label>
           <label class="field">
-            <span class="field-label">Risk floor</span>
-            <input id="risk-floor" type="number" min="0.5" max="0.95" step="0.01" placeholder="0.7">
+            <span class="field-label">Act-tab safe floor</span>
+            <input id="act-safe-floor" type="number" min="0.5" max="0.95" step="0.01" placeholder="0.7">
           </label>
         </div>
-        <span class="field-hint">Your Share-act tabs ask only if Jev is ≥ risk floor sure a click is risky; agent-opened tabs ask unless it's ≥ confidence floor sure it's safe.</span>
+        <span class="field-hint">Clicks in tabs you Share-act skip Jev's prompt when Jev is ≥ this sure they're safe; agent-opened tabs and find use the confidence floor.</span>
       </div>
       <div class="form-actions">
         <button id="remove" type="button" class="btn-text danger">Remove key</button>
