@@ -74,7 +74,7 @@ NOTES = [
     "elements with Jev (source jev), else heuristics (source heuristic); click/press targets are classified "
     "(safe/submit/purchase/destructive/send_publish/credential/uncertain). In tabs Kevin Share-act'd himself "
     "(result tabKind act) Jev adds a jev:<choice> gate only for purchase/destructive/send_publish/credential at >= the "
-    "risk floor (default 0.6); in bot-opened tabs (tabKind bot, incl. auto-shared via act_allow) anything not "
+    "risk floor (default 0.7); in bot-opened tabs (tabKind bot, incl. auto-shared via act_allow) anything not "
     "confidently safe (>= 0.9) adds one. Result jevInfo shows Jev's answer even when it isn't a gate. Jev only adds "
     "gates, never removes one. --jev auto (default) uses Jev when a key is set; if the call fails: act tabs use "
     "heuristics only, bot tabs gate more strictly (every button and anything in a form asks Kevin); result jev.used "
