@@ -25,6 +25,12 @@ after checking in the page that the open conversation is the resolved one, that 
 text, and that the page has tried no send of its own. It then clicks send. The slot closes after that one send or
 SEND_SECONDS, whichever comes first.
 
+New conversations (`send --new-ok --confirm` alone): a scope made with new_ok also has ONE
+GET_OR_CREATE_CONVERSATION slot, armed by fetch only after the contact picker shows exactly the resolved recipients
+(the row or "Send to" number in 1:1 mode, the chips in group mode), and only for CREATE_SECONDS around the click
+that opens the conversation. Without new_ok (every other command, and `send` without --new-ok) that action stays
+blocked like every other write, so nothing else can ever start a conversation.
+
 Limits: the guard holds the send to one SEND_MESSAGE, opened only for the seconds after the click. It can't check the
 conversation or the text, which are encrypted: fetch.send checks those in the page before the slot opens, and checks
 the thread for the sent text afterwards. Playwright routes only the first URL of a redirect chain.
@@ -44,6 +50,7 @@ from webcli.core.guard import Guard, Policy, describe, host_matches
 from webcli.sites.messages.endpoints import (
     ACTIONS,
     DATA_EVENT,
+    GET_OR_CREATE_CONVERSATION,
     HOSTS,
     MEDIA_HOST,
     MEDIA_PATH,
@@ -67,16 +74,28 @@ _B64 = re.compile(r"[A-Za-z0-9+/_-]*={0,2}")
 @dataclass
 class SendScope:
     """The one send a confirmed `send` may let out. armed_until: a time.monotonic() deadline while armed, else None.
-    sent: the one SEND_MESSAGE went out."""
+    sent: the one SEND_MESSAGE went out. new_ok (`send --new-ok --confirm`): the scope also has one
+    GET_OR_CREATE_CONVERSATION slot, open while create_until is a deadline; created: it went out."""
 
     armed_until: float | None = None
     sent: bool = False
+    new_ok: bool = False
+    create_until: float | None = None
+    created: bool = False
 
     def arm(self, seconds: float) -> None:
         self.armed_until = time.monotonic() + seconds
 
     def disarm(self) -> None:
         self.armed_until = None
+
+    def arm_create(self, seconds: float) -> None:
+        if not self.new_ok:
+            raise RuntimeError("This send scope can't start a conversation (no --new-ok).")
+        self.create_until = time.monotonic() + seconds
+
+    def disarm_create(self) -> None:
+        self.create_until = None
 
 
 def _secure(url: str) -> bool:
@@ -219,6 +238,17 @@ def send_allowed(method: str, url: str, body: bytes | None, scope: SendScope | N
     return True
 
 
+def create_allowed(method: str, url: str, body: bytes | None, scope: SendScope | None) -> bool:
+    """The scope's one GET_OR_CREATE_CONVERSATION, while it is armed (new_ok scopes only). Allowing it spends it."""
+    if (scope is None or not scope.new_ok or scope.created or scope.create_until is None
+            or time.monotonic() > scope.create_until):
+        return False
+    if method.upper() != "POST" or rpc(url) != SEND_RPC or outgoing_action(body) != GET_OR_CREATE_CONVERSATION:
+        return False
+    scope.created, scope.create_until = True, None
+    return True
+
+
 def media_allowed(method: str, url: str) -> bool:
     """The app's attachment download: a GET to exactly https://MEDIA_HOST/MEDIA_PATH, with no query."""
     parts = urlsplit(url)
@@ -229,7 +259,7 @@ def media_allowed(method: str, url: str) -> bool:
 def request_allowed(method: str, url: str, body: bytes | None = None, *, scope: SendScope | None = None,
                     download: bool = False) -> bool:
     return (read_allowed(method, url, body) or (download and media_allowed(method, url))
-            or send_allowed(method, url, body, scope))
+            or send_allowed(method, url, body, scope) or create_allowed(method, url, body, scope))
 
 
 def _body(request: "Request") -> bytes | None:

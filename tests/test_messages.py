@@ -18,9 +18,18 @@ from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
 from webcli.core import browser, daemon, guard
-from webcli.core.errors import AuthRequired, NotFound, UsageError
+from webcli.core.errors import AuthRequired, NotFound, ProfileBusy, UsageError
 from webcli.sites.messages import fetch, guard as mguard, parse
-from webcli.sites.messages.endpoints import ACTIONS, APP_URL, AUTH_PATH, INPUTS, MEDIA_HOST, MEDIA_PATH, SEND_BUTTON
+from webcli.sites.messages.endpoints import (
+    ACTIONS,
+    APP_URL,
+    AUTH_PATH,
+    INPUTS,
+    MEDIA_HOST,
+    MEDIA_PATH,
+    SELECTORS,
+    SEND_BUTTON,
+)
 from webcli.sites.messages.guard import POLICY, SendScope, outgoing_action, request_allowed, send_policy
 
 from conftest import make_profile
@@ -50,6 +59,11 @@ BUBBLES = {"101": [{"sent": False, "text": "Dinner?", "image": False, "aria": ""
 
 
 # --- Relay bodies, built the way Google Messages' web client (and libgm) builds them --------------------------------
+
+def saved_files(where) -> list:
+    """The files a command saved in `where` (the temp WEBCLI_HOME lives there too)."""
+    return [p for p in where.iterdir() if p.name != "home"]
+
 
 def _varint(n: int) -> bytes:
     out = b""
@@ -111,6 +125,10 @@ class Locator:
         return True
 
     async def fill(self, text: str) -> None:
+        if self.kind == "contact":  # the Start chat picker's input: it filters contacts, nothing reaches a chat
+            self.web.typed = text
+            self.web.typed_log.append(text)
+            return
         self.web.fills.append(text)
         self.web.composed = text
         if text:
@@ -135,7 +153,8 @@ class MessagesWeb:
 
     def __init__(self, *, paired: bool = True, use_here: bool = False, rows=None, title=None, loads: bool = True,
                  read_back: str | None = None, click_sends: str = "SEND_MESSAGE", queued: str | None = None,
-                 on_button=None, dies_after_send: bool = False, full_size: bool = True, sticky: bool = False) -> None:
+                 on_button=None, dies_after_send: bool = False, full_size: bool = True, sticky: bool = False,
+                 older=None, contacts=None, groups=None, page_size: int = 2, new_title=None) -> None:
         self.paired, self.use_here, self.loads, self.full_size = paired, use_here, loads, full_size
         self.sticky = sticky  # the lightbox ignores Escape
         self.rows = ROWS if rows is None else rows
@@ -149,11 +168,25 @@ class MessagesWeb:
         self.clicks = self.use_here_clicks = 0
         self.wire: list[tuple[str, bool]] = []
         self.delivered: list[tuple[str, str]] = []
+        # Deeper lookups: `older` rows arrive `page_size` at a time on "Load more"; the Start chat picker filters
+        # `contacts` (raw picker rows: {name, number, continued}) and `groups` ({href, name}) by what is typed.
+        self.older = list(older or [])
+        self.contacts, self.groups, self.page_size = list(contacts or []), list(groups or []), page_size
+        self.picking, self.typed, self.group_mode = False, "", False
+        self.typed_log: list[str] = []
+        self.chips: list[str] = []
+        self.loads_more = 0
+        self.created: list[list[str]] = []
+        self.new_title = new_title  # the title a conversation Start chat opens shows (default: its members)
+        self.titles: dict[str, str] = {}
         self.page = ScriptedPage(answers={
+            "/* messages:picker */": self.picker, "/* messages:click */": self.click_selector,
+            "/* messages:pick */": self.pick,
             "/* messages:state */": self.state, "/* messages:use-here */": self.click_use_here,
             "/* messages:conversations */": lambda _s: list(self.rows), "/* messages:open */": self.open,
             "/* messages:messages */": self.thread_bubbles,
-            "/* messages:header */": lambda _sels: self.title(self.thread) if callable(self.title) else self.title,
+            "/* messages:header */": lambda _sels: self.titles.get(self.thread) or (
+                self.title(self.thread) if callable(self.title) else self.title),
             "/* messages:open-image */": self.open_image, "/* messages:preview */": self.preview,
             "/* messages:lightbox */": self.lightbox, "/* messages:blob */": self.blob})
         self.page.keyboard = SimpleNamespace(press=self.press)
@@ -163,6 +196,15 @@ class MessagesWeb:
 
         async def load(url, **options):
             await goto(url, **options)
+            if url == "about:blank":  # the command leaves the app before it lets the session go
+                self.path, self.picking, self.page.url = "", False, url
+                return
+            if "/web/conversations/" in url and self.path.startswith("/web/conversations"):
+                wanted = url.rsplit("/", 1)[-1]  # a conversation's own link, in the app already
+                if any(parse.thread_id(r["href"]) == wanted for r in [*self.rows, *self.groups]):
+                    self.thread, self.path = wanted, f"/web/conversations/{wanted}"
+                    self.page.url = "https://messages.google.com" + self.path
+                return
             self.path = AUTH_PATH if not self.paired else "/web/conversations"
             if self.paired:
                 # As the live app: it signs in and checks its connection first. Without the sign-in it never shows
@@ -246,9 +288,98 @@ class MessagesWeb:
             self.viewing = None
 
     def locator(self, selector: str) -> Locator:
+        if selector == SELECTORS["contactInput"]:
+            return Locator(self, "contact" if self.picking else None)
         if selector == INPUTS[0]:
             return Locator(self, "compose")
         return Locator(self, "send" if selector == SEND_BUTTON else None)
+
+    # --- Deeper lookups and Start chat ---------------------------------------------------------------------------
+
+    def _blocks(self) -> list[list[dict]]:
+        """The contacts as blocks: a row and the continuation rows (more numbers) under it."""
+        blocks: list[list[dict]] = []
+        for row in self.contacts:
+            if row.get("continued") and blocks:
+                blocks[-1].append(row)
+            else:
+                blocks.append([row])
+        return blocks
+
+    def _shown_contacts(self) -> list[dict]:
+        typed = self.typed.strip()
+        if not typed:
+            return []
+        want = parse.digits(typed)
+        out = []
+        for block in self._blocks():
+            name = block[0].get("name", "")
+            if (typed.casefold() in name.casefold()
+                    or (len(want) >= 3 and any(want in parse.digits(r.get("number")) for r in block))):
+                out.extend(block)
+        return out
+
+    def picker(self, _s) -> dict:
+        if not self.picking:
+            return {"open": False}
+        shown = self._shown_contacts()
+        typed = self.typed.strip()
+        number = parse.normalize_number(typed)
+        groups = [] if not typed or number else [g for g in self.groups if typed.casefold() in g["name"].casefold()]
+        return {"open": True, "input": self.typed, "contacts": shown,
+                "sendTo": typed if number and not shown else None, "groups": groups, "loading": False,
+                "chips": list(self.chips), "next": self.group_mode and bool(self.chips)}
+
+    def click_selector(self, selector: str) -> bool:
+        if selector == SELECTORS["start"]:
+            self.picking, self.path, self.thread = True, "/web/conversations/new", None
+            self.page.url = "https://messages.google.com" + self.path
+            return True
+        if selector == SELECTORS["loadMore"]:
+            if not self.older:
+                return False
+            self.loads_more += 1
+            self.relay("LIST_CONVERSATIONS")
+            self.rows = [*self.rows, *self.older[:self.page_size]]
+            self.older = self.older[self.page_size:]
+            return True
+        if selector == SELECTORS["startGroup"] and self.picking:
+            self.group_mode = True
+            return True
+        if selector == SELECTORS["next"] and self.group_mode and self.chips:
+            return self.create(list(self.chips))
+        return False
+
+    def pick(self, arg) -> bool:
+        _s, kind, index = arg
+        if kind == "sendTo":
+            shown = self.typed.strip()
+        else:
+            rows = self._shown_contacts()
+            if index >= len(rows):
+                return False
+            name = ""
+            for row in rows[:index + 1]:
+                name = row.get("name") or name if not row.get("continued") else name
+            shown = name or rows[index]["number"]
+        if self.group_mode:
+            self.chips.append(shown)
+            return True
+        return self.create([shown])
+
+    def create(self, members: list[str]) -> bool:
+        """GET_OR_CREATE_CONVERSATION: the conversation opens only if the guard lets it out."""
+        if not self.relay("GET_OR_CREATE_CONVERSATION"):
+            return True  # the click happened; the page just never opens a conversation
+        thread = f"n{len(self.created) + 1}"
+        self.created.append(members)
+        name = ", ".join(members)
+        self.rows = [{"href": f"/web/conversations/{thread}", "name": name, "preview": "", "timestamp": "",
+                      "unread": False}, *self.rows]
+        self.titles[thread] = self.new_title if self.new_title is not None else name
+        self.thread, self.path, self.picking = thread, f"/web/conversations/{thread}", False
+        self.page.url = "https://messages.google.com" + self.path
+        return True
 
     def sent(self) -> list[str]:
         return [action for action, ok in self.wire if ok and action in ("SEND_MESSAGE", "SEND_REPLY", "RESEND_MESSAGE")]
@@ -543,10 +674,12 @@ def test_list_reads_the_rows_and_lets_only_reads_out(web):
     assert "POST play.google.com/log" in guard.state.blocked  # telemetry never leaves
 
 
-def test_another_session_is_taken_over_with_use_here(web):
+def test_messages_open_elsewhere_stops_without_clicking_use_here(web):
     site = web(MessagesWeb(use_here=True))
-    assert len(asyncio.run(fetch.conversations())) == 4
-    assert site.use_here_clicks == 1 and ("GET_UPDATES", True) in site.wire
+    with pytest.raises(ProfileBusy, match="open in another window or tab") as caught:
+        asyncio.run(fetch.conversations())
+    assert caught.value.error == "messages_open_elsewhere"
+    assert site.use_here_clicks == 0 and ("GET_UPDATES", True) not in site.wire
 
 
 def test_not_paired_is_auth_required(web):
@@ -595,7 +728,7 @@ def test_read_image_out_saves_only_the_limited_rows_and_every_image_of_a_bubble(
     site = web(MessagesWeb())
     site.bubbles["101"][2] = {**site.bubbles["101"][2], "images": 2}
     assert [m["images"] for m in asyncio.run(fetch.messages("101", 1, image_dir=str(tmp_path)))["messages"]] == [[]]
-    assert list(tmp_path.iterdir()) == []
+    assert saved_files(tmp_path) == []
     rows = asyncio.run(fetch.messages("101", 2, image_dir=str(tmp_path)))["messages"]
     assert rows[0]["images"] == [str((tmp_path / "101-1.jpg").resolve()), str((tmp_path / "101-2.jpg").resolve())]
     assert (tmp_path / "101-2.jpg").read_bytes() == JPEG + b"full-2-1"
@@ -629,7 +762,7 @@ def test_an_image_that_never_loads_is_counted_missing(web, tmp_path, monkeypatch
     monkeypatch.setattr(site, "relay_raw", lambda method, url, body: url != MEDIA and MessagesWeb.relay_raw(
         site, method, url, body))  # the attachment download fails
     found = asyncio.run(fetch.messages("alice", image_dir=str(tmp_path)))
-    assert found["imagesMissing"] == 1 and list(tmp_path.iterdir()) == []
+    assert found["imagesMissing"] == 1 and saved_files(tmp_path) == []
     assert [m["images"] for m in found["messages"]] == [[], [], [], []]
 
 
@@ -852,11 +985,16 @@ def test_read_image_out_passes_an_absolute_created_dir_and_prints_images(calls, 
 
 
 def test_search_exits_3_on_no_match(calls):
-    _, answers = calls
-    answers["conversations"] = lambda limit, headed: parse.conversations(ROWS)
-    hits = json.loads(run("search", "gate code", "--format", "json").stdout)
-    assert [(r["id"], r["matched"]) for r in hits] == [("103", ["preview"])]
+    seen, answers = calls
+    answers["search"] = lambda query, pages, headed: {
+        "results": parse.search_deep(parse.conversations(ROWS), query), "scanned": 4, "complete": True}
+    result = run("search", "gate code", "--format", "json")
+    hits = json.loads(result.stdout)
+    assert [(r["kind"], r["id"], r["matched"]) for r in hits] == [("conversation", "103", ["preview"])]
+    assert seen[-1][1:] == ("search", ("gate code", None), {"headed": False})
     assert run("search", "zebra").exit_code == 3
+    run("search", "x", "--pages", "3")
+    assert seen[-1][2] == ("x", 3)
 
 
 def test_ambiguity_exits_2_and_not_found_exits_3(calls):

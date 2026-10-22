@@ -374,7 +374,7 @@ def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: st
     if isinstance(exc, UsageError):
         die(str(exc), EXIT_USAGE, hint=exc.hint)
     if isinstance(exc, ProfileBusy):
-        die(str(exc), EXIT_API)
+        die(str(exc), EXIT_API, error=getattr(exc, "error", None))
     die(str(exc) or type(exc).__name__, EXIT_API)
 
 

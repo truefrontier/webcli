@@ -72,7 +72,8 @@ export function validateGrant(input, { now = Date.now(), id } = {}) {
   }
   if (a.maxAmount != null) {
     const m = Number(a.maxAmount);
-    if (!Number.isFinite(m) || m <= 0) bad("--max-amount must be a positive number.");
+    // 0.11.5: 0 is allowed (a "$0 plan" approval: only a page showing $0 passes).
+    if (!Number.isFinite(m) || m < 0) bad("--max-amount must be 0 or more.");
     if (!["click", "press"].includes(op)) bad("--max-amount only applies to click and press.");
     g.maxAmount = Math.round(m * 100) / 100;
     g.currency = clean(a.currency || "USD").toUpperCase();
@@ -88,6 +89,7 @@ export function validateGrant(input, { now = Date.now(), id } = {}) {
   g.uses = uses;
   g.usesLeft = uses;
   g.ttlSec = Math.round(ttl);
+  g.ttlExplicit = a.ttlSec != null; // 0.11.5: no --ttl -> the quote's time window (clause checks), else 30m
   g.expiresAt = now + Math.round(ttl) * 1000;
   return g;
 }
@@ -113,6 +115,12 @@ export function grantMatches(g, ctx) {
   if (g.op !== ctx.op) return { ok: false, why: "op" };
   if (g.origin !== ctx.origin) return { ok: false, why: "origin" };
   if ((g.frameOrigin || null) !== (ctx.frameOrigin || null)) return { ok: false, why: "frame_origin" };
+  // 0.11.5: a grant made for one store (admin.shopify.com/store/NAME) only covers that store's pages.
+  if (g.pathPrefix) {
+    let path = null;
+    try { path = new URL(String(ctx.url || "")).pathname; } catch { /* no url */ }
+    if (path == null || !(path === g.pathPrefix || path.startsWith(`${g.pathPrefix}/`))) return { ok: false, why: "path" };
+  }
   if (PAGE_GRANT_OPS.includes(g.op)) {
     const el = ctx.element;
     if (!el) return { ok: false, why: "no_element" };
@@ -194,6 +202,9 @@ export function grantView(g, now = Date.now()) {
     id: g.id, op: g.op, origin: g.origin, ...(g.frameOrigin ? { frameOrigin: g.frameOrigin } : {}), target: g.target, quote: g.quote,
     ...(g.value != null ? { value: `<${g.value.length} chars>` } : {}),
     ...(g.urlPrefix ? { urlPrefix: g.urlPrefix } : {}),
+    ...(g.pathPrefix ? { pathPrefix: g.pathPrefix } : {}),
+    ...(g.context ? { context: g.context } : {}),
+    ...(g.clause ? { clause: g.clause } : {}),
     ...(g.maxAmount != null ? { maxAmount: g.maxAmount, currency: g.currency, ...(g.amountSelector ? { amountSelector: g.amountSelector } : {}) } : {}),
     uses: g.uses, usesLeft: g.usesLeft, expiresAt: g.expiresAt, expiresInSec: Math.max(0, Math.round((g.expiresAt - now) / 1000)),
     createdAt: g.createdAt, ...(g.jev ? { jev: g.jev } : {}),
@@ -216,12 +227,22 @@ const VERB = { click: "click", fill: "fill in", type: "type into", select: "choo
 // What Jev sees of a grant (never a --value for fill/type: only that one is pinned).
 export function scopeView(g) {
   const out = { action: VERB[g.op] || g.op, site: g.origin };
+  // 0.11.5: the tab the grant is for, from the browser (title, URL path, store name), so "as-described-review" can match
+  // admin.shopify.com/store/as-described-review. The title is page content: untrusted evidence.
+  if (g.context) {
+    const c = g.context;
+    out.page = { ...(c.url ? { url: c.url } : {}), ...(c.store ? { store: c.store } : {}),
+      ...(c.title ? { tabTitle: c.title } : {}), ...(c.pathPrefix ? { onlyPagesUnder: `${g.origin}${c.pathPrefix}` } : {}),
+      note: "From the browser tab; the title is page content (untrusted evidence)." };
+  }
   if (g.frameOrigin) out.insideEmbeddedFrameFrom = `${g.frameOrigin} (an app embedded in a page on ${g.origin})`;
   if (g.target?.text) out.target = `the element named "${g.target.text}"${g.target.role ? ` (role ${g.target.role})` : ""}`;
   else if (g.target?.selector) out.target = `the element matching CSS ${g.target.selector}`;
   if (g.urlPrefix) out.onlyUrlsStartingWith = g.urlPrefix;
   if (g.value != null) out.value = g.op === "press" ? `key ${g.value}` : g.op === "select" ? g.value : "one exact value (hidden)";
-  out.spendingCap = g.maxAmount == null ? "none" : fmtAmount(g.maxAmount, g.currency || "USD");
+  out.spendingCap = g.maxAmount == null ? "none"
+    : g.maxAmount === 0 ? `${fmtAmount(0, g.currency || "USD")} (free only: any price above zero still asks the user)`
+    : fmtAmount(g.maxAmount, g.currency || "USD");
   out.uses = g.uses;
   out.expiresAfterMinutes = Math.round((g.ttlSec ?? (g.expiresAt - g.createdAt) / 1000) / 60);
   return out;
@@ -232,7 +253,7 @@ export function quoteAmounts(quote) {
   const out = new Set();
   for (const m of String(quote || "").matchAll(QAMOUNT)) {
     const n = Number(String(m[1] ?? m[2]).replace(/,/g, ""));
-    if (Number.isFinite(n) && n > 0) out.add(n);
+    if (Number.isFinite(n) && n >= 0) out.add(n);
   }
   return [...out];
 }

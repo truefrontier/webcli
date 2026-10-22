@@ -11,7 +11,12 @@ class AuthRequired(RuntimeError):
 
 
 class ProfileBusy(RuntimeError):
-    """Another command, or a Chrome, holds the identity's profile: exit 5."""
+    """Another command, or a Chrome, holds the identity's profile: exit 5. `error`: an optional fixed tag for the JSON
+    error ("messages_busy", "messages_open_elsewhere")."""
+
+    def __init__(self, message: str, error: str | None = None) -> None:
+        super().__init__(message)
+        self.error = error
 
 
 class Challenged(RuntimeError):

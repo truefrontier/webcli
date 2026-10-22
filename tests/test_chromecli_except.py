@@ -72,7 +72,7 @@ def frame_ext(req):
     if op == "grant.add":
         g = {"id": "g9", "op": args["op"], "origin": args["origin"], "frameOrigin": args.get("frameOrigin"),
              "target": args.get("target"), "quote": args["quote"], "uses": args["uses"], "usesLeft": args["uses"],
-             "expiresInSec": args["ttlSec"]}
+             "expiresInSec": args.get("ttlSec", 1800)}
         return {"ok": True, "result": {"op": "grant.add", "added": True, "grant": g,
                 "jevCheck": {"verdict": "authorized", "confidence": 0.9, "reason": "ok", "narrowed": []}}}
     return {"ok": True, "result": {}}

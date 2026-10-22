@@ -30,7 +30,8 @@ READ_OPS = ("status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", 
 TAB_OPS = ("tab.open", "tab.focus", "tab.close", "tab.navigate")
 PAGE_OPS = ("page.click", "page.type", "page.fill", "page.select", "page.press", "page.eval")
 # Pre-approval grants (stored in the extension; 0.10.1: grant.add needs userApproved and Jev's scope check).
-GRANT_OPS = ("grant.add", "grant.revoke")
+# 0.11.5: grant.add_batch, one quote covering several grants (clause-aware check).
+GRANT_OPS = ("grant.add", "grant.add_batch", "grant.revoke")
 # 0.12.1: tab recording. record.start needs --confirm and Kevin's Start in the browser; record.stop only stops.
 RECORD_OPS = ("record.start", "record.stop")
 # Answered by chromecli-host itself (never forwarded): the recording files it wrote this session.

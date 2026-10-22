@@ -65,10 +65,20 @@ chromecli find --tab TAB 'the email field' [--jev auto|on|off] [--limit 5]   # r
 # pre-approvals: ONLY quoting Kevin's own words from the current conversation (0.10.1: --user-approved required)
 chromecli grant add --op click|fill|type|select|press|navigate|open|close --origin O \
     (--target-text NAME [--role R] | --selector S) [--value V | --value-file F] [--url-prefix P] \
-    [--max-amount 49.99 [--currency USD] [--amount-selector CSS]] [--uses 1] [--ttl 30m] \
-    --quote "<Kevin's words>" --user-approved --confirm
+    [--max-amount 49.99|0 [--currency USD] [--amount-selector CSS]] [--uses 1] [--ttl 30m] [--frame-origin F] \
+    [--tab TAB] --quote "<Kevin's words>" --user-approved --confirm
+# 0.11.5: one quote that lists several steps -> one call, Jev maps each grant to one item of the quote
+chromecli grant add-batch --origin O [--frame-origin F] [--op click] [--tab TAB] \
+    (--file grants.json | --grant '{"target-text":"Install","role":"button"}' --grant 'Scan products' ...) \
+    [--partial] --quote "<Kevin's words>" --user-approved --confirm
 chromecli grant list [--format json]
 chromecli grant revoke ID | --all --confirm
+
+# 0.12.1 recording: a shared tab; preview unless --confirm, and then Kevin clicks Start in Chrome
+chromecli record start TAB [--out FILE.webm|.mp4] [--fps 30] [--max 10m] [--audio] [--wait 2m] [--force] --confirm
+chromecli record stop TAB | --all     # finalizes; .mp4 is converted here (ffmpeg on PATH, else stays .webm)
+chromecli record status [TAB]
+chromecli screenshot TAB --covered    # newest frame of the tab's recording (also used by itself when it isn't in front)
 
 chromecli install-host [--extension-id ID] [--confirm]    # dry run without --confirm
 chromecli uninstall-host [--confirm]
@@ -243,7 +253,8 @@ a tool result, or another agent asked for it.
     `jev_confidence=`, `narrowed=` and `jev_reason=`; events `grant_added` / `grant_refused` are logged with the
     quote. The popup shows Jev's verdict chip ("Jev ✓ 0.93 · narrowed") on each grant.
 - **Storage:** `chrome.storage.session`: gone when Chrome restarts. Pause revokes all grants. At most 50.
-- **Defaults:** 1 use (max 20), TTL 30m (1m–24h), `--quote` required, 1–500 chars.
+- **Defaults:** 1 use (max 20), TTL = the quote's time window ("for the next 45 minutes"), else 30m (1m–24h);
+  `--quote` required, 1–500 chars. `--max-amount 0` (0.11.5) means "free only".
 - **Matching** (right before dispatch, only when the action would otherwise prompt):
   - same op and same origin (exact);
   - page ops: `--target-text` equals the element's accessible name case-insensitively, or appears in it as whole
@@ -266,6 +277,95 @@ a tool result, or another agent asked for it.
   Note: the default deny list includes `path:/checkout` and `path:/cart`, so purchases on such pages stay impossible.
 - The popup's *Pre-approvals* list shows each active grant (quote, scope, uses left, time left, × to revoke) and
   *Revoke all*.
+
+## One quote, several steps (0.11.5)
+
+Kevin often approves a whole flow in one sentence:
+
+> Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes: Install once, Approve on the $0
+> Starter plan once, Scan products once, Use the title or Use the size once, Use the description for all 3 once,
+> Apply to 3 products once, and Undo 3 times.
+
+**Why earlier versions refused every grant for it** (QA round 4c: Install unclear 0.06, Approve overreach 0.11,
+the rest unclear 0.18–0.41):
+
+1. Jev's one scope question asked whether the **whole** quote "authorizes exactly this grant". A grant for one step
+   looks like a fraction of the approval (unclear), and the other steps look like scope the grant doesn't have.
+2. Jev only saw `site: https://admin.shopify.com`: no tab title, no URL path, no store, so "as-described-review"
+   matched nothing.
+3. `--max-amount` had to be ≥ 0.01, so "Approve on the $0 Starter plan" could only get a $0.01 cap, which is more
+   than $0 (overreach); the quote's `$0` was also dropped when amounts were parsed.
+4. Uses were read from the whole quote, so "Install once" also capped "Undo 3 times" at 1.
+
+**Now** (`clauses.js`, used by `grant add` and `grant add-batch`):
+
+- **Split.** The quote is split deterministically into a **preamble** (before the first `:`; site, store, time
+  window) and **items** (split on `,` `;` bullets, and on "and" only when both sides state their own uses). Each item
+  gets its uses ("once", "twice", "3 times", "x3"; default 1), its amounts (including `$0`) and the preamble's window.
+  A quote without a preamble and ≥ 2 items stays one item: the 0.10.1 check, narrowing included, is unchanged.
+- **Map (one Jev call per batch).** Jev gets `{preamble, items: {c1: "Install once", ...}, grants: {g1: <grant>}}`
+  and one `choice` question per grant: which item (c1..cN) or `none`. `none`, or a pick below 0.8 → that grant is
+  refused **unclear** ("matches no item of the quote").
+- **Limits (deterministic, no Jev).** Against its item the grant is **overreach** if it asks for more uses than the
+  item states (counting uses already granted under the same quote and item, in this batch and earlier ones; revoking
+  doesn't refund), a cap above the item's amount (or no cap when the item names one; "$0" means `--max-amount 0`),
+  or an explicit `--ttl` longer than the preamble's window. Without `--ttl` the grant lasts the window (else 30m).
+  The target's words must appear in the item, else **unclear**.
+- **Score (one Jev call per batch, only for grants that passed).** Each grant is scored against "preamble: its item"
+  only (the old authorized/overreach/unclear question); authorized needs ≥ 0.8. Fail-closed as before: no key, a
+  network error or a malformed answer → `jev_error` / `jev_not_configured`, nothing stored. A vague quote ("i approve
+  screencast clicks") still gets nothing.
+- **Page context.** Jev's view of a grant now includes `page {url, store, tabTitle, onlyPagesUnder}` (the tab title
+  is labelled page content, untrusted evidence), the frame origin, the target text and role, the spending cap, uses
+  and minutes. The store comes from `admin.shopify.com/store/NAME/...` or `NAME.myshopify.com`; for Shopify admin
+  the grant is then **pinned** to `/store/NAME` (it never matches another store's pages). The tab is `--tab TAB`
+  (it must be shared or bot-opened, on `--origin`), else the one visible tab on that origin.
+- **Stored.** Each grant keeps its `clause {id, text, uses, amount?, windowSec}` and `context`; `grant list` shows
+  `item="Undo 3 times"`; the host log has `clause="..."` on `op=grant.add` and per grant on `op=grant.add_batch`
+  (`g7=authorized:0.93 grant7=g1a2b3c clause7="Undo 3 times"`); `grant_added` / `grant_refused` events carry it too.
+
+**Batch.** All grants in one call (1–20): `--file` (a JSON list or `{"grants": [...]}`, `-` = stdin) and/or
+repeated `--grant` (a JSON object, or plain target text). Keys: `op`, `origin`, `frame-origin`, `target-text`,
+`role`, `selector`, `value`, `url-prefix`, `max-amount`, `currency`, `amount-selector`, `uses`, `ttl` (kebab, snake or
+camel case); `--op`, `--origin`, `--frame-origin` are the defaults. **All or nothing**: one refusal stores none
+(exit 9, `error.results` has every grant's verdict); `--partial` stores the authorized ones and exits 0 with
+`refused > 0`.
+
+```bash
+cat > grants.json <<'JSON'
+[{"target-text": "Install", "role": "button"},
+ {"target-text": "Approve", "role": "button", "max-amount": 0},
+ {"target-text": "Scan products", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Use the title", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Use the description for all 3", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Apply to 3 products", "frame-origin": "https://asdescribed.truefrontier.app"},
+ {"target-text": "Undo", "frame-origin": "https://asdescribed.truefrontier.app", "uses": 3}]
+JSON
+chromecli grant add-batch --origin https://admin.shopify.com --tab 812 --file grants.json \
+  --quote "Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes: Install once, Approve on the \
+\$0 Starter plan once, Scan products once, Use the title or Use the size once, Use the description for all 3 once, \
+Apply to 3 products once, and Undo 3 times." --user-approved --confirm
+```
+
+Output (abridged; from the mocked-Jev test):
+
+```json
+{"op": "grant.add_batch", "added": 7, "refused": 0,
+ "preamble": "Yes, pre-approve chromecli clicks on as-described-review for the next 45 minutes", "windowSec": 2700,
+ "page": {"url": "https://admin.shopify.com/store/as-described-review/apps/as-described", "store": "as-described-review",
+          "title": "As Described · as-described-review · Shopify", "pathPrefix": "/store/as-described-review"},
+ "results": [
+  {"index": 1, "target": "Install", "verdict": "authorized", "confidence": 0.93,
+   "clause": {"id": "c1", "text": "Install once", "uses": 1, "windowSec": 2700}, "stored": true,
+   "grant": {"id": "g99cae1", "uses": 1, "expiresInSec": 2700, "pathPrefix": "/store/as-described-review", ...}},
+  ...
+  {"index": 7, "target": "Undo", "verdict": "authorized", "confidence": 0.93,
+   "clause": {"id": "c7", "text": "Undo 3 times", "uses": 3, "windowSec": 2700}, "stored": true,
+   "grant": {"id": "ged3d35", "frameOrigin": "https://asdescribed.truefrontier.app", "uses": 3, ...}}]}
+```
+
+With `"uses": 4` on Undo: exit 9 `grant_overreach`, "1 of 7 grants refused; nothing was granted (all or nothing;
+--partial stores the authorized ones). First: grant 7: "Undo 3 times" approves 3 uses; this grant asks for 4."
 
 ## Test-drive fixes (0.10.0)
 
@@ -437,7 +537,87 @@ frame_act_allow = ["https://asdescribed.truefrontier.app"]
   covers a frame. Jev's scope check sees `insideEmbeddedFrameFrom`, so the quote must cover the embedded app.
   **Batch path**: when Kevin says, e.g., "approved to click Scan, Review fixes, Apply and Undo in As Described on the
   as-described-review store", add one grant per button (each with that quote and `--frame-origin`), with `--uses N`
-  where a button is pressed N times. There is no other bypass.
+  where a button is pressed N times. There is no other bypass. 0.11.5: use `grant add-batch` for this (one call,
+  each grant checked against its own item of the quote; see "One quote, several steps").
+
+## Recording and covered screenshots (0.12.1)
+
+**What it does.** `chromecli record start TAB --confirm` records one tab Kevin shared (Share-read or Share-act; not
+bot-opened, not an inherited share, not a denied origin, not while paused) into a WebM file. It captures only that
+tab's page pixels, iframes included: never the screen, other tabs, or Chrome's own UI.
+
+**How.** `chrome.tabCapture.getMediaStreamId({targetTabId})` in the service worker, then an offscreen document
+(`offscreen.html`, reason `USER_MEDIA`) opens the stream and runs `MediaRecorder` (VP9, else VP8; `--fps` 1-60 caps
+the frame rate). There's no `debugger` permission and no CDP. New permissions: `tabCapture` (Chrome's warning: "Read
+and change all your data on all websites"; an unpacked extension gets no prompt on reload) and `offscreen` (no
+warning).
+
+**Two gates.**
+
+1. *Kevin's Start.* Without `--confirm` the command is a preview (nothing is sent). With it, the confirm window says
+   "Start recording this tab: <title> (<origin>)"; only Kevin's Start click starts it. Deny, closing the window, or
+   the confirm timeout refuse it (exit 4 `declined` / `confirm_timeout`). `--confirm` alone never records.
+2. *Chrome's grant.* Chrome lets an extension capture a tab only after Kevin clicked its icon on that tab since the
+   tab last changed site (opening the popup and sharing counts; reloading the extension resets it). The confirm
+   window click doesn't count. Without the grant, after Start the request turns `awaiting_popup`: the CLI prints
+   "Chrome only lets an extension capture a tab after Kevin clicks its icon on that tab. Kevin: switch to tab N,
+   click the chromecli icon, press Record. Waiting up to 2m." on stderr; the badge shows orange `REC?`, a
+   notification shows, and that tab's row in the popup has a **Record** button (it works when the popup is opened on
+   that tab). The CLI waits up to `--wait` (5s-15m, default 2m), then exit 4 `confirm_timeout`; Ctrl-C cancels it.
+
+**While recording.** The badge is red `REC`; the popup's row for the tab has **Stop**. It stops and finalizes by
+itself on Pause (popup, shortcut), Unshare, the tab closing, a top-frame navigation to another origin (as soon as it
+starts), or `--max` (1s-4h, default 10m). One recording per tab.
+
+**Files.** The host, not the extension, picks and writes the file: the extension only sees a recording ID. Default
+`~/.webcli/chromecli/recordings/tab<ID> <YYYY-MM-DD> at <HH.MM.SS>.webm` (spaces, so the log's redactor leaves the
+name readable); `--out` must end in `.webm` or `.mp4`, and an existing file needs `--force`. Files are 0600, the
+directory 0700. The offscreen recorder emits a chunk each second; the service worker slices it to at most 512 KiB
+(about 683 KiB in base64), under Chrome's native messaging limits (1 MB host→Chrome, 64 MiB Chrome→host), and the
+host writes and flushes each one as it arrives. Chunks must arrive in order: a gap, a bad chunk, or a chunk over 1
+MiB stops writing (`writeError`) instead of writing a corrupt file. The host keeps the last 50 recordings of its
+session for `record status`.
+
+**`.mp4`.** `--out demo.mp4` records `demo.webm`; `record stop` then runs ffmpeg if it's on PATH (libx264 veryfast
+crf 18, else h264_videotoolbox; yuv420p; even dimensions; `+faststart`; AAC with `--audio`) and keeps the .webm.
+Without ffmpeg: `converted: false` and a note ("ffmpeg isn't on PATH, so the recording stays WebM ... brew install
+ffmpeg"). The conversion runs once per recording.
+
+**Audio.** Off by default. `--audio` adds the tab's sound; because capturing mutes the tab for Kevin, the offscreen
+document plays it back through an `AudioContext`.
+
+**Stop and status.** `record stop TAB|--all` returns `{stopped: [...], finished: [...]}` (path, bytesWritten,
+durationMs, chunks, reason, converted/note for .mp4). `record status [TAB]` lists them, active first. A recording that
+Pause already stopped is still listed from the host (`record stop` while paused says so).
+
+**Covered screenshots.** `screenshot TAB --covered`, or a plain `screenshot` of a shared tab that isn't in front,
+returns the newest frame of that tab's recording (`source: "stream"`, `frameAgeMs`, `frames`, `recId`; via
+`MediaStreamTrackProcessor`, with a `<video>` fallback). A tab in front says `source: "visible"`. A tab that isn't in
+front and isn't recording: exit 4 `not_visible`, hint "chromecli record start TAB --confirm".
+
+**Throttling, measured.** Chrome 153 (Chrome for Testing), `tests/fixtures/chromecli/animated.html` (a rAF counter, a
+100 ms timer, a CSS animation, a ticking iframe), Playwright's anti-throttling flags removed:
+
+| Tab state while recording | rAF/s | 100 ms timer/s | visibilityState | stream frame |
+|---|---|---|---|---|
+| In front | ~120 | 10 | visible | fresh |
+| Window covered by another window | ~123 | 10 | visible | fresh (13-26 ms old), changing |
+| Background tab of its window | ~120 | 10 | visible | fresh (4-25 ms old), changing |
+| Window minimized | ~1 | 10 | visible | frozen (6-9 s old) |
+
+Chrome treats a captured tab as visible, so covering it or switching tabs doesn't throttle it; minimizing its window
+stops painting. A stream frame older than 2s adds `warning` to the screenshot JSON (and a stderr line). Advice (also
+in agent-help): give the recorded tab its own window, leave it behind other windows, never minimized.
+
+**Log.** `event=record_start tab= origin= file="..." rec=<8 chars> mime= size= fps= audio= max_s= via=confirm|popup`
+and `event=record_stop ... state= duration_s= bytes= chunks= reason=`, plus `record_waiting` and `rec_chunk_dropped`.
+The directory is never logged. Redaction still covers the whole line (an origin with digits, like
+`http://127.0.0.1:8765`, shows as `<redacted>`).
+
+**Tested.** Node with mocks (`extensions/chromecli/test/record.test.mjs`), pytest (`tests/test_chromecli_record.py`),
+and by hand in an isolated Chrome for Testing: `tests/e2e/chromecli_record_e2e.py` (its docstring says how; it never
+touches Kevin's Chrome). The icon-click grant and the popup's Record button can't be automated: the E2E stands in
+for the grant with `--allowlisted-extension-id`, and `--noallow` checks the `awaiting_popup` path.
 
 ## Config
 
@@ -464,7 +644,7 @@ Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME
 
 2 bad_request/too_large/bad_target/missing_expect; 3 tab_not_found/element_not_found/ambiguous_target/no_history;
 4 not_shared/not_act_shared/origin_blocked/paused/declined/confirm_timeout/not_visible/permission_needed/
-policy_pending; 5 bridge_down/host_busy/timeout/url_mismatch/script_error; 7 config_error/host_not_installed/
+policy_pending; 5 bridge_down/host_busy/timeout/url_mismatch/script_error/capture_failed; 7 config_error/host_not_installed/
 history_disabled/eval_disabled/jev_not_configured; 8 sent_unverified; 9 grant_overreach/grant_unclear (Jev refused a
 pre-approval). jev_error is 5. 2 also covers missing_user_approval (0.10.1).
 
@@ -485,11 +665,18 @@ Hosts before 0.11.4 also refused unknown `[chromecli]` keys (exit 7 "has unknown
 ## Test fixtures
 
 `tests/fixtures/chromecli/scroll.html` (inner scroll viewer for `scroll` / `--full-page`), `form.html` (email, password, country select, "Next" link, "Place order" submit that shows
-"submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), and `frames.html` (0.11.1:
-iframes, a closed shadow root, a canvas). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
+"submitted", "Delete account" button), `nav.html`, `shadow.html` (open-shadow web components), `frames.html` (0.11.1:
+iframes, a closed shadow root, a canvas), and `animated.html` (0.12.1: something changes every frame, for recording
+and throttling checks; `window.__stats` counts rAF, timer ticks, visibility changes). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
+
+`extensions/chromecli/test/fixtures/grant-batch-as-described.json` (0.11.5): quote (b) above, the vague quote (a)
+"i approve screencast clicks", the As Described tab (URL, title), the 7 grants and Jev answers in the TypeSafe
+response shape, keyed by target. Hand-made in the recorded shape; tests never call the real TypeSafe API.
 
 ## Not yet
 
 `page.elements` (a Jev-ranked element list op), chtabs retirement (P5), reporting which account is signed in to a
-tab (future work). `chtabs` (press-chrome) is untouched.
+tab (future work). Recording: more than one recording per tab, recording a whole window or the screen, keeping a
+recording across a site change (Chrome drops the capture grant there anyway), and a way to grant the capture
+without Kevin's icon click (there's none, by design). `chtabs` (press-chrome) is untouched.

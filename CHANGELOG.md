@@ -1,5 +1,159 @@
 # Changelog
 
+## 0.12.1 (2026-10-22)
+
+chromecli records a tab Kevin shared (`record start|stop|status`), and screenshots it while it's covered or in the
+background. Recording needs Kevin's click in Chrome every time: `--confirm` alone never starts one.
+
+### Added
+
+- **`chromecli record start TAB [--out FILE.webm|.mp4] [--fps 30] [--max 10m] [--audio] [--wait 2m] [--force]
+  --confirm`.** Only on a tab Kevin shared (Read or Act; not bot-opened, inherited, denied, or while paused). Without
+  `--confirm` it's a preview. With it, the confirm window says "Start recording this tab: <title> (<origin>)"; Kevin's
+  Start click starts it (Deny, closing the window, or the timeout don't). Capture is `chrome.tabs.tabCapture`
+  `getMediaStreamId` + an offscreen document running `MediaRecorder` (WebM VP9, VP8 fallback): only the tab's page
+  pixels, iframes included, never the rest of the screen or Chrome's UI. No `debugger` permission.
+- **Chrome's own gate.** Chrome lets an extension capture a tab only after Kevin clicked its icon on that tab since it
+  last changed site (sharing from the popup counts; reloading the extension resets it). Without it the request
+  turns `awaiting_popup`: stderr says "click the chromecli icon, press Record", the badge shows `REC?`, a
+  notification shows, and the popup's row for that tab gets a **Record** button; the CLI waits (`--wait`, 5s-15m)
+  and returns once recording, else exit 4 `confirm_timeout` (Ctrl-C cancels it).
+- **While recording** the badge is red `REC` and the popup's row has **Stop**. It stops and finalizes by itself on
+  Pause, Unshare, the tab closing, a top-frame navigation to another origin, or `--max` (1s-4h, default 10m).
+- **`record stop TAB|--all`** finalizes: `{stopped: [...], finished: [...]}` with path, bytesWritten, durationMs,
+  reason. **`record status [TAB]`** lists this host session's recordings (awaiting_popup / starting / recording /
+  stopping / stopped / failed / cancelled / expired).
+- **Files.** Default `~/.webcli/chromecli/recordings/tab<ID> <YYYY-MM-DD> at <HH.MM.SS>.webm` (0600, dir 0700). The
+  host owns the path: the extension only ever sees a recording ID. Chunks of at most 512 KiB (base64 ~683 KiB; under
+  Chrome's 1 MB host-to-extension and 64 MiB extension-to-host native-messaging limits) are written and flushed as
+  they arrive, in order; a gap or a bad chunk stops writing (`writeError`). Existing files are refused without
+  `--force`.
+- **`.mp4`.** `--out x.mp4` records `x.webm`, then `record stop` converts it with ffmpeg if it's on PATH (H.264
+  libx264 or VideoToolbox, yuv420p, even dimensions, faststart; AAC with `--audio`); the .webm is kept. Without ffmpeg
+  the result says `converted: false` and a note ("brew install ffmpeg"), and the .webm is the recording.
+- **`--audio`** (off by default) records the tab's sound and plays it back through the offscreen document, so the
+  tab isn't muted for Kevin.
+- **Covered screenshots.** `screenshot TAB --covered`, or a plain `screenshot` of a tab that isn't in front, uses the
+  newest frame of that tab's recording (`source: "stream"`, `frameAgeMs`, `frames`). Not recording: exit 4
+  `not_visible` with a hint to record it. A frame older than 2s adds `warning` (and a stderr line): its window is
+  probably minimized.
+- **Throttling, measured** (Chrome 153, `tests/fixtures/chromecli/animated.html`, Playwright's anti-throttling flags
+  removed): a captured tab covered by another window or in a background tab kept painting at ~120 rAF/s with fresh
+  frames and `visibilityState` "visible". A minimized window dropped to ~1 rAF/s and the stream froze (frameAgeMs
+  6-9s). Advice in agent-help: the recorded tab in its own window, behind others is fine, never minimized.
+- **Log.** `event=record_start` / `record_stop` lines: tab, origin, file name (quoted, never the directory), short
+  recording ID, size, fps, audio, duration_s, bytes, chunks, reason; plus `record_waiting` and `rec_chunk_dropped`.
+  The usual redaction applies to the whole line (an origin with digits, like `http://127.0.0.1:8765`, shows as
+  `<redacted>`).
+- New exit code: 5 `capture_failed` (Chrome refused the capture or the recorder failed).
+- Tests: `extensions/chromecli/test/record.test.mjs` (19: the gesture, refusals, awaiting_popup + popup Record,
+  expiry, chunk order/size, auto-stops on Pause/Unshare/origin/port loss, covered screenshots),
+  `tests/test_chromecli_record.py` (13: CLI preview, incremental 0600 writes, dropped chunks, mp4 with and without
+  ffmpeg, --force, waits, refusals, covered and stale screenshots, agent-help catches), and the by-hand
+  `tests/e2e/chromecli_record_e2e.py` (isolated Chrome for Testing; 14 checks).
+
+### Permissions
+
+- New: `tabCapture` (Chrome's warning for it is "Read and change all your data on all websites"; an unpacked
+  extension gets no prompt on reload) and `offscreen` (no warning). `webNavigation` was already there.
+- After updating, reload the extension in chrome://extensions. That clears `chrome.storage.session`, so Kevin
+  re-shares his tabs, which also gives Chrome's capture grant.
+
+## 0.12.0 (2026-10-22)
+
+`webcli messages` finds older conversations, can start a new 1:1 or group conversation (only with `--new-ok`), and
+keeps Google Messages to one web session. A send needs Kevin's own OK for that exact message.
+
+### Added
+
+- **Deeper lookups.** `search`, `read`, and `send --to` look past the newest 25 conversations. They use Messages' own
+  Start chat picker (the phone's contacts and its group search by member, both reads the guard already passed),
+  then paced, capped "Load more" pages (`--pages`, default 8, max 40, 750 ms apart). They stop once the contacts the
+  query names have their conversations listed. Phone numbers are normalized to E.164 (punctuation ignored, US +1 by
+  default). `search` rows gain `kind` (`conversation` or `contact`) and `number`, and `matched` can now say `group`
+  or `contact`. Ambiguous matches still exit 2 and list the candidates. `send --to` is stricter: a name that fits
+  two contacts exits 2.
+- **New conversations: `send --to NUMBER|CONTACT [--to ...] --text T --new-ok [--expect-recipient X ...]
+  [--confirm]`.**
+  - The dry run resolves each recipient (a number, or exactly one contact with exactly one number) and prints
+    `{dryRun, new, group, recipients, expectRecipients, expectRecipientsMatch, text}`. It types only into the
+    contact picker.
+  - `--confirm` needs `--expect-recipient` (alias `--expect-recipients`) for each recipient, matching exactly. A
+    mismatch exits 5 (`REFUSED (dry run)` without `--confirm`).
+  - Confirmed, Start chat picks each recipient by its exact number, and in a group the chips must be exactly the
+    recipients. Only then does the guard pass one `GET_OR_CREATE_CONVERSATION` (a new `SendScope(new_ok=True)`
+    slot, 10 s). The conversation that opens must be titled with exactly the recipients before anything is typed.
+    Then the usual send checks, verify, exit 8 if unverified, never retried.
+  - Without `--new-ok`: several `--to` exit 2, and no conversation exits 3. Nothing creates a conversation.
+- **One Messages session.** Every messages command holds `run/messages.session.lock` (an exclusive flock across
+  identities, daemon or not) while it has the app loaded. A second waits `--lock-wait`, then exits 5
+  `messages_busy`. `ProfileBusy` errors now carry an error name through the daemon.
+
+### Changed
+
+- **"Use here" is never clicked.** When Messages is open in another window or tab (its "Use here" button, or a
+  banner or dialog saying so), commands exit 5 `messages_open_elsewhere` instead of taking the session over.
+- The conversation title selector is now the live one (`[data-e2e-conversation-header] [data-e2e-header-title]`), so
+  send's title check runs for real.
+- agent-help and docs/messages-site.md: the new syntax and exit codes, and that a send needs Kevin's own OK for
+  that exact message.
+
+### Tests
+
+- `tests/test_messages_new.py`: normalization, deep search, ambiguity, new 1:1 and group dry runs and confirmed runs
+  (scripted page), recipient-mismatch refusal, no create without `--new-ok`, the guard's create slot, CLI exit
+  codes, and lock contention (in-process and another process).
+- `tests/test_messages_dom.py`: the page scripts on sanitized DOM fixtures (`tests/fixtures/messages`, made-up names
+  and 555-01xx numbers) in headless Chromium.
+
+## 0.11.5 (2026-10-22)
+
+chromecli pre-approvals for a quote that lists several steps. QA round 4c: Kevin's "Yes, pre-approve chromecli
+clicks on as-described-review for the next 45 minutes: Install once, Approve on the $0 Starter plan once, Scan
+products once, Use the title or Use the size once, Use the description for all 3 once, Apply to 3 products once, and
+Undo 3 times." got every grant refused (Install unclear 0.06, Approve overreach 0.11, the rest unclear 0.18–0.41).
+
+### Root cause
+
+- Jev's single scope question asked whether the **whole** multi-item quote "authorizes exactly this grant", so each
+  one-step grant looked like a fraction of the approval (unclear) or the other steps looked like extra scope.
+- Jev saw only `site: https://admin.shopify.com`: no tab title, path or store, so "as-described-review" matched
+  nothing.
+- `--max-amount` had a 0.01 minimum (CLI and extension), so "$0 Starter plan" could only get a $0.01 cap, which is
+  more than $0 (overreach); quote amounts of `$0` were dropped.
+- Uses were read from the whole quote, so "once" also limited "Undo 3 times".
+
+### Added
+
+- **Clause-aware scope check** (`extensions/chromecli/clauses.js`). The quote is split into a preamble (site, store,
+  time window) and items, each with its own uses and amount. One Jev call maps every grant to its best item (`none`
+  or < 0.8 → refused unclear); deterministic limits make a grant over its item's uses (counted across batches under
+  the same quote), over its amount, or with a `--ttl` longer than the window **overreach**; one more Jev call scores
+  each remaining grant against the preamble plus only its item (authorized ≥ 0.8, unchanged). Single-item quotes keep
+  the 0.10.1 check (narrowing included). Fail-closed as before; the vague "i approve screencast clicks" still gets
+  nothing.
+- **`chromecli grant add-batch`**: `--file grants.json` and/or repeated `--grant` (JSON or plain target text),
+  defaults from `--op/--origin/--frame-origin`, 1–20 grants, one quote, `--user-approved`, preview unless
+  `--confirm`. All or nothing (exit 9 with per-grant `error.results`); `--partial` stores the authorized ones.
+  Returns `{added, refused, preamble, windowSec, page, results: [{index, verdict, confidence, reason, clause, stored,
+  grant}]}`.
+- **Page context for Jev**: each grant's view has `page {url, store, tabTitle, onlyPagesUnder}` (title labelled
+  untrusted page content) plus the frame origin, target text, cap, uses and minutes. `--tab TAB` on `grant add` /
+  `add-batch` (shared or bot-opened, on the origin), else the one visible tab on the origin. A Shopify admin store
+  pins the grant to `/store/NAME`.
+- Stored grants keep `clause` and `context`; `grant list` shows `item="..."`; the host log has `clause=` on
+  `op=grant.add` and `gN=verdict:conf grantN=id clauseN="..."` per grant on `op=grant.add_batch`; `grant_added` /
+  `grant_refused` events carry the clause.
+- Tests: `extensions/chromecli/test/grant-batch.test.mjs` (18, mocked Jev, fixture
+  `test/fixtures/grant-batch-as-described.json`, hand-made in the recorded TypeSafe response shape: quote (b) → 7
+  authorized, Undo uses 4 overreach, unmatched grant, quote (a) refused, all-or-nothing vs `--partial`, TTL = 45m,
+  `$0` cap, store pin, fail-closed) and `tests/test_chromecli_grant_batch.py` (CLI parsing, validation, preview,
+  request, exit 9, log lines, agent-help).
+
+### Changed
+
+- `--max-amount 0` is allowed (free only). `--ttl` defaults to the quote's time window, else 30m.
+
 ## 0.11.4 (2026-10-22)
 
 Hardening after 0.11.3: when `config.toml` gained `deny_except` and `frame_act_allow`, the still-running 0.10.2

@@ -80,9 +80,10 @@ WIRING = [
     ("messages", "status", [], RECORD),
     ("messages", "list", [], {"--limit"} | ROWS),
     ("messages", "threads", [], {"--limit"} | ROWS),
-    ("messages", "read", ["QUERY"], {"--limit", "--image-out"} | ROWS),
-    ("messages", "search", ["QUERY"], {"--limit"} | ROWS),
-    ("messages", "send", [], {"--to", "--text", "--dry-run", "--confirm", "--yes"} | RECORD),
+    ("messages", "read", ["QUERY"], {"--limit", "--image-out", "--pages"} | ROWS),
+    ("messages", "search", ["QUERY"], {"--limit", "--pages"} | ROWS),
+    ("messages", "send", [], {"--to", "--text", "--new-ok", "--expect-recipient", "--expect-recipients", "--pages",
+                              "--dry-run", "--confirm", "--yes"} | RECORD),
 ]
 VID = "0123456789abcdef0123456789abcdef"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (2).to_bytes(4, "big") + (3).to_bytes(4, "big") + b"\x08\x06"
