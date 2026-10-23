@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.2 (2026-10-23)
+
+`webcli recorder` reads every page of the recording list, not just the newest 10.
+
+### Fixed
+
+- **Recordings past the first page were invisible.** Recorder's app sends GetRecordingList 10 recordings at a time
+  and asks for the next page only when its list is scrolled to the end; webcli kept the first answer, so `list`,
+  `search`, and `sync` saw only the newest 10, and `info`, `transcript`, and `download` said "No recording" for
+  anything older. webcli now keeps every page the app answers and scrolls the list (in the app's shadow DOM) to its
+  end until a page comes back short, two scrolls in a row bring nothing, or 300s pass; recordings are listed once
+  each, newest first. Live: 86 recordings (8 pages of 10 and one of 6) where 0.12.1 listed 10. Ported from
+  CodefiLabs/google-recorder-cli#2 (its first half). That PR's second half, a 3s settle timer that raced the
+  GetTranscription answer, doesn't apply: webcli waits up to 30s for a recording page's first GetTranscription
+  answer, and a recording's page sends exactly one, full-size (checked live on 4 recordings).
+
 ## 0.12.1 (2026-10-22)
 
 chromecli records a tab Kevin shared (`record start|stop|status`), and screenshots it while it's covered or in the
