@@ -30,8 +30,9 @@ COLUMNS = ["id", "title", "created_at", "duration", "transcript"]
 NOTES = [
     "Identity google:default (the profile `webcli identity login google:default` signs in, through gemini). Commands "
     "run one at a time in that identity's daemon, a hidden headless Chrome: no window, no Dock icon, no focus change.",
-    "Every command loads recorder.google.com and reads the recording list the app itself fetches (GetRecordingList; "
-    "its first page, as google-recorder-cli read it). RECORDING_ID is a recording's id from `list`.",
+    "Every command loads recorder.google.com and reads the recording list the app itself fetches (GetRecordingList, "
+    "every page: the app sends 10 at a time, and webcli scrolls its list to the end until the last page comes). "
+    "RECORDING_ID is a recording's id from `list`.",
     "`transcript` is Recorder's on-device live transcript, words joined by spaces. On long recordings Recorder may "
     "have stopped transcribing partway, with no marker: check the length against the recording.",
     "`transcript` writes <id>.txt into -o DIR (default: the current directory; `-o -` prints it instead). "

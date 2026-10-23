@@ -15,7 +15,7 @@ from click.testing import CliRunner
 from webcli.apps import webcli as webcli_app
 from webcli.core import daemon, guard
 from webcli.core.errors import NotFound
-from webcli.sites.recorder import fetch, parse
+from webcli.sites.recorder import endpoints, fetch, parse
 from webcli.sites.recorder.endpoints import APP_URL, AUDIO_URL, RECORDING_URL
 from webcli.sites.recorder.guard import audio_url_allowed, request_allowed, rpc_method
 
@@ -24,10 +24,10 @@ from google_fakes import APIResponse, Response, ScriptedPage, install
 RPC = "https://pixelrecorder-pa.clients6.google.com/$rpc/java.com.google.wireless.android.pixel.recorder.protos.PlaybackService/"
 
 
-def rec(id_: str, title: str, audio_id: str, *, transcript: bool = True) -> list:
+def rec(id_: str, title: str, audio_id: str, *, transcript: bool = True, created: int = 1760900000) -> list:
     """A GetRecordingList recording: [id, title, [created_sec, ns], [duration_sec, ns], ..., segments (10), ...,
     audio_id (13)]."""
-    return [id_, title, ["1760900000", 0], ["125", 0], None, None, None, None, None, None,
+    return [id_, title, [str(created), 0], ["125", 0], None, None, None, None, None, None,
             [[1]] if transcript else None, None, None, audio_id]
 
 
@@ -125,6 +125,14 @@ def test_transcript_joins_every_units_words_and_skips_what_doesnt_parse():
     assert parse.transcript([]) == "" and parse.transcript(None) == "" and parse.transcript([7]) == ""
 
 
+def test_merge_keeps_each_recording_once_newest_first():
+    older, newer = rec("r1", "Old", "a1", created=100), rec("r2", "New", "a2", created=200)
+    merged = parse.merge([[[older], 1], [[newer, ["bad"], rec("r1", "Old again", "a1", created=100)], 1], None, [7]])
+    assert merged == [[newer, older, ["bad"]], None]  # first-seen r1 kept; unparseable sorts last
+    assert [row["id"] for row in parse.recordings(merged)] == ["r2", "r1"]
+    assert parse.page_items([[older], 1]) == [older] and parse.page_items(None) == [] and parse.page_items([7]) == []
+
+
 # The page.
 
 def recorder_page(recordings: list, *, transcripts: dict | None = None, files: dict | None = None) -> ScriptedPage:
@@ -132,6 +140,64 @@ def recorder_page(recordings: list, *, transcripts: dict | None = None, files: d
     for audio_id, words in (transcripts or {}).items():
         responses[RECORDING_URL.format(audio_id=audio_id)] = [Response(RPC + "GetTranscription", words)]
     return ScriptedPage(responses=responses, files=files or {})
+
+
+class PagedRecorderPage(ScriptedPage):
+    """The real app's paging (captured live 2026-10-23): GetRecordingList answers PAGE_SIZE recordings at a time; the
+    first page comes when the app opens, and each later one only once its list is scrolled to the end."""
+
+    def __init__(self, pages: list, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.responses.setdefault(APP_URL, []).append(Response(RPC + "GetRecordingList", [pages[0], 1]))
+        self.later = [Response(RPC + "GetRecordingList", [items, 1]) for items in pages[1:]]
+        self.scrolled = 0
+
+    async def evaluate(self, script: str, arg=None):
+        assert script == fetch.SCROLL_TO_END
+        self.scrolled += 1
+        if self.later:
+            response = self.later.pop(0)
+            for handler in list(self.listeners["response"]):
+                await handler(response)
+        return 1
+
+
+def library(count: int) -> list:
+    """`count` recordings, newest first, in pages of PAGE_SIZE."""
+    recs = [rec(f"r{i}", f"Call {i}", f"a{i}", created=1790000000 - i) for i in range(count)]
+    return [recs[i:i + endpoints.PAGE_SIZE] for i in range(0, count, endpoints.PAGE_SIZE)]
+
+
+@pytest.fixture
+def quick(monkeypatch):
+    monkeypatch.setattr(fetch, "MORE_SECONDS", 0.01)
+
+
+def test_the_list_reads_every_page_not_just_the_first(monkeypatch, quick):
+    pages = library(26)  # 10 + 10 + 6, like the live library (86 = 8 x 10 + 6)
+    pages[1].insert(0, pages[0][-1])  # a recording the app sends twice is listed once
+    page = install(monkeypatch, PagedRecorderPage(pages))
+    rows = asyncio.run(fetch.recordings())
+    assert [row["id"] for row in rows] == [f"r{i}" for i in range(26)]
+    assert page.scrolled == 2 and page.listeners["response"] == []  # the short page ends it: no extra scroll
+
+
+def test_a_full_last_page_ends_after_quiet_scrolls(monkeypatch, quick):
+    page = install(monkeypatch, PagedRecorderPage(library(20)))
+    assert len(asyncio.run(fetch.recordings())) == 20
+    assert page.scrolled == 1 + endpoints.MORE_TRIES  # one brought page 2, then MORE_TRIES brought nothing
+
+
+def test_the_list_stops_at_its_deadline(monkeypatch, quick):
+    monkeypatch.setattr(fetch, "LIST_SECONDS", 0)
+    page = install(monkeypatch, PagedRecorderPage(library(30)))
+    assert len(asyncio.run(fetch.recordings())) == 10 and page.scrolled == 0
+
+
+def test_a_recording_past_the_first_page_has_its_transcript(monkeypatch, quick):
+    install(monkeypatch, PagedRecorderPage(library(15), responses={
+        RECORDING_URL.format(audio_id="a12"): [Response(RPC + "GetTranscription", WORDS)]}))
+    assert asyncio.run(fetch.transcript("r12")) == {"id": "r12", "title": "Call 12", "text": "Hello world."}
 
 
 def test_transcript_opens_the_recordings_page_and_reads_its_answer(monkeypatch):

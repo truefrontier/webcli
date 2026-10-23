@@ -1,7 +1,7 @@
 """Browser-side work for webcli recorder: status, the recording list, a transcript, audio, and sync. READ-ONLY.
 
-The list and transcripts are the page's own gRPC-web answers (INTERCEPT): GetRecordingList when the app opens,
-GetTranscription when a recording's page opens. Audio is fetched with the profile's cookies (page.request), every
+The list and transcripts are the page's own gRPC-web answers (INTERCEPT): every GetRecordingList page the app asks
+for while its list is scrolled to the end (it pages 10 at a time), GetTranscription when a recording's page opens. Audio is fetched with the profile's cookies (page.request), every
 hop checked (guard.audio_url_allowed). Files are written where the command asked, 0600, by whichever process runs
 this (the identity daemon, or the command itself).
 """
@@ -18,7 +18,16 @@ from webcli.core.errors import AuthRequired, NotFound
 from webcli.core.redact import redact_text
 from webcli.sites import google
 from webcli.sites.recorder import parse
-from webcli.sites.recorder.endpoints import APP_URL, AUDIO_URL, RECORDING_URL, RPC_SECONDS
+from webcli.sites.recorder.endpoints import (
+    APP_URL,
+    AUDIO_URL,
+    LIST_SECONDS,
+    MORE_SECONDS,
+    MORE_TRIES,
+    PAGE_SIZE,
+    RECORDING_URL,
+    RPC_SECONDS,
+)
 from webcli.sites.recorder.guard import POLICY, audio_url_allowed, rpc_method
 
 if TYPE_CHECKING:
@@ -27,6 +36,23 @@ if TYPE_CHECKING:
 SNIFF_HINT = ("Recorder's page may have changed; run `python -m webcli.core.capture recorder` and fix "
               "webcli/sites/recorder/endpoints.py.")
 LIST_HINT = "run: webcli recorder list"
+# Scroll every scrollable element, shadow roots included, to its end: the recording list lives in the app's shadow
+# DOM, and reaching its end is what makes the app ask for the next page. Returns how many it scrolled.
+SCROLL_TO_END = """() => {
+  let scrolled = 0;
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+      if (el.scrollHeight > el.clientHeight + 10 && ['auto', 'scroll'].includes(getComputedStyle(el).overflowY)) {
+        el.scrollTop = el.scrollHeight;
+        scrolled++;
+      }
+    }
+  };
+  walk(document);
+  window.scrollTo(0, document.documentElement.scrollHeight);
+  return scrolled;
+}"""
 
 
 async def _answer(page: "Page", method: str, url: str) -> Any:
@@ -54,12 +80,45 @@ async def _answer(page: "Page", method: str, url: str) -> Any:
 
 
 async def _recordings(page: "Page") -> list[dict]:
-    # ponytail: the first GetRecordingList page only (its cursor is ignored), as google-recorder-cli did; follow the
-    # cursor if a library outgrows it.
-    data = await _answer(page, "GetRecordingList", APP_URL)
-    if data is None:
-        raise RuntimeError(f"Recorder sent no recording list within {RPC_SECONDS}s.{google.blocked()} {SNIFF_HINT}")
-    return parse.recordings(data)
+    """Every recording, newest first. The app pages GetRecordingList PAGE_SIZE at a time and asks for the next page
+    only when its list is scrolled to the end, so: keep every page it answers, scroll to the end until a page comes
+    back short, or MORE_TRIES scrolls in a row bring nothing (the app has nothing more to show), or LIST_SECONDS."""
+    loop = asyncio.get_running_loop()
+    pages: list = []
+    arrived = asyncio.Event()
+
+    async def on_response(response) -> None:
+        if response.request.method != "POST" or rpc_method(response.url) != "GetRecordingList":
+            return
+        try:
+            data = await response.json()
+        except Exception:
+            return
+        pages.append(data)
+        arrived.set()
+
+    async def next_page(seconds: float) -> bool:
+        try:
+            await asyncio.wait_for(arrived.wait(), seconds)
+        except asyncio.TimeoutError:
+            return False
+        arrived.clear()
+        return True
+
+    page.on("response", on_response)
+    try:
+        await google.open_app(page, APP_URL)
+        if not await next_page(RPC_SECONDS):
+            raise RuntimeError(f"Recorder sent no recording list within {RPC_SECONDS}s.{google.blocked()} {SNIFF_HINT}")
+        deadline = loop.time() + LIST_SECONDS
+        quiet = 0
+        while (quiet < MORE_TRIES and loop.time() < deadline
+               and all(len(parse.page_items(data)) >= PAGE_SIZE for data in pages)):
+            await page.evaluate(SCROLL_TO_END)
+            quiet = 0 if await next_page(MORE_SECONDS) else quiet + 1
+    finally:
+        page.remove_listener("response", on_response)
+    return parse.recordings(parse.merge(pages))
 
 
 def _find(rows: list[dict], recording_id: str) -> dict:
