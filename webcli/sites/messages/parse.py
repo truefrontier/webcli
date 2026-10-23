@@ -102,7 +102,7 @@ DEFAULT_COUNTRY = "1"  # a 10-digit number with no country code is a US/NANP one
 
 
 def normalize_number(text: str | None, country: str = DEFAULT_COUNTRY) -> str | None:
-    """`text` as an E.164 number ("+14175550100"), punctuation aside: "+" and 8-15 digits; "011" then the number
+    """`text` as an E.164 number ("+12025550100"), punctuation aside: "+" and 8-15 digits; "011" then the number
     (dialled from the US); 10 digits (the default country, +1); or 11 digits starting with the country code. None
     for anything else: letters, a short code, a local 7-digit number."""
     text = (text or "").strip()
@@ -138,6 +138,27 @@ def national(number: str) -> str:
     """What to type into the contact picker for an E.164 number: the 10 national digits for +1 (what the picker
     matches, LIVE), else the E.164 number itself."""
     return number[2:] if number.startswith("+1") and len(number) == 12 else number
+
+
+def typed_forms(number: str) -> list[str]:
+    """What to type into the contact picker for an E.164 number, best first. LIVE (2026-10-23): the picker matches a
+    contact's number as it was saved, from its start: one saved as 2025550100 only by "2025550100", one saved as
+    +12025550100 only by "+12025550100" (not by "2025550100", "12025550100", or "(202) 555-0100"). So for +1: the
+    national digits, then the E.164 number, then the (202) 555-0100 form; else the E.164 number alone."""
+    nat = national(number)
+    if nat == number:
+        return [number]
+    return [nat, number, f"({nat[:3]}) {nat[3:6]}-{nat[6:]}"]
+
+
+def has_number(people: list[dict], number: str) -> bool:
+    """A picker contact has this number."""
+    return any(same_number(n["number"], number) for c in people for n in c["numbers"])
+
+
+def same_text(a: str | None, b: str | None) -> bool:
+    """A bubble shows exactly this text, runs of whitespace (a line break shown as a space, or none) aside."""
+    return " ".join((a or "").split()) == " ".join((b or "").split())
 
 
 def _fold(text: str | None) -> str:
@@ -391,7 +412,7 @@ def recipient(query: str, people: list[dict]) -> dict:
                        hint="Pass the phone number instead.")
     if len(numbers) > 1:
         raise UsageError(f"The contact {names[0]!r} has {len(numbers)} numbers: {', '.join(numbers)}. Pass the "
-                         "one to text.", hint="--to with the number, e.g. --to +14175550100.")
+                         "one to text.", hint="--to with the number, e.g. --to +12025550100.")
     return {"query": query, "name": names[0], "number": numbers[0]}
 
 
@@ -455,6 +476,62 @@ def conversation_people(row: dict) -> list[dict]:
     """An existing conversation's members as recipients, from its name (a group's names joined by ", ")."""
     return [{"name": "" if normalize_number(part) else part, "number": normalize_number(part) or ""}
             for part in header_parts(row["name"])]
+
+
+def participants(raw) -> list[dict]:
+    """The people the open conversation's Details dialog lists, as recipients {name, number (E.164, else as shown)}.
+    A person who isn't a contact shows only the number, in the name's place (LIVE): name "" then."""
+    out = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        name, shown = _clean(item.get("name")), _shown_number(_clean(item.get("number")))
+        if not shown and normalize_number(name):
+            name, shown = "", name
+        out.append({"name": name, "number": normalize_number(shown) or shown})
+    return out
+
+
+def numbers_match(members: list[dict], people: list[dict]) -> bool:
+    """The conversation's people (participants()) are exactly `people` by number: as many, each number once. A
+    member without a number Messages can text never matches."""
+    if len(members) != len(people) or not all(normalize_number(m["number"]) for m in members):
+        return False
+    left = list(people)
+    for member in members:
+        match = next((p for p in left if p.get("number") and same_number(member["number"], p["number"])), None)
+        if match is None:
+            return False
+        left.remove(match)
+    return not left
+
+
+def uses_number(members: list[dict], number: str) -> bool:
+    """A 1:1 conversation's one person has this number."""
+    return len(members) == 1 and bool(normalize_number(members[0]["number"])) and same_number(members[0]["number"],
+                                                                                            number)
+
+
+def with_numbers(results: list[dict], numbers: dict[str, list[str]]) -> list[dict]:
+    """search_deep's rows with the numbers each conversation uses ({conversation id: its people's numbers}, from
+    their Details): a conversation row gains numbers (null when unread), and number when it is a 1:1; a contact
+    row's id becomes the 1:1 that uses its number, when one was read."""
+    one = {cid: nums[0] for cid, nums in numbers.items() if len(nums) == 1}
+    out = []
+    for row in results:
+        row = dict(row)
+        if row["kind"] == "conversation":
+            row["numbers"] = numbers.get(row["id"]) if row["id"] else None
+            if row["id"] in one:
+                row["number"] = one[row["id"]]
+        elif row["number"]:
+            mine = [cid for cid, number in one.items() if same_number(number, row["number"])]
+            if len(mine) == 1:
+                row["id"] = mine[0]
+            elif row["id"] in one and not same_number(one[row["id"]], row["number"]):
+                row["id"] = None  # the 1:1 by its name uses another number
+        out.append(row)
+    return out
 
 
 def message_text(text: str | None) -> str:

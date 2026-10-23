@@ -156,6 +156,21 @@ SELECTORS = {
     "chip": "mw-contact-chips-input mat-chip-option",  # a recipient picked in group mode; its text is the name
     "next": "button[data-e2e-next-button]",  # group mode: open (or create) the group conversation
     "back": "mws-header a[data-e2e-header-back-button]",
+    # --- A conversation's members and their numbers (LIVE 2026-10-23, read-only: the guard passes nothing new) ---
+    # The header shows a contact's name, never its number. Its menu's "Details" opens a dialog listing the people in
+    # the conversation, each with its number (a person who isn't a contact shows only the number, as the name). The
+    # same menu holds Archive and Move to trash, and the dialog holds Report spam, Add people, and a mute toggle:
+    # only the Details button is ever clicked, and the dialog is closed with Escape (else its Cancel button).
+    "menu": "mws-header[data-e2e-conversation-header] button[data-e2e-conversation-menu-button]",
+    "detailsButton": "button[data-e2e-details-button]",
+    "details": "mat-dialog-container mw-conversation-details",
+    "participant": "mat-dialog-container mw-conversation-details li[data-e2e-details-participant]",
+    "participantName": "[data-e2e-details-participant-name]",
+    "participantNumber": "[data-e2e-details-participant-number]",
+    "dialogCancel": "mat-dialog-container button[data-e2e-action-button-cancel]",
+    # LIVE (2026-10-23): a bubble's text, its line breaks <br> elements (textContent drops them), next to a link
+    # preview (mws-link-preview-decorator) whose title and description are not the message.
+    "linkPreview": "mws-link-preview-decorator, [data-e2e-link-preview]",
 }
 # The compose box, visible one first: the contenteditable mirror; its paired <textarea> is often hidden.
 INPUTS = ("div[contenteditable=\"true\"][data-e2e-message-input-box]", "mws-message-compose div[contenteditable=\"true\"]",
@@ -177,10 +192,17 @@ CONFIRM_SECONDS = 15  # the thread shows the sent text within this
 IMAGE_SECONDS = 20  # the lightbox shows the full-size image within this (a phone photo is ~7 MB over the relay)
 CLOSE_SECONDS = 5  # the lightbox is gone within this after Escape
 # Deeper lookups (LIVE 2026-10-22: 25 more conversations arrive 3-8s after a click on "Load more").
+LIST_PAGE = 25  # conversations per "Load more" page (and the newest listed at first)
 DEEP_PAGES = 8  # default "Load more" clicks for search / read / send --to past the first 25 (about 225 conversations)
 MAX_PAGES = 40  # the cap --pages accepts
 MORE_SECONDS = 12  # one "Load more" click lists more rows within this, or the list is complete
 PACE_MS = 750  # a pause between "Load more" clicks: the lookup stays gentle
 PICKER_SECONDS = 8  # the contact picker settles (its contacts and group results stop changing) within this
+GROUP_BUTTON_SECONDS = 8  # LIVE: Start chat re-renders "Start group conversation" ~250ms after its input is emptied
+DETAILS_SECONDS = 8  # the Details dialog lists the conversation's people within this
+DETAILS_MAX = 6  # search: read the numbers of at most this many conversations it found (each opens, a read)
+# LIVE: once the picker names the contact a query means, the lookup may load past --pages' default to find its 1:1
+# (it stops as soon as that is listed); an explicit --pages still caps it.
+CONTACT_PAGES = 20
 CREATE_SECONDS = 10  # send --new-ok --confirm: the one GET_OR_CREATE_CONVERSATION slot stays open this long
 SESSION_LOCK = "messages.session.lock"  # run/<this>: one Google Messages web session at a time, every identity

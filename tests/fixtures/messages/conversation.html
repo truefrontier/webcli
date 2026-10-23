@@ -1,0 +1,46 @@
+<!doctype html>
+<!-- Sanitized from Google Messages for Web (LIVE 2026-10-23): an open group conversation, two bubbles (one outgoing,
+     its text with a line break and a link with a link preview beside it), and its menu's Details dialog. Made-up
+     names, 555-01xx numbers. -->
+<html><body>
+<mws-header data-e2e-conversation-header>
+  <div data-e2e-header-title><h2>Casey Placeholder, (202) 555-0142</h2></div>
+  <button data-e2e-conversation-menu-button aria-label="Options" onclick="window.__menu = (window.__menu || 0) + 1">More</button>
+</mws-header>
+<mws-messages-list>
+  <mws-message-wrapper is-outgoing="false" msg-id="m1">
+    <div data-e2e-message-wrapper-core class="msg-row incoming" data-e2e-message-outgoing="false">
+      <mws-text-message-part aria-label="Casey Placeholder said: Are we still on?">
+        <div data-e2e-text-message-content class="text-msg-container incoming">
+          <mws-message-part-content><div class="text-msg-content"><div class="text-msg msg-content"><div>Are we still on?</div></div></div></mws-message-part-content>
+        </div>
+      </mws-text-message-part>
+    </div>
+  </mws-message-wrapper>
+  <mws-message-wrapper is-outgoing="true" msg-id="m2">
+    <div data-e2e-message-wrapper-core class="msg-row outgoing" data-e2e-message-outgoing="true">
+      <mws-text-message-part aria-label="You said: Yes, 6pm. See https://example.com/plan">
+        <div data-e2e-text-message-content class="text-msg-container outgoing">
+          <mws-message-part-content>
+            <div class="text-msg-content"><div class="text-msg msg-content"><div>Yes, 6pm.<br>See <a href="https://example.com/plan">https://example.com/plan</a></div></div></div>
+            <mws-link-preview-decorator><div class="title">Example plan page</div><div class="description">A made-up preview</div></mws-link-preview-decorator>
+          </mws-message-part-content>
+        </div>
+      </mws-text-message-part>
+      <mws-message-status><div data-e2e-message-status><mws-absolute-timestamp>6:01 PM</mws-absolute-timestamp><mws-icon data-e2e-delivered-status-icon>done_all</mws-icon></div></mws-message-status>
+    </div>
+  </mws-message-wrapper>
+</mws-messages-list>
+<div class="cdk-overlay-container">
+  <mat-dialog-container role="dialog">
+    <mw-conversation-details>
+      <h2>Details</h2>
+      <ul>
+        <li data-e2e-details-participant><h3 data-e2e-details-participant-name>Casey Placeholder</h3><span data-e2e-details-participant-number>(202) 555-0123</span></li>
+        <li data-e2e-details-participant><h3 data-e2e-details-participant-name>(202) 555-0142</h3><span data-e2e-details-participant-number></span></li>
+      </ul>
+      <button data-e2e-action-button-cancel onclick="this.closest('mat-dialog-container').remove()">Cancel</button>
+    </mw-conversation-details>
+  </mat-dialog-container>
+</div>
+</body></html>

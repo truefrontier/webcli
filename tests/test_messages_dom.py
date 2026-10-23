@@ -112,3 +112,28 @@ def test_open_elsewhere_is_detected_and_never_clicked(load, name):
     state = page.evaluate(fetch.STATE_JS, SELECTORS)
     assert parse.state(state) == "use_here"
     assert page.evaluate("window.__useHere || 0") == 0
+
+
+def test_bubble_text_keeps_line_breaks_without_the_link_preview(load):
+    # LIVE (2026-10-23): textContent dropped the <br>, so a sent text with a line break never matched (exit 8).
+    page = load("conversation.html")
+    rows = parse.messages(page.evaluate(fetch.MESSAGES_JS, SELECTORS))
+    assert [(r["direction"], r["text"]) for r in rows] == [
+        ("received", "Are we still on?"), ("sent", "Yes, 6pm.\nSee https://example.com/plan")]
+    assert fetch._sent_count(rows, "Yes, 6pm.\nSee https://example.com/plan") == 1
+    assert fetch._sent_count(rows, "Yes, 6pm.\r\nSee https://example.com/plan ") == 1  # whitespace runs aside
+    assert fetch._sent_count(rows, "Yes, 6pm.See https://example.com/plan") == 0
+
+
+def test_details_dialog_lists_people_with_numbers(load):
+    page = load("conversation.html")
+    assert page.evaluate(fetch.OVERLAY_JS, SELECTORS) is True
+    members = parse.participants(page.evaluate(fetch.DETAILS_JS, SELECTORS))
+    assert members == [{"name": "Casey Placeholder", "number": "+12025550123"},
+                       {"name": "", "number": "+12025550142"}]  # not a contact: the number in the name's place
+    casey = {"name": "Casey Placeholder", "number": "+12025550123"}
+    assert parse.numbers_match(members, [casey, {"name": "", "number": "+12025550142"}])
+    assert not parse.numbers_match(members, [casey, {"name": "", "number": "+12025550143"}])
+    assert page.evaluate(fetch.CLICK_JS, SELECTORS["menu"]) is True and page.evaluate("window.__menu") == 1
+    assert page.evaluate(fetch.CLICK_JS, SELECTORS["dialogCancel"]) is True
+    assert page.evaluate(fetch.DETAILS_JS, SELECTORS) is None and page.evaluate(fetch.OVERLAY_JS, SELECTORS) is False

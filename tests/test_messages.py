@@ -126,6 +126,8 @@ class Locator:
 
     async def fill(self, text: str) -> None:
         if self.kind == "contact":  # the Start chat picker's input: it filters contacts, nothing reaches a chat
+            if not text and self.web.typed and self.web.group_lag:
+                self.web.group_hidden = 1
             self.web.typed = text
             self.web.typed_log.append(text)
             return
@@ -141,7 +143,8 @@ class Locator:
         self.web.clicks += 1
         if self.web.relay(self.web.click_sends) and self.web.composed:
             thread = self.web.bubbles.setdefault(self.web.thread, [])
-            thread.append({"sent": True, "text": self.web.composed, "image": False, "aria": "", "time": "now"})
+            thread.append({"sent": True, "text": self.web.bubble_text(self.web.composed), "image": False, "aria": "",
+                           "time": "now"})
             self.web.delivered.append((self.web.thread, self.web.composed))
             self.web.composed = ""
 
@@ -154,7 +157,9 @@ class MessagesWeb:
     def __init__(self, *, paired: bool = True, use_here: bool = False, rows=None, title=None, loads: bool = True,
                  read_back: str | None = None, click_sends: str = "SEND_MESSAGE", queued: str | None = None,
                  on_button=None, dies_after_send: bool = False, full_size: bool = True, sticky: bool = False,
-                 older=None, contacts=None, groups=None, page_size: int = 2, new_title=None) -> None:
+                 older=None, contacts=None, groups=None, page_size: int = 2, new_title=None, details=None,
+                 live_match: bool = False, group_lag: bool = False, sticky_details: bool = False,
+                 bubble_text=None) -> None:
         self.paired, self.use_here, self.loads, self.full_size = paired, use_here, loads, full_size
         self.sticky = sticky  # the lightbox ignores Escape
         self.rows = ROWS if rows is None else rows
@@ -179,7 +184,22 @@ class MessagesWeb:
         self.created: list[list[str]] = []
         self.new_title = new_title  # the title a conversation Start chat opens shows (default: its members)
         self.titles: dict[str, str] = {}
+        # The conversation menu's Details dialog: `details` {thread: [{name, number}] as the dialog shows them (a
+        # non-contact's number in the name's place)}; by default the members of the row's name, a contact's number
+        # from `contacts`, and a created conversation's picked numbers. live_match: the picker matches a contact by
+        # its number as saved, from the start (LIVE: "+1 555..." is found by "+1555...", not by "555...").
+        # group_lag: "Start group conversation" is missing for one click after the input is emptied (LIVE).
+        self.details = dict(details or {})
+        self.bubble_text = bubble_text or (lambda text: text)  # how a sent text reads back in its bubble
+        self.live_match, self.group_lag, self.sticky_details = live_match, group_lag, sticky_details
+        self.menu_open = self.details_open = False
+        self.details_reads = 0
+        self.group_hidden = 0
+        self.picked: list[str] = []
+        self.numbers: dict[str, list[str]] = {}
         self.page = ScriptedPage(answers={
+            "/* messages:details */": self.details_shown, "/* messages:overlay */": lambda _s: (
+                self.details_open or self.menu_open),
             "/* messages:picker */": self.picker, "/* messages:click */": self.click_selector,
             "/* messages:pick */": self.pick,
             "/* messages:state */": self.state, "/* messages:use-here */": self.click_use_here,
@@ -250,7 +270,7 @@ class MessagesWeb:
         _s, wanted = arg
         if not any(parse.thread_id(r["href"]) == wanted for r in self.rows):
             return False
-        self.thread, self.path = wanted, f"/web/conversations/{wanted}"
+        self.thread, self.path, self.picking = wanted, f"/web/conversations/{wanted}", False
         self.page.url = "https://messages.google.com" + self.path
         if self.online:
             self.relay("LIST_MESSAGES")
@@ -286,6 +306,8 @@ class MessagesWeb:
         self.page.keys.append(key)
         if key == "Escape" and not self.sticky:
             self.viewing = None
+        if key == "Escape" and not self.sticky_details:
+            self.menu_open = self.details_open = False
 
     def locator(self, selector: str) -> Locator:
         if selector == SELECTORS["contactInput"]:
@@ -314,8 +336,11 @@ class MessagesWeb:
         out = []
         for block in self._blocks():
             name = block[0].get("name", "")
-            if (typed.casefold() in name.casefold()
-                    or (len(want) >= 3 and any(want in parse.digits(r.get("number")) for r in block))):
+            if self.live_match:
+                by_number = any(parse.digits(r.get("number")).startswith(want) for r in block)
+            else:
+                by_number = any(want in parse.digits(r.get("number")) for r in block)
+            if typed.casefold() in name.casefold() or (len(want) >= 3 and by_number):
                 out.extend(block)
         return out
 
@@ -344,7 +369,20 @@ class MessagesWeb:
             self.older = self.older[self.page_size:]
             return True
         if selector == SELECTORS["startGroup"] and self.picking:
+            if self.group_hidden:
+                self.group_hidden -= 1
+                return False
             self.group_mode = True
+            return True
+        if selector == SELECTORS["menu"] and self.thread and not self.picking:
+            self.menu_open = True
+            return True
+        if selector == SELECTORS["detailsButton"] and self.menu_open:
+            self.menu_open, self.details_open = False, True
+            self.details_reads += 1
+            return True
+        if selector == SELECTORS["dialogCancel"] and self.details_open and not self.sticky_details:
+            self.details_open = False
             return True
         if selector == SELECTORS["next"] and self.group_mode and self.chips:
             return self.create(list(self.chips))
@@ -353,7 +391,7 @@ class MessagesWeb:
     def pick(self, arg) -> bool:
         _s, kind, index = arg
         if kind == "sendTo":
-            shown = self.typed.strip()
+            shown = number = self.typed.strip()
         else:
             rows = self._shown_contacts()
             if index >= len(rows):
@@ -361,7 +399,8 @@ class MessagesWeb:
             name = ""
             for row in rows[:index + 1]:
                 name = row.get("name") or name if not row.get("continued") else name
-            shown = name or rows[index]["number"]
+            shown, number = name or rows[index]["number"], rows[index]["number"]
+        self.picked.append(number)
         if self.group_mode:
             self.chips.append(shown)
             return True
@@ -373,6 +412,7 @@ class MessagesWeb:
             return True  # the click happened; the page just never opens a conversation
         thread = f"n{len(self.created) + 1}"
         self.created.append(members)
+        self.numbers[thread], self.picked = self.picked[-len(members):], []
         name = ", ".join(members)
         self.rows = [{"href": f"/web/conversations/{thread}", "name": name, "preview": "", "timestamp": "",
                       "unread": False}, *self.rows]
@@ -380,6 +420,30 @@ class MessagesWeb:
         self.thread, self.path, self.picking = thread, f"/web/conversations/{thread}", False
         self.page.url = "https://messages.google.com" + self.path
         return True
+
+    def _contact_number(self, name: str) -> str:
+        for block in self._blocks():
+            if block[0].get("name", "").casefold() == name.casefold():
+                return block[0].get("number", "")
+        return ""
+
+    def members(self, thread: str) -> list[dict]:
+        """The Details dialog's people for `thread`, as the page shows them."""
+        if thread in self.details:
+            return self.details[thread]
+        row = next((r for r in [*self.rows, *self.groups] if parse.thread_id(r["href"]) == thread), None)
+        parts = parse.header_parts(self.titles.get(thread) or (row or {}).get("name"))
+        numbers = self.numbers.get(thread) or [None] * len(parts)
+        out = []
+        for part, number in zip(parts, numbers):
+            if parse.normalize_number(part):
+                out.append({"name": part, "number": ""})  # not a contact: the number in the name's place
+            else:
+                out.append({"name": part, "number": number or self._contact_number(part) or "(202) 555-0188"})
+        return out
+
+    def details_shown(self, _s) -> list[dict] | None:
+        return self.members(self.thread) if self.details_open and self.thread else None
 
     def sent(self) -> list[str]:
         return [action for action, ok in self.wire if ok and action in ("SEND_MESSAGE", "SEND_REPLY", "RESEND_MESSAGE")]
@@ -709,7 +773,7 @@ def test_read_without_image_out_lets_no_attachment_download_out(web):
     assert site.page.options == {"download": False} and site.media is False
     assert "GET instantmessaging-pa.googleapis.com/upload" in guard.state.blocked
     assert all("images" not in m for m in found["messages"]) and "imagesMissing" not in found
-    assert site.page.keys == []  # no lightbox opened
+    assert site.page.keys == ["Escape"]  # no lightbox opened: only the Details dialog, closed again
 
 
 def test_read_image_out_saves_each_image_full_size_and_stays_read_only(web, tmp_path):
@@ -719,7 +783,7 @@ def test_read_image_out_saves_each_image_full_size_and_stays_read_only(web, tmp_
     path = tmp_path / "101-1.jpg"
     assert path.read_bytes() == JPEG + b"full-2-0"  # the lightbox's blob, not the thumbnail's
     assert [m["images"] for m in found["messages"]] == [[], [], [str(path.resolve())], []]
-    assert found["imagesMissing"] == 0 and site.viewing is None and site.page.keys == ["Escape"]
+    assert found["imagesMissing"] == 0 and site.viewing is None and site.page.keys == ["Escape"] * 2
     assert ("MESSAGE_READ", False) in site.wire  # still unread
     assert [action for action, ok in site.wire if ok] == ["LIST_CONVERSATIONS", "LIST_MESSAGES"]
 
