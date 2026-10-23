@@ -664,7 +664,8 @@ async def search(query: str, pages: int | None = None, *, headed: bool = False, 
 
 async def _numbers_of(page: "Page", results: list[dict], known: dict | None = None) -> dict[str, list[str]]:
     """{conversation id: its people's numbers} for the first DETAILS_MAX conversation rows (1:1s first) that open
-    from the page as it is (the list, or the picker's group results; never a reload, which would drop the loaded pages)."""
+    from the page as it is (the list, or the picker's group results; never a reload, which would drop the loaded
+    pages)."""
     read: dict[str, list[str]] = {}
     known = known or {}
     rows = [r for r in results if r["kind"] == "conversation" and r["id"] and r["id"] not in known]

@@ -107,13 +107,15 @@ WRITES = [
     "recipients, created (whether Messages created or opened it), threadId.",
     "A confirmed send checks the page first: the open conversation is the resolved one (its id in the URL, and its "
     "title when the page shows one; when --to or an --expect-recipient is a number, its Details' numbers too, dry "
-    "run included, as {numbers}: unreadable or another number exits 5), the compose box holds exactly the text, and the page has tried no send of its "
+    "run included, as {numbers}: unreadable or another number exits 5), the compose box holds exactly the text, "
+    "and the page has tried no send of its "
     f"own. Only then does the guard open its one slot, for {SEND_SECONDS}s after the click: one SEND_MESSAGE, "
     "nothing else. The guard can't read the conversation or text (Google Messages encrypts them end to end), so "
     "those page checks are what bind the send to them. A send is never retried.",
     f"Exit codes for a confirmed send: 0 when it went out and the conversation then showed the text ({{sent: true, "
     f"confirmed: true}}). 8 (error \"sent_unverified\") when it went out but the conversation didn't show the text "
-    f"within {CONFIRM_SECONDS}s (whitespace aside: a line break reads back as one) ({{sent: true, confirmed: false}} still on stdout): the text was sent, so check "
+    f"within {CONFIRM_SECONDS}s (whitespace aside: a line break reads back as one) ({{sent: true, confirmed: "
+    "false} still on stdout): the text was sent, so check "
     "`webcli messages read <threadId>` and don't send it again. 5 when nothing went out: a page check refused "
     "(\"REFUSED: ... Nothing was sent.\") or the click sent nothing (\"... Nothing was sent.\"); then there is no "
     "stdout. titleChecked (whether the page showed a title to match before the click) doesn't change the exit code.",
