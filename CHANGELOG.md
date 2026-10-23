@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.4 (2026-10-23)
+
+`webcli linkedin posts search` reads results again when LinkedIn serves its search cards without their
+`data-view-name` tags, and dates the newest posts so `--sort latest` orders them.
+
+### Fixed
+
+- **`posts search` exited 3 "search page showed no result cards" though the page showed them.** Once another
+  linkedin command (`feed`, say) had run in the daemon's browser, LinkedIn served the search page's cards with no
+  `data-view-name` attributes at all, and every card selector keyed on them: the cards-ready wait timed out, no card
+  had an author, and none was kept. The card scripts (`CARD_PARTS_JS` in `webcli/sites/linkedin/fetch.py`) still use
+  the tags when they are there and otherwise read the author from the card's profile link (outside the text, the
+  one beside the avatar), the text from `[data-testid="expandable-text-box"]`, and the counts from the action
+  buttons' aria-labels. Both markups give the same rows (tests/fixtures/linkedin, made-up names).
+- **Cards rendered but unreadable now say so.** The exit-3 message names the card markup (`CARD_PARTS_JS`) instead
+  of "no result cards" when cards rendered without a readable author.
+- **"Just now" posts had no `posted_at`**, so `--sort latest` put the newest last. "Just now", "now", and
+  "with 2 others • Just now" are now read as times, and no longer taken for a headline.
+- **Fewer null urns.** Urns are also read from `ugcPost`/`share` updates in the page's payload, and from the page's
+  own streamed responses (`/flagship-web/rsc-action/actions/server-stream-request`, read when they finish, never
+  waited for). Article cards linked by `feed-article-image`/`feed-article-description` are `kind: article`.
+
 ## 0.12.3 (2026-10-23)
 
 `webcli messages` fixes from its first real sends: group sends start, a number finds its contact's conversation,

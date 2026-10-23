@@ -62,6 +62,9 @@ SEARCH_FEED = "FLAGSHIP_SEARCH"  # the search results' card ids: expanded<key>Fe
 # with exactly this pager and screen (guard.search_page_allowed).
 PAGINATION_PATH = "/flagship-web/rsc-action/actions/pagination"
 PAGINATION_QUERY_KEYS = frozenset({"parentSpanId", "sduiid"})
+# The page's own streamed GET that fills in some result cards after the first render: read-only, already let through
+# as a GET. `posts search` reads its body for urns when it finishes, and never waits for it.
+STREAM_PATH = "/flagship-web/rsc-action/actions/server-stream-request"
 SEARCH_PAGER = "com.linkedin.sdui.search.contentSearchResults"
 SEARCH_SCREEN = "com.linkedin.sdui.flagshipnav.search.SearchResultsContent"
 MAX_POSTS = 50  # the hard cap: no post command returns more than this many posts

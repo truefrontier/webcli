@@ -320,6 +320,7 @@ def profile_urn(data: Any, handle: str) -> str | None:
 # --- Rendered SDUI post cards (search results, company pages) ------------------------------------------------------
 
 _TIME = re.compile(r"^(\d+)\s*(s|m|h|d|w|mo|yr)\b", re.I)
+_NOW = re.compile(r"^(just now|now)\b", re.I)  # a post minutes old: what --sort latest mostly shows
 _DEGREE = re.compile(r"^(•\s*)?(1st|2nd|3rd\+?|following|you|verified|premium|influencer|author)$", re.I)
 _SHARE_ID = re.compile(r"(shareId|ugcPostId|activityId)=(\d{15,25})")
 _ACTIONS = {"follow", "following", "connect", "message", "subscribe", "view my newsletter", "visit my website",
@@ -333,11 +334,23 @@ def card_count(text: str | None) -> int | None:
     return int(value.replace(",", "")) if _COUNT.fullmatch(value) else None
 
 
+def _time_parts(line: str) -> list[str]:
+    """The "•"-separated parts of an actor line ("3h •", "with 2 others • Just now", "2d • Edited")."""
+    return [part.split("Edited")[0].strip() for part in line.split("•")]
+
+
+def _is_time(line: str) -> bool:
+    return any(_TIME.match(part) or _NOW.match(part) for part in _time_parts(line))
+
+
 def _card_time(lines: list[str], now: datetime) -> str | None:
     for line in lines:
-        token = line.replace("•", " ").split("Edited")[0].strip()
-        found = _TIME.match(token)
-        if found:
+        for token in _time_parts(line):
+            if _NOW.match(token):
+                return linkedin_time_to_iso("0s", now=now)
+            found = _TIME.match(token)
+            if not found:
+                continue
             unit = found.group(2).lower()
             if unit in ("mo", "yr"):  # months and years: too coarse to compute; still a known-old post
                 days = int(found.group(1)) * (30 if unit == "mo" else 365)
@@ -370,9 +383,9 @@ def card_row(card: dict, *, now: datetime | None = None) -> dict[str, Any] | Non
     meta = [line.strip() for line in card.get("actorLines") or [] if line and line.strip()]
     meta = meta[meta.index(name) + 1:] if name in meta else meta
     rest = [line for line in meta if not _DEGREE.fullmatch(line) and line.lower() not in _ACTIONS
-            and not (line.startswith("•") and not _TIME.match(line.replace("•", " ").strip()))]
+            and not (line.startswith("•") and not _is_time(line))]
     when = _card_time(rest, now)
-    headline = next((line for line in rest if not _TIME.match(line.replace("•", " ").strip())), None)
+    headline = next((line for line in rest if not _is_time(line)), None)
     urn = card_urn(card)
     header = " ".join(card.get("header") or []).lower()
     article = any("linkedin.com/pulse/" in unquote(str(h)) for h in card.get("articleLinks") or [])
@@ -433,15 +446,21 @@ def search_order(rows: list[dict], sort: str) -> list[dict]:
     return newest_first(rows) if SEARCH_SORTS.get(sort) == "date_posted" else rows
 
 
-def empty_search_reason(query: str, *, cards: int, kept: int, since: datetime | None, page: dict | None) -> str:
+def empty_search_reason(query: str, *, cards: int, kept: int, since: datetime | None, page: dict | None,
+                        rendered: int = 0) -> str:
     """Why a search that answered gave no rows, for stderr: LinkedIn said no results, every result read was older than
-    --since, or no result cards rendered at all."""
+    --since, result cards rendered but none could be read (`rendered`: the raw cards; the markup moved), or no result
+    cards rendered at all."""
     page = page or {}
     if cards and since is not None and not kept:
         return (f"LinkedIn returned {cards} result(s) for {query!r}, but none posted at or after "
                 f"{since.strftime('%Y-%m-%dT%H:%M:%SZ')} (--since). Widen --since, or try --sort latest.")
     if page.get("noResults"):
         return f"LinkedIn found no posts for {query!r}" + (" in that --since window." if since else ".")
+    if rendered and not cards:
+        return (f"LinkedIn's search page rendered {rendered} result card(s) for {query!r}, but no author could be read "
+                "from any of them: the card markup has changed. Update CARD_PARTS_JS in "
+                "webcli/sites/linkedin/fetch.py.")
     return (f"LinkedIn's search page showed no result cards for {query!r} (nothing rendered; the page may have "
             "changed or loaded slowly). Retry once; if it persists, the search page has moved.")
 
@@ -527,17 +546,19 @@ def top_comments(data: Any, urn: str, limit: int) -> list[dict[str, Any]]:
 # --- The page's own RSC payload (search / company cards carry no urn in the DOM) ------------------------------------
 
 _FLIGHT_PAIR = re.compile(
-    r'updateUrnLegacy\\*"\s*:\s*\\*"urn:li:fsd_update:\(urn:li:activity:(\d{15,25})[^"\\]*\\*"\s*,\s*'
+    r'updateUrnLegacy\\*"\s*:\s*\\*"urn:li:fsd_update:\(urn:li:(activity|ugcPost|share):(\d{15,25})[^"\\]*\\*"'
+    r'\s*,\s*'
     r'\\*"url\\*"\s*:\s*\\*"(https://www\.linkedin\.com/posts/[^"\\?\s]+)')
 _POSTS_VANITY = re.compile(r"/posts/([A-Za-z0-9-]{2,100})_")
 
 
 def flight_posts(text: str | None) -> list[tuple[str, str]]:
-    """(activity urn, permalink) per post, in page order, from the server-rendered payload LinkedIn ships with a
-    search or company page (and its read-only pagination responses)."""
+    """(post urn, permalink) per post, in page order, from the server-rendered payload LinkedIn ships with a search
+    or company page (and its read-only pagination and stream responses). The urn is an activity, or (newer) a
+    ugcPost or share."""
     out: dict[str, str] = {}
-    for activity, url in _FLIGHT_PAIR.findall(text or ""):
-        out.setdefault(f"urn:li:activity:{activity}", url)
+    for kind, number, url in _FLIGHT_PAIR.findall(text or ""):
+        out.setdefault(f"urn:li:{kind}:{number}", url)
     return list(out.items())
 
 
