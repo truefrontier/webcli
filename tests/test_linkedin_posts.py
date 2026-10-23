@@ -629,3 +629,40 @@ def test_posts_read_cli_comments(calls):
     result = run("posts", "read", A2, "--format", "csv")
     assert result.exit_code == 0 and "top_comments" in result.output.splitlines()[0]
     assert run("posts", "read", A2, "--format", "md").exit_code == 0
+
+
+def test_flight_pairs_carry_ugcpost_and_share_urns_too():
+    ugc, share = "urn:li:ugcPost:7380000000000000001", "urn:li:share:7380000000000000002"
+    pairs = posts.flight_posts(flight((ugc, "jane-doe_a-ugcPost-7380000000000000001-ab"),
+                                      (share, "john-roe_b-share-7380000000000000002-cd")))
+    assert [urn for urn, _ in pairs] == [ugc, share]
+    assert pairs[0][1] == "https://www.linkedin.com/posts/jane-doe_a-ugcPost-7380000000000000001-ab"
+
+
+def test_posts_search_with_cards_it_cannot_read_names_the_markup_not_the_page(monkeypatch):
+    nameless = {**CARD, "actorName": "", "actorHref": ""}
+    install_search(monkeypatch, SearchPage([[nameless, nameless]], [""], {}))
+    with pytest.raises(NotFound, match=r"rendered 2 result card\(s\).*CARD_PARTS_JS"):
+        asyncio.run(fetch.posts_search("AI adoption", limit=5, sort="latest"))
+
+
+def test_posts_search_reads_urns_from_the_pages_own_stream_responses(monkeypatch):
+    from webcli.sites.linkedin.endpoints import STREAM_PATH
+
+    class StreamingPage(SearchPage):
+        async def goto(self, url, **options):
+            await super().goto(url, **options)
+            self._fire(f"https://www.linkedin.com{STREAM_PATH}?x=1", flight((A2, "jane-doe_a-activity-1-a")))
+
+    install_search(monkeypatch, StreamingPage([[CARD]], [""]))
+    rows = asyncio.run(fetch.posts_search("AI adoption", limit=1))
+    assert [(r["author_name"], r["urn"]) for r in rows] == [("Jane Doe", A2)]
+
+
+@pytest.mark.parametrize(("line", "minutes"), [("Just now", 0), ("with 2 others • Just now", 0), ("3h •", 180),
+                                               ("2d • Edited", 2880), ("5m • Edited •", 5)])
+def test_card_time_lines(line, minutes):
+    now = datetime(2026, 10, 23, 17, 0, tzinfo=timezone.utc)
+    row = posts.card_row({**CARD, "actorLines": ["Jane Doe", "Builder", line]}, now=now)
+    assert datetime.fromisoformat(row["posted_at"]) == now - timedelta(minutes=minutes)
+    assert row["author_headline"] == "Builder"

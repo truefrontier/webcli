@@ -50,6 +50,7 @@ from webcli.sites.linkedin.endpoints import (  # APP_URL and POLICY: what `pytho
     MAIN_FEED_QUERY_ID,
     MAX_POSTS,
     PAGINATION_PATH,
+    STREAM_PATH,
     PAGE_PAUSE_MS,
     POSTS_PAGE,
     PROFILE_LOOKUP,
@@ -515,38 +516,74 @@ async def export(limit: int = 20, since: str | None = None, *, headed: bool = Fa
 
 # --- Posts (READ-ONLY: feed, posts search|from|read) ----------------------------------------------------------------
 
-CARDS_READY_JS = r"""(feedType) => [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
-  .some(el => (!feedType || el.id.includes(feedType)) && el.querySelector('[data-view-name="feed-actor"]'))"""
+# How a rendered post card's parts are found. LinkedIn tags them with data-view-name ("feed-actor", "feed-commentary",
+# "reaction-button", ...), but it also serves the very same cards with no data-view-name at all: seen 2026-10-23 on
+# the search page once another linkedin command had run in the daemon's Chrome (it sets the session's JSESSIONID and
+# lang cookies); a fresh Chrome got the tagged cards. Each part falls back to the markup both variants share: the
+# author is the innermost profile or company link with text of its own (outside the post text), the post text is the
+# expandable text box, and the counts sit in the Like/Comment/Repost buttons (by their aria-labels). Text only;
+# nothing is clicked.
+CARD_PARTS_JS = r"""
+  const txt = el => ((el && el.innerText) || '').trim();
+  const PROFILE = 'a[href*="/in/"], a[href*="/company/"], a[href*="/school/"], a[href*="/showcase/"]';
+  const BUTTONS = {'reaction-button': 'button[aria-label^="Reaction button state"]',
+                   'feed-comment-button': 'button[aria-label="Comment"]',
+                   'feed-share-button': 'button[aria-label="Repost"]'};
+  const commentaryOf = card => {
+    const named = [...card.querySelectorAll('[data-view-name="feed-commentary"]')]
+      .find(el => !el.parentElement.closest('[data-view-name="feed-commentary"]'));
+    if (named) return named;
+    const box = [...card.querySelectorAll('[data-testid="expandable-text-box"]')]
+      .find(el => !el.parentElement.closest('[data-testid="expandable-text-box"]'));
+    const para = box && box.parentElement && box.parentElement.tagName === 'P' ? box.parentElement : null;
+    return para || box || null;
+  };
+  const actorOf = (card, commentary) => {
+    const named = [...card.querySelectorAll('a[data-view-name="feed-actor"]')].find(a => txt(a));
+    if (named) return named;
+    const outside = a => !(commentary && commentary.contains(a));
+    const links = [...card.querySelectorAll(PROFILE)].filter(outside);
+    const named2 = links.filter(a => txt(a) && !a.querySelector(PROFILE));
+    const pictured = href => links.some(a => a.getAttribute('href') === href && a.querySelector('figure, img, svg'));
+    return named2.find(a => pictured(a.getAttribute('href'))) || named2[0] || null;
+  };
+  const button = (card, name) => card.querySelector(`[data-view-name="${name}"]`) || card.querySelector(BUTTONS[name]);
+  const cardsOf = feedType => [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
+    .filter(el => !feedType || el.id.includes(feedType));
+"""
+
+CARDS_READY_JS = r"""(feedType) => {""" + CARD_PARTS_JS + r"""
+  return cardsOf(feedType).some(card => actorOf(card, commentaryOf(card)));
+}"""
 
 # A rendered post card (search results, company pages): the author block, the commentary, the counts the action bar
 # shows, and any post id its markup carries. Text only; nothing is clicked.
-POST_CARD_JS = r"""(feedType) => {
-  const txt = el => ((el && el.innerText) || '').trim();
+POST_CARD_JS = r"""(feedType) => {""" + CARD_PARTS_JS + r"""
   const lines = el => txt(el).split('\n').map(s => s.trim()).filter(Boolean);
-  const cards = [...document.querySelectorAll('div[id^="expanded"][id*="FeedType_"]')]
-    .filter(el => !feedType || el.id.includes(feedType));
   const seen = new Set();
   const out = [];
-  for (const card of cards) {
+  for (const card of cardsOf(feedType)) {
     if (seen.has(card.id)) continue;
     seen.add(card.id);
-    const actor = [...card.querySelectorAll('a[data-view-name="feed-actor"]')].find(a => txt(a));
+    const commentary = commentaryOf(card);
+    const actor = actorOf(card, commentary);
     let block = actor;
-    for (let el = actor && actor.parentElement; el && el !== card
-         && !el.querySelector('[data-view-name="feed-commentary"]'); el = el.parentElement) block = el;
-    const commentary = [...card.querySelectorAll('[data-view-name="feed-commentary"]')]
-      .filter(el => !el.parentElement.closest('[data-view-name="feed-commentary"]'));
+    for (let el = actor && actor.parentElement; el && el !== card && !(commentary && el.contains(commentary));
+         el = el.parentElement) block = el;
     const actorName = actor ? lines(actor)[0] || '' : '';
     const all = lines(card);
     const at = all.indexOf(actorName);
-    const button = name => txt(card.querySelector(`[data-view-name="${name}"]`));
     out.push({
       actorName, actorHref: actor ? (actor.getAttribute('href') || '').split('?')[0] : '',
       actorLines: block ? lines(block) : [],
       header: (at > 0 ? all.slice(0, at) : []).filter(s => s !== 'Feed post').slice(-3),
-      text: commentary.length ? txt(commentary[0]) : '',
-      reactions: button('reaction-button'), comments: button('feed-comment-button'), reposts: button('feed-share-button'),
-      articleLinks: [...card.querySelectorAll('a[data-view-name="feed-article"]')].map(a => a.getAttribute('href') || ''),
+      text: commentary ? txt(commentary) : '',
+      reactions: txt(button(card, 'reaction-button')), comments: txt(button(card, 'feed-comment-button')),
+      reposts: txt(button(card, 'feed-share-button')),
+      articleLinks: (card.querySelector('[data-view-name]')
+        ? [...card.querySelectorAll('a[data-view-name^="feed-article"]')]
+        : [...card.querySelectorAll('a[href*="/pulse/"]')].filter(a => !(commentary && commentary.contains(a))))
+        .map(a => a.getAttribute('href') || ''),
       links: [...card.querySelectorAll('a')].map(a => (a.getAttribute('href') || '').split('?')[0]).filter(Boolean),
       ids: (card.outerHTML.match(/urn(?::|%3A)li(?::|%3A)(?:activity|share|ugcPost)(?::|%3A)\d+|(?:shareId|ugcPostId|activityId)=\d+/g) || []).join(' '),
     });
@@ -676,11 +713,12 @@ async def _await_cards(page: "Page", feed_type: str | None) -> None:
     await page.wait_for_timeout(1000)
 
 
-def _capture_flight(page: "Page", paths: tuple[str, ...]) -> dict[str, Any]:
+def _capture_flight(page: "Page", paths: tuple[str, ...], streams: tuple[str, ...] = ()) -> dict[str, Any]:
     """Keep the bodies of the page's own document and pagination responses (already fetched by the page; nothing
-    extra is requested) so their payload can supply the urns the cards don't show. Bodies stay in memory, unlogged."""
+    extra is requested) so their payload can supply the urns the cards don't show. Bodies stay in memory, unlogged.
+    `streams`: the page's own streamed GETs, read when they happen to finish but never waited for."""
     pending: list[asyncio.Future] = []
-    capture: dict[str, Any] = {"page": page, "pending": pending, "started": 0}
+    capture: dict[str, Any] = {"page": page, "pending": pending, "started": 0, "done": 0}
 
     def started(request: Any) -> None:
         if urlsplit(request.url).path in paths:
@@ -698,7 +736,10 @@ def _capture_flight(page: "Page", paths: tuple[str, ...]) -> dict[str, Any]:
             return []
 
     def finished(request: Any) -> None:
-        if urlsplit(request.url).path in paths:
+        path = urlsplit(request.url).path
+        if path in paths:
+            capture["done"] += 1
+        if path in paths or path in streams:
             pending.append(asyncio.ensure_future(body(request)))
 
     page.on("request", started)
@@ -711,7 +752,7 @@ async def _flight_pairs(capture: dict[str, Any]) -> list[tuple[str, str]]:
     """The captured pairs, after letting a still-streaming pagination response finish (up to ~6s)."""
     pending = capture["pending"]
     for _ in range(24):
-        if len(pending) >= capture["started"]:
+        if capture["done"] >= capture["started"]:
             break
         await capture["page"].wait_for_timeout(250)
     pairs: dict[str, str] = {}
@@ -825,14 +866,14 @@ async def posts_search(query: str, limit: int = 20, since: str | None = None, so
     now = datetime.now(timezone.utc)
     passed: list[str] = []
     async with browser.site_page(search_policy(passed)) as page:
-        pending = _capture_flight(page, ("/search/results/content/", PAGINATION_PATH))
+        pending = _capture_flight(page, ("/search/results/content/", PAGINATION_PATH), (STREAM_PATH,))
         await open_li(page, posts.search_url(query, since_dt, sort=sort, now=now))
         await _await_cards(page, SEARCH_FEED)
         if auth_wall(page.url):
             raise AuthRequired(EXPIRED)
         found = await _scroll_cards(page, SEARCH_FEED, MAX_POSTS if since_dt else limit)
         pairs = await _flight_pairs(pending)
-        state = None if found else (await page.evaluate(SEARCH_STATE_JS) or {})
+        state = None if posts.cards(found, now=now) else (await page.evaluate(SEARCH_STATE_JS) or {})
     _guard_log("posts_search", passed)
     if state and state.get("challenge"):
         raise AuthRequired(CHALLENGED)
@@ -841,7 +882,8 @@ async def posts_search(query: str, limit: int = 20, since: str | None = None, so
     rows = posts.attach_flight(posts.cards(found, now=now), pairs)
     kept = posts.search_order(posts.apply_since(rows, since_dt), sort)[:limit]
     if not kept:
-        raise NotFound(posts.empty_search_reason(query, cards=len(rows), kept=0, since=since_dt, page=state),
+        raise NotFound(posts.empty_search_reason(query, cards=len(rows), kept=0, since=since_dt, page=state,
+                                                 rendered=len(found)),
                        hint="Nothing was cut silently: exit 3 means no rows for this query and window.")
     return kept
 
