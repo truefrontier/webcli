@@ -81,7 +81,7 @@ WIRING = [
     ("messages", "list", [], {"--limit"} | ROWS),
     ("messages", "threads", [], {"--limit"} | ROWS),
     ("messages", "read", ["QUERY"], {"--limit", "--image-out", "--pages"} | ROWS),
-    ("messages", "search", ["QUERY"], {"--limit", "--pages"} | ROWS),
+    ("messages", "search", ["QUERY"], {"--limit", "--pages", "--no-numbers"} | ROWS),
     ("messages", "send", [], {"--to", "--text", "--new-ok", "--expect-recipient", "--expect-recipients", "--pages",
                               "--dry-run", "--confirm", "--yes"} | RECORD),
 ]

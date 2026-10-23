@@ -125,7 +125,9 @@ def test_search_finds_older_conversations_through_contacts_and_load_more(web):
     assert ("conversation", "203", ["contact"]) in hits and ("contact", "203", ["contact"]) in hits
     assert found["scanned"] == 8 and site.loads_more == 2 and found["complete"] is False  # stopped once found
     assert site.typed_log == ["2025550112"]
-    assert {action for action, ok in site.wire if ok} <= {"LIST_CONVERSATIONS"}  # reads only
+    # reads only: the conversations it found are opened for their numbers (never marked read)
+    assert {action for action, ok in site.wire if ok} <= {"LIST_CONVERSATIONS", "LIST_MESSAGES"}
+    assert ("MESSAGE_READ", True) not in site.wire
     assert site.path == ""  # the page left the app before the session lock went
 
 
@@ -176,7 +178,8 @@ def test_send_finds_an_older_conversation_but_never_an_ambiguous_one(web):
     assert site.sent() == [] and site.fills == []
     site = web(deep())
     out = asyncio.run(fetch.send("2025550111", "hi"))
-    assert out == {"dryRun": True, "to": "Morgan Example", "threadId": "202", "text": "hi"} and site.fills == []
+    assert out == {"dryRun": True, "to": "Morgan Example", "threadId": "202", "text": "hi",
+                   "numbers": ["+12025550111"]} and site.fills == []
 
 
 def test_no_new_conversation_without_new_ok(web):
@@ -266,8 +269,15 @@ def test_confirmed_new_group_picks_exactly_the_recipients(web):
 
 
 def test_a_new_conversation_titled_otherwise_is_refused_before_typing(web):
-    site = web(deep(new_title="Someone Else"))
+    # Titled otherwise, and its Details can't be read: refused.
+    site = web(deep(new_title="Someone Else", details={"n1": []}))
     with pytest.raises(RuntimeError, match="REFUSED: the conversation that opened is titled 'Someone Else'"):
+        asyncio.run(fetch.send("2025550199", "hello", new_ok=True, confirm=True, expect=["2025550199"]))
+    assert site.fills == [] and site.sent() == [] and site.delivered == []
+    # Its Details show another number: refused, whatever the title.
+    site = web(deep(details={"n1": [{"name": "(202) 555-0198", "number": ""}]}))
+    with pytest.raises(RuntimeError, match=r"REFUSED: the conversation that opened is with \+12025550198, not exactly "
+                                           r"\+12025550199"):
         asyncio.run(fetch.send("2025550199", "hello", new_ok=True, confirm=True, expect=["2025550199"]))
     assert site.fills == [] and site.sent() == [] and site.delivered == []
 

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.3 (2026-10-23)
+
+`webcli messages` fixes from its first real sends: group sends start, a number finds its contact's conversation,
+a new conversation titled with the contact's name is checked by its number, a sent text with a line break verifies,
+and `read`/`search` show which number a conversation uses.
+
+### Fixed
+
+- **Group send exited 5 "Start chat shows no group button".** Live, the button (still
+  `button[data-e2e-start-group-chat-button]`) is removed while the picker's input holds text and comes back ~250 ms
+  after it is emptied; webcli clicked at once. It now waits for it (8 s). The `--new-ok` dry run now stages the
+  recipients in Start chat as a confirmed send would (group mode, each picked, chips exactly the recipients, Next
+  shown) without the click that opens or creates the conversation: `staged`, `chips`.
+- **`search NUMBER` (and `read`/`send --to NUMBER`) missed a contact's existing 1:1.** Messages' picker matches a
+  contact by its number as saved, from the start, so one saved as "+1 ..." shows only when "+1..." is typed; webcli
+  typed the national digits, found no contact, and couldn't tell that the conversation titled with the contact's
+  name was the number's. It now types national digits, then +1..., then (xxx) xxx-xxxx until a contact shows, loads
+  up to 20 pages once the picker names the contact (an explicit --pages still caps it), and checks the contact's
+  1:1s by their Details (below), loading further for another one when the first uses another of its numbers. A full
+  name that several group names contain no longer exits 2 from the newest 25: the lookup goes on to the 1:1.
+- **`send --new-ok` to a number exited 5 though the right conversation opened.** It opened titled with the
+  contact's name, not the number. The new conversation is now checked by its Details' numbers: exactly the
+  recipients' numbers passes; another number refuses, whatever the title; unreadable falls back to the title check.
+  An existing conversation found for a number (or with a number `--expect-recipient`) is checked the same way, dry
+  run included (output `numbers`): another number or unreadable Details exit 5.
+- **Real sends exited 8 (sent, unverified) though they went out once.** The three had a line break; a bubble's line
+  breaks are `<br>` elements, which the text read (`textContent`) dropped, so it never equaled the text sent. The
+  bubble is now read with `<br>` as "\n" and without a link preview's text, and compared whitespace runs aside. A
+  send is still never retried.
+
+### Added
+
+- **Which number(s) a conversation uses**, from the conversation menu's Details dialog (only Details is clicked; it
+  is closed with Escape, else Cancel; nothing new passes the guard): `read` prints `Conversation: NAME (ID,
+  +1...)` on stderr in every mode; `search` rows gain `numbers` (and a 1:1's `number`) for the first 6
+  conversations found, 1:1s first, and a contact row's `id` is the 1:1 that uses that number. `search
+  --no-numbers` skips opening them.
+
 ## 0.12.2 (2026-10-23)
 
 `webcli recorder` reads every page of the recording list, not just the newest 10.

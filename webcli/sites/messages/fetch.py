@@ -40,11 +40,16 @@ from webcli.sites.messages.endpoints import (
     BUTTON_SECONDS,
     CLOSE_SECONDS,
     CONFIRM_SECONDS,
+    CONTACT_PAGES,
     CREATE_SECONDS,
     DEEP_PAGES,
+    DETAILS_MAX,
+    DETAILS_SECONDS,
     EMPTY_POLLS,
+    GROUP_BUTTON_SECONDS,
     IMAGE_SECONDS,
     INPUTS,
+    LIST_PAGE,
     LOAD_SECONDS,
     LOGIN_URL,
     MAX_PAGES,
@@ -143,14 +148,20 @@ PICK_JS = """/* messages:pick */ ([s, kind, i]) => {
   target.click();
   return true;
 }"""
+# A bubble's text: its <br> line breaks as "\n" (textContent drops them, LIVE 2026-10-23: so a sent text with a line
+# break never matched), without a link preview's title and description.
 MESSAGES_JS = """/* messages:messages */ (s) => [...document.querySelectorAll(s.message)].map(msg => {
   const pick = sels => { for (const sel of sels) { const el = msg.querySelector(sel); if (el) return el; } return null; };
+  const textOf = el => { const copy = el.cloneNode(true);
+    copy.querySelectorAll(s.linkPreview).forEach(e => e.remove());
+    copy.querySelectorAll('br').forEach(br => br.replaceWith('\\n'));
+    return (copy.textContent || '').trim(); };
   const core = msg.querySelector(s.core) || msg;
   const out = msg.getAttribute('is-outgoing') || core.getAttribute('data-e2e-message-outgoing');
   const text = pick(s.text), part = msg.querySelector(s.aria), stamp = pick(s.stamp);
   return {sent: out === 'true' || msg.classList.contains('outgoing') || core.classList.contains('outgoing')
                 || msg.classList.contains('sent') || !!msg.querySelector(s.outgoing),
-          text: text ? (text.textContent || '').trim() : '', image: !!msg.querySelector(s.image),
+          text: text ? textOf(text) : '', image: !!msg.querySelector(s.image),
           images: msg.querySelectorAll(s.image).length,
           aria: part ? part.getAttribute('aria-label') || '' : '', time: stamp ? (stamp.textContent || '').trim() : ''};
 })"""
@@ -185,6 +196,15 @@ HEADER_JS = """/* messages:header */ (sels) => {
   for (const sel of sels) { const el = document.querySelector(sel); if (el) return (el.textContent || '').trim(); }
   return null;
 }"""
+# The open conversation's Details dialog: its people (null while it isn't open), and whether a dialog or menu is open.
+DETAILS_JS = """/* messages:details */ (s) => {
+  const text = el => el ? (el.textContent || '').trim() : '';
+  if (!document.querySelector(s.details)) return null;
+  return [...document.querySelectorAll(s.participant)].map(li => ({
+    name: text(li.querySelector(s.participantName)), number: text(li.querySelector(s.participantNumber))}));
+}"""
+OVERLAY_JS = """/* messages:overlay */ (s) => !!document.querySelector(s.details)
+  || !!document.querySelector('.cdk-overlay-container .mat-mdc-menu-panel')"""
 READ_BACK_JS = "el => (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? el.value : el.innerText"
 
 
@@ -248,8 +268,12 @@ async def _rows(page: "Page") -> list[dict]:
     return parse.conversations(await page.evaluate(CONVERSATIONS_JS, SELECTORS))
 
 
-def _pages(pages: int | None) -> int:
-    return DEEP_PAGES if pages is None else max(0, min(int(pages), MAX_PAGES))
+def _pages(pages: int | None, query: str = "", people: list[dict] = ()) -> int:
+    """How many "Load more" pages a lookup may load: --pages when given; else DEEP_PAGES, or CONTACT_PAGES once the
+    picker names the contact `query` means (the lookup stops as soon as that contact's 1:1 is listed)."""
+    if pages is not None:
+        return max(0, min(int(pages), MAX_PAGES))
+    return CONTACT_PAGES if query and parse.contact_hits(people, query) else DEEP_PAGES
 
 
 async def _load_more(page: "Page", count: int) -> bool:
@@ -318,12 +342,26 @@ async def _type(page: "Page", text: str) -> dict:
     return snap
 
 
+async def _type_number(page: "Page", number: str) -> tuple[dict, str]:
+    """Type an E.164 number into the open picker in each form it may be saved in (parse.typed_forms) until a contact
+    with that number shows; (the last snapshot, what was typed)."""
+    forms, snap = parse.typed_forms(number), {}
+    for typed in forms:
+        snap = await _type(page, typed)
+        if parse.has_number(parse.picker(snap)["contacts"], number):
+            return snap, typed
+    return snap, forms[0]  # no contact has it: "Send to" the number, typed as before
+
+
 async def _look_up(page: "Page", query: str) -> dict:
-    """What Messages' Start chat picker shows for `query` (a number is typed as its national digits for +1): its
-    contacts and group conversations (parse.picker). The picker stays open; the list beside it is still there."""
+    """What Messages' Start chat picker shows for `query` (a number typed in each form a contact may have saved it
+    in, until one shows): its contacts and group conversations (parse.picker). The picker stays open; the list beside
+    it is still there."""
     await _open_picker(page)
     number = parse.normalize_number(query)
-    return parse.picker(await _type(page, parse.national(number) if number else query))
+    if number:
+        return parse.picker((await _type_number(page, number))[0])
+    return parse.picker(await _type(page, query))
 
 
 async def _find(page: "Page", query: str, *, strict: bool = False, pages: int | None = None) -> dict:
@@ -332,23 +370,104 @@ async def _find(page: "Page", query: str, *, strict: bool = False, pages: int | 
     DEEP_PAGES) "Load more" pages until the conversations of the contacts it names are listed. Several: UsageError
     (exit 2, listing them); none: NotFound (exit 3)."""
     rows = await _rows(page)
-    found = parse.resolve(rows, query)
-    if found is not None and (not strict or found["id"] == query.strip()
-                              or found["name"].casefold() == query.strip().casefold()):
+    try:
+        found = parse.resolve(rows, query)
+    except UsageError:  # several of the newest fit: the deeper lookup may still name one (an exact name, a 1:1)
+        found = None
+    if found is not None and _settles(found, query, strict):
         return _linked(found)
     look = await _look_up(page, query)
     people, group_rows = look["contacts"], look["groups"]
-    rows, _complete = await _deeper(page, rows, lambda have: parse.covered([*have, *group_rows], query, people),
-                                    _pages(pages))
-    found = parse.resolve_deep(rows, query, people, group_rows, strict=strict)
+    budget = _pages(pages, query, people)
+    rows, complete = await _deeper(page, rows, lambda have: parse.covered([*have, *group_rows], query, people),
+                                   budget)
+    rows, _complete, read = await _hunt(page, rows, complete, query, people, _pages(pages))
+    number = parse.normalize_number(query)
+    other = [r for r in rows if r["id"] in read and not _uses(read[r["id"]], number)] if number else []
+    if other:  # a conversation its Details show uses another number isn't the one this number means
+        rows = [r for r in rows if r not in other]
+    try:
+        found = parse.resolve_deep(rows, query, people, group_rows, strict=strict)
+    except UsageError:
+        # A number whose contact has several conversations by that name (one per number): the one that uses it.
+        candidates = parse.strong(parse._unique([*rows, *group_rows]), query, people) if number else []
+        found = await _by_number(page, candidates, number) if 1 < len(candidates) <= DETAILS_MAX else None
+        if found is None:
+            raise
     if found is None:
         named = [c["name"] or (c["numbers"][0]["number"] if c["numbers"] else "") for c in
                  parse.contact_hits(people, query)]
         hint = (f"{', '.join(named[:5])} {'is a contact' if len(named) == 1 else 'are contacts'} with no conversation "
                 f"in the newest {len(rows)}: `send --new-ok` starts one, or raise --pages." if named else LIST_HINT)
+        if other:
+            hint = (f"{other[0]['name']}'s conversation ({other[0]['id']}) uses {', '.join(read[other[0]['id']])}, "
+                    f"another of its numbers; none listed uses {number}. `send --new-ok` starts one, or raise --pages.")
         raise NotFound(f"No conversation matching {query!r} (looked through {len(rows)} conversations and Messages' "
                        "contact search).", hint=hint)
     return _linked(found)
+
+
+def _uses(numbers: list[str] | None, number: str) -> bool:
+    return bool(numbers) and len(numbers) == 1 and parse.same_number(numbers[0], number)
+
+
+async def _hunt(page: "Page", rows: list[dict], complete: bool, query: str, people: list[dict],
+                pages: int) -> tuple[list[dict], bool, dict[str, list[str]]]:
+    """A number a contact has: the conversations named for that contact may use another of its numbers (LIVE: the
+    picker shows only the number typed; the title can't say; their Details can, so each is opened from the list, a
+    read). While every one
+    listed does, keep loading (within the lookup's `pages`, counting those loaded already) until another by that
+    name is listed, and check it: within --pages, else DEEP_PAGES (not CONTACT_PAGES: the contact's own conversation
+    is listed already). (rows, complete, {id: the numbers its Details show})."""
+    number = parse.normalize_number(query)
+    names = {parse._fold(c["name"]) for c in parse.contact_hits(people, query)
+             if number and c["name"]}
+    read: dict[str, list[str] | None] = {}
+    left = pages - -(-max(0, len(rows) - LIST_PAGE) // LIST_PAGE)
+    while names:
+        mine = [r for r in rows if r["id"] and parse._fold(r["name"]) in names]
+        for row in mine[:DETAILS_MAX]:
+            if row["id"] in read:
+                continue
+            read[row["id"]] = None
+            if await page.evaluate(OPEN_JS, [SELECTORS, row["id"]]):
+                try:
+                    await _shown(page, row["id"])
+                except RuntimeError:
+                    continue
+                read[row["id"]] = _numbers(await _participants(page))
+        if complete or left <= 0 or len(read) >= DETAILS_MAX or any(_uses(v, number) for v in read.values()):
+            break
+        before = len(rows)
+        rows, complete = await _deeper(page, rows, lambda have: any(
+            r["id"] and r["id"] not in read and parse._fold(r["name"]) in names for r in have), left)
+        left -= max(1, -(-(len(rows) - before) // LIST_PAGE))
+    return rows, complete, {k: v for k, v in read.items() if v is not None}
+
+
+def _settles(found: dict, query: str, strict: bool) -> bool:
+    """A match among the newest conversations ends the lookup: an id, an exact name, or the conversation shown by
+    the number; and (not strict) a 1:1 whose name contains the query. A group whose name merely contains it doesn't:
+    the person's own 1:1 may be further back."""
+    query = query.strip()
+    if found["id"] == query or found["name"].casefold() == query.casefold():
+        return True
+    if parse.is_number(query):
+        return len(parse.digits(found["name"])) >= 7 and parse.same_number(found["name"], query)
+    return not strict and len(parse.header_parts(found["name"])) == 1
+
+
+async def _by_number(page: "Page", candidates: list[dict], number: str) -> dict | None:
+    """The one candidate conversation whose Details show it is the 1:1 with `number`, else None."""
+    hits = []
+    for row in candidates:
+        if not row["id"]:
+            continue
+        await _open(page, row)
+        members = await _participants(page)
+        if members is not None and parse.uses_number(members, number):
+            hits.append(row)
+    return hits[0] if len(hits) == 1 else None
 
 
 def _linked(found: dict) -> dict:
@@ -379,6 +498,54 @@ async def _shown(page: "Page", thread: str) -> None:
     shown = parse.thread_id(urlsplit(page.url).path)
     raise RuntimeError(f"Conversation {row['id']} didn't open within {THREAD_SECONDS}s"
                        f"{f' (the page shows {shown})' if shown else ''}.{blocked()} {SNIFF_HINT}")
+
+
+async def _overlay_closed(page: "Page") -> bool:
+    """No Details dialog or menu open: Escape one that is, then its Cancel button; False when it stays."""
+    for attempt in range(2):
+        if not await page.evaluate(OVERLAY_JS, SELECTORS):
+            return True
+        if attempt == 0:
+            await page.keyboard.press("Escape")
+        else:
+            await page.evaluate(CLICK_JS, SELECTORS["dialogCancel"])
+        for _ in range(_polls(CLOSE_SECONDS)):
+            if not await page.evaluate(OVERLAY_JS, SELECTORS):
+                await page.wait_for_timeout(SETTLE_MS)
+                return True
+            await page.wait_for_timeout(POLL_MS)
+    return False
+
+
+async def _participants(page: "Page") -> list[dict] | None:
+    """The open conversation's people with their numbers (parse.participants), from its menu's Details dialog:
+    only the menu button and its Details button are clicked (never Archive, Move to trash, Report spam, Add people,
+    or the mute toggle), and the dialog is closed again. Read once it lists the same people twice running. None
+    when it lists nobody within DETAILS_SECONDS. RuntimeError when the dialog won't close (nothing else is done in
+    the page then)."""
+    members, last = None, None
+    try:
+        for poll in range(_polls(DETAILS_SECONDS)):
+            raw = await page.evaluate(DETAILS_JS, SELECTORS)
+            if raw:
+                if raw == last:
+                    members = parse.participants(raw)
+                    break
+                last = raw
+            elif raw is None and poll % _polls(3) == 0:
+                await page.evaluate(CLICK_JS, SELECTORS["menu"])
+                await page.wait_for_timeout(POLL_MS)
+                await page.evaluate(CLICK_JS, SELECTORS["detailsButton"])
+            await page.wait_for_timeout(POLL_MS)
+    finally:
+        closed = await _overlay_closed(page)
+    if not closed:
+        raise RuntimeError(f"The conversation's Details dialog didn't close. {NOTHING} {SNIFF_HINT}")
+    return members
+
+
+def _numbers(members: list[dict] | None) -> list[str] | None:
+    return None if members is None else [m["number"] for m in members]
 
 
 async def _bubbles(page: "Page") -> list[dict]:
@@ -472,18 +639,50 @@ async def conversations(limit: int | None = None, *, headed: bool = False) -> li
     return rows[:limit] if limit else rows
 
 
-async def search(query: str, pages: int | None = None, *, headed: bool = False) -> dict:
+async def search(query: str, pages: int | None = None, *, headed: bool = False, numbers: bool = True) -> dict:
     """{results, scanned, complete}: parse.search_deep over the deeper lookup. Messages' Start chat picker for
     `query` (its contacts, and its own search of group conversations by member), then up to `pages` (default
-    DEEP_PAGES) "Load more" pages of the list, stopping once every contact it names has its conversation listed.
-    scanned: the conversations looked through; complete: the whole list was. READ-ONLY."""
+    DEEP_PAGES, or CONTACT_PAGES once the picker names a contact) "Load more" pages of the list, stopping once every
+    contact it names has its conversation listed. scanned: the conversations looked through; complete: the whole
+    list was. With numbers, the first DETAILS_MAX conversations found are opened (from the list, a read) and their
+    Details read: parse.with_numbers. READ-ONLY."""
     async with _page(POLICY) as page:
         await open_app(page)
         look = await _look_up(page, query)
         people, group_rows = look["contacts"], look["groups"]
+        budget = _pages(pages, query, people)
         rows, complete = await _deeper(page, await _rows(page),
-                                       lambda have: parse.covered([*have, *group_rows], query, people), _pages(pages))
-    return {"results": parse.search_deep(rows, query, people, group_rows), "scanned": len(rows), "complete": complete}
+                                       lambda have: parse.covered([*have, *group_rows], query, people), budget)
+        read: dict[str, list[str]] = {}
+        if numbers:
+            rows, complete, read = await _hunt(page, rows, complete, query, people, _pages(pages))
+        results = parse.search_deep(rows, query, people, group_rows)
+        if numbers:
+            results = parse.with_numbers(results, {**read, **await _numbers_of(page, results, read)})
+    return {"results": results, "scanned": len(rows), "complete": complete}
+
+
+async def _numbers_of(page: "Page", results: list[dict], known: dict | None = None) -> dict[str, list[str]]:
+    """{conversation id: its people's numbers} for the first DETAILS_MAX conversation rows (1:1s first) that open
+    from the page as it is (the list, or the picker's group results; never a reload, which would drop the loaded
+    pages)."""
+    read: dict[str, list[str]] = {}
+    known = known or {}
+    rows = [r for r in results if r["kind"] == "conversation" and r["id"] and r["id"] not in known]
+    # 1:1s (and anything matched by more than a group search) first: a group result opens only from the picker,
+    # which is gone once a conversation is open.
+    rows.sort(key=lambda r: set(r.get("matched") or []) <= {"group"})
+    for row in rows[:max(0, DETAILS_MAX - len(known))]:
+        if row["id"] in read or not await page.evaluate(OPEN_JS, [SELECTORS, row["id"]]):
+            continue
+        try:
+            await _shown(page, row["id"])
+        except RuntimeError:
+            continue
+        members = await _participants(page)
+        if members is not None:
+            read[row["id"]] = _numbers(members)
+    return read
 
 
 async def messages(query: str, limit: int | None = None, *, image_dir: str | None = None,
@@ -499,6 +698,13 @@ async def messages(query: str, limit: int | None = None, *, image_dir: str | Non
         await open_app(page)
         row = await _find(page, query, pages=pages)
         await _open(page, row)
+        members = await _participants(page)
+        number = parse.normalize_number(query)
+        if number and members and len(members) == 1 and not parse.uses_number(members, number):
+            raise NotFound(f"The conversation {row['name']!r} ({row['id']}) uses {members[0]['number']}, not "
+                           f"{number}.", hint="That contact has more than one number: see `webcli messages search "
+                                              f"{number}` (its rows show each conversation's number).")
+        row = {**row, "numbers": _numbers(members), "participants": members}
         raw = await _hydrated(page)
         if image_dir is None:
             rows = parse.messages(raw)
@@ -540,7 +746,8 @@ def _tried_send() -> list[str]:
 
 
 def _sent_count(rows: list[dict], text: str) -> int:
-    return sum(1 for row in rows if row["direction"] == "sent" and row["text"] == text)
+    """How many sent bubbles show exactly `text` (parse.same_text: whitespace runs aside, so a line break counts)."""
+    return sum(1 for row in rows if row["direction"] == "sent" and parse.same_text(row["text"], text))
 
 
 async def _click(button: "Locator") -> str | None:
@@ -652,31 +859,52 @@ async def send(query: str | list[str], text: str, *, confirm: bool = False, head
         if expect is not None and not out["expectRecipientsMatch"]:
             raise _refused(f"--expect-recipient ({', '.join(expect)}) doesn't name exactly the recipients --to "
                            f"resolved to ({out['to']}).", confirm)
-        if not confirm:
-            return out
-        thread = await _start(page, people, scope)
+        script, arg, chips = await _stage(page, people, confirm)
+        if not confirm:  # Start chat showed exactly these recipients; nothing was clicked that opens a conversation
+            return {**out, "staged": True, **({"chips": chips} if out["group"] else {})}
+        thread = await _create(page, scope, script, arg, people)
         result = await _type_and_send(page, thread, text, scope)
     return {**out, "threadId": thread, "created": scope.created, **result, "titleChecked": True}
 
 
 async def _send_existing(page: "Page", row: dict, query: str, text: str, confirm: bool, scope: SendScope | None,
                          expect: list[str] | None) -> dict:
-    people = _expect_people(row, query)
+    """An existing conversation. When --to or an --expect-recipient is a number, the title (a contact's name) can't
+    say which number the conversation uses, so its Details are read (dry run too: opening it is a read) and must
+    show it: --to's number as the 1:1's one person, and --expect-recipient exactly its people, by name or number.
+    Unreadable Details, another number, or one person too many refuse (exit 5)."""
+    by_number = parse.is_number(query) or any(parse.is_number(e) for e in expect or [])
     out = {"dryRun": not confirm, "to": row["name"], "threadId": row["id"], "text": text}
+    people = _expect_people(row, query)
+    if by_number:
+        await _open(page, row)
+        members = await _participants(page)
+        out["numbers"] = _numbers(members)
+        if members is None:
+            raise _refused(f"couldn't read which number conversation {row['name']!r} uses (its Details), so it "
+                           "can't be checked against the number given.", confirm)
+        number = parse.normalize_number(query)
+        if number and not parse.uses_number(members, number):
+            raise _refused(f"conversation {row['name']!r} is with {', '.join(_numbers(members)) or 'nobody'}, not "
+                           f"exactly {number}.", confirm)
+        people = members
     if expect is not None:
         out["new"] = False
         out["expectRecipients"], out["expectRecipientsMatch"] = expect, parse.expect_matches(expect, people)
         if not out["expectRecipientsMatch"]:
+            shown = f" ({', '.join(out['numbers'])})" if by_number else ""
             raise _refused(f"--expect-recipient ({', '.join(expect)}) doesn't name exactly conversation "
-                           f"{row['name']!r}.", confirm)
+                           f"{row['name']!r}{shown}.",
+                           confirm)
     if not confirm:
         return out
-    await _open(page, row)
+    if not by_number:
+        await _open(page, row)
     header = await page.evaluate(HEADER_JS, SELECTORS["header"])
     if header and not parse.names_match(header, row["name"]):
         raise RuntimeError(f"REFUSED: the open conversation is titled {header!r}, not {row['name']!r}. {NOTHING}")
-    if header and expect is not None and not parse.expect_matches(expect, _expect_people({**row, "name": header},
-                                                                                         query)):
+    if header and expect is not None and not by_number and not parse.expect_matches(
+            expect, _expect_people({**row, "name": header}, query)):
         raise RuntimeError(f"REFUSED: the open conversation is titled {header!r}, which isn't exactly "
                            f"{', '.join(expect)}. {NOTHING}")
     result = await _type_and_send(page, row["id"], text, scope)
@@ -690,42 +918,68 @@ async def _recipients(page: "Page", queries: list[str]) -> list[dict]:
     people: list[dict] = []
     for query in queries:
         number = parse.normalize_number(query)
-        snap = await _type(page, parse.national(number) if number else query)
+        snap, typed = await _type_number(page, number) if number else (await _type(page, query), query)
         person = parse.recipient(query, parse.picker(snap)["contacts"])
         if any(p["number"] == person["number"] for p in people):
             raise UsageError(f"--to {query!r} is a recipient already ({person['number']}).")
-        people.append(person)
+        people.append({**person, "typed": typed if number else None})
     await page.locator(SELECTORS["contactInput"]).first.fill("")
     return people
 
 
-async def _start(page: "Page", people: list[dict], scope: SendScope) -> str:
-    """Open (or create) the conversation with exactly `people` from Start chat; its id. See send()."""
+async def _group_mode(page: "Page") -> bool:
+    """Click Start chat's "Start group conversation". LIVE (2026-10-23): the button is gone while the picker's input
+    holds text and comes back ~250ms after it is emptied, so it is waited for (GROUP_BUTTON_SECONDS); clicking at
+    once found none ("Start chat shows no group button")."""
+    for _ in range(_polls(GROUP_BUTTON_SECONDS)):
+        if await page.evaluate(CLICK_JS, SELECTORS["startGroup"]):
+            await page.wait_for_timeout(SETTLE_MS)
+            return True
+        await page.wait_for_timeout(POLL_MS)
+    return False
+
+
+async def _offer(page: "Page", person: dict) -> tuple[str, int] | None:
+    """Type `person`'s number into the picker (the form that found its contact first, then each other form) until
+    the picker offers exactly that person (parse.pick)."""
+    forms = list(dict.fromkeys([f for f in (person.get("typed"), *parse.typed_forms(person["number"])) if f]))
+    for typed in forms:
+        target = parse.pick(await _type(page, typed), person)
+        if target is not None:
+            return target
+    return None
+
+
+async def _stage(page: "Page", people: list[dict], confirm: bool) -> tuple[str, object, list[str]]:
+    """Start chat up to the one click that opens (or creates) the conversation, without making it: a 1:1's contact
+    row (or "Send to") with exactly its number; a group's "Start group conversation" mode with each recipient
+    picked that way (picking adds a chip in the page; nothing is sent or created) and the chips then exactly the
+    recipients, and its Next button. (the script and arg that click, the chips). A dry run stops here (the page then
+    leaves the app). REFUSED (exit 5, "(dry run)" without confirm) when Start chat doesn't offer that."""
     group = len(people) > 1
     await page.locator(SELECTORS["contactInput"]).first.fill("")
-    if group:
-        if not await page.evaluate(CLICK_JS, SELECTORS["startGroup"]):
-            raise RuntimeError(f"REFUSED: Start chat shows no group button. {NOTHING} {SNIFF_HINT}")
-        await page.wait_for_timeout(SETTLE_MS)
+    if group and not await _group_mode(page):
+        raise _refused(f"Start chat shows no \"Start group conversation\" button within {GROUP_BUTTON_SECONDS}s. "
+                       f"{SNIFF_HINT}", confirm)
     for done, person in enumerate(people):
-        snap = await _type(page, parse.national(person["number"]))
-        target = parse.pick(snap, person)
+        target = await _offer(page, person)
         if target is None:
-            raise RuntimeError(f"REFUSED: Start chat doesn't offer {parse.label(person)} ({person['number']}) "
-                               f"exactly. {NOTHING}")
+            raise _refused(f"Start chat doesn't offer {parse.label(person)} ({person['number']}) exactly.", confirm)
         kind, index = target
-        if group:
-            if not await page.evaluate(PICK_JS, [SELECTORS, kind, index]):
-                raise RuntimeError(f"REFUSED: couldn't pick {parse.label(person)} in Start chat. {NOTHING}")
-            if not await _until_chips(page, done + 1):
-                raise RuntimeError(f"REFUSED: picking {parse.label(person)} didn't add it as a recipient. {NOTHING}")
-            continue
-        return await _create(page, scope, PICK_JS, [SELECTORS, kind, index], people)
-    chips = (await page.evaluate(PICKER_JS, SELECTORS)).get("chips") or []
+        if not group:
+            return PICK_JS, [SELECTORS, kind, index], []
+        if not await page.evaluate(PICK_JS, [SELECTORS, kind, index]):
+            raise _refused(f"couldn't pick {parse.label(person)} in Start chat.", confirm)
+        if not await _until_chips(page, done + 1):
+            raise _refused(f"picking {parse.label(person)} didn't add it as a recipient.", confirm)
+    snap = await page.evaluate(PICKER_JS, SELECTORS)
+    chips = snap.get("chips") or []
     if not parse.same_set(chips, people):
-        raise RuntimeError(f"REFUSED: the recipients picked are {', '.join(chips) or 'none'}, not exactly "
-                           f"{', '.join(parse.label(p) for p in people)}. {NOTHING}")
-    return await _create(page, scope, CLICK_JS, SELECTORS["next"], people)
+        raise _refused(f"the recipients picked are {', '.join(chips) or 'none'}, not exactly "
+                       f"{', '.join(parse.label(p) for p in people)}.", confirm)
+    if not snap.get("next"):
+        raise _refused(f"Start chat shows no Next button for the group. {SNIFF_HINT}", confirm)
+    return CLICK_JS, SELECTORS["next"], chips
 
 
 async def _until_chips(page: "Page", count: int) -> bool:
@@ -758,7 +1012,15 @@ async def _create(page: "Page", scope: SendScope, script: str, arg, people: list
                            f"{NOTHING}{blocked()}")
     await _shown(page, thread)
     header = await page.evaluate(HEADER_JS, SELECTORS["header"])
-    if not header or not parse.same_set(parse.header_parts(header) if len(people) > 1 else [header], people):
+    titled = bool(header) and parse.same_set(parse.header_parts(header) if len(people) > 1 else [header], people)
+    # The title shows a contact's name even when --to (or --expect-recipient) was its number, and can't tell a
+    # contact's two numbers apart: the Details' numbers can. Shown, they must be exactly the recipients' numbers.
+    members = await _participants(page)
+    numbered = members is not None and parse.numbers_match(members, people)
+    if members is not None and not numbered:
+        raise RuntimeError(f"REFUSED: the conversation that opened is with {', '.join(_numbers(members)) or 'nobody'}"
+                           f", not exactly {', '.join(p['number'] for p in people)}{maybe}. {NOTHING}")
+    if not titled and not numbered:
         raise RuntimeError(f"REFUSED: the conversation that opened is titled {header!r}, not exactly "
                            f"{', '.join(parse.label(p) for p in people)}{maybe}. {NOTHING}")
     return thread
