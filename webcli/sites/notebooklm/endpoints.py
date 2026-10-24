@@ -44,15 +44,28 @@ RPC = {
     "artifacts": "gArtLc",  # ListArtifacts [[2], notebook_id, filter] -> [[artifact, ...]]
     "artifact": "v9rmvd",  # GetArtifact [artifact_id] -> [artifact] (quiz / flashcard HTML, mind-map tree)
     "create_artifact": "R7cb6c",  # CreateArtifact [ctx, notebook_id, descriptor] -> [artifact]
+    "create_notebook": "CCqFvf",  # CreateProject [title, None, None, ctx] -> notebook row [title, _, id, ...]
+    "add_source": "izAoDd",  # AddSources [[spec], notebook_id, ctx] -> [[[[id], title, meta, settings]]]
+    "add_source_file": "o4cbdc",  # register a file source [[[filename]], notebook_id, ctx] -> its source id
 }
+
+# File sources: register (o4cbdc), then a resumable upload of the bytes on the app host itself: POST UPLOAD_PATH
+# (?authuser=) with x-goog-upload-command: start and a JSON body {PROJECT_ID, SOURCE_NAME, SOURCE_ID}; its answer's
+# x-goog-upload-url header (the same path, ?upload_id=...) then takes the bytes with "upload, finalize".
+UPLOAD_PATH = "/upload/_/"
 
 # Fail closed: a batchexecute POST passes only when its one rpcid is listed for the running command's policy.
 READ_RPCIDS = frozenset({RPC["notebooks"], RPC["notebook"], RPC["source"], RPC["source_guide"], RPC["notes"],
                          RPC["artifacts"], RPC["artifact"]})
 # `generate --confirm` only: one CreateArtifact. Nothing else that writes is ever allowed.
 GENERATE_RPCIDS = READ_RPCIDS | {RPC["create_artifact"]}
+# The only writes a `create` / `source add --confirm` page may be opened for (guard.write_policy, with a per-rpcid
+# budget). Rename, delete, share, source edits, and notes are not here, so no policy can ever allow them.
+WRITE_RPCIDS = frozenset({RPC["create_notebook"], RPC["add_source"], RPC["add_source_file"]})
+UPLOAD = "upload"  # write_policy's budget key for upload POSTs (two per file: start, then upload+finalize)
 
-# Known writes, for tests and for reading capture output. The guard blocks them because they are not listed above.
+# Known writes, for tests and for reading capture output. Outside a write_policy the guard blocks every one; a
+# write_policy opens only its own WRITE_RPCIDS.
 MUTATING_RPCIDS = {
     "CCqFvf": "create notebook", "te3DCe": "copy notebook", "s0tc2d": "rename notebook / sharing settings",
     "WWINqb": "delete notebook", "izAoDd": "add source", "o4cbdc": "register uploaded file", "tGMBJ": "delete source",

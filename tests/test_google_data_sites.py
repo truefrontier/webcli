@@ -46,16 +46,18 @@ VERBS = {
     "contacts": {"list", "get", "search", "other", "labels", "export", "status", "label", "agent-help"},
     "gmail": {"filters", "status", "agent-help"},
     "notebooklm": {"status", "notebooks", "sources", "source", "notes", "artifacts", "ask", "generate", "download",
-                   "agent-help"},
+                   "create", "agent-help"},
 }
 SUBVERBS = {("contacts", "label"): {"add", "remove"}, ("gmail", "filters"): {"list", "create", "delete"},
-            ("youtube", "playlist"): {"create"}, ("notebooklm", "source"): {"get"},
+            ("youtube", "playlist"): {"create"}, ("notebooklm", "source"): {"get", "add"},
             ("notebooklm", "generate"): {"kinds", "audio", "video", "report", "quiz", "flashcards", "mind-map",
                                          "infographic", "slide-deck", "data-table"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
 WRITE = {"--dry-run", "--confirm", "--yes"} | RECORD
 SELECTORS = {"--from-label", "--query", "--ids"}
+ADD_SOURCES = {"--file", "--url", "--urls-file", "--text", "--title", "--wait", "--timeout", "--interval",
+               "--json"} | WRITE
 GENERATE = {"--source", "--language", "--instructions", "--wait", "--timeout", "--interval", "--json"} | WRITE
 # (site, verb, arguments, options)
 WIRING = [
@@ -97,6 +99,8 @@ WIRING = [
     ("notebooklm", "notebooks", [], {"--json"} | ROWS),
     ("notebooklm", "sources", ["NOTEBOOK"], {"--json"} | ROWS),
     ("notebooklm", "source get", ["SOURCE"], {"--notebook", "--guide", "--output", "--json"} | RECORD),
+    ("notebooklm", "source add", ["NOTEBOOK"], ADD_SOURCES),
+    ("notebooklm", "create", ["TITLE"], ADD_SOURCES),
     ("notebooklm", "notes", ["NOTEBOOK"], {"--json"} | ROWS),
     ("notebooklm", "artifacts", ["NOTEBOOK"], {"--json"} | ROWS),
     ("notebooklm", "ask", ["NOTEBOOK", "QUESTION"], {"--source", "--json"} | RECORD),

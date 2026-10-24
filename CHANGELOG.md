@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.16.0 / llmcli 0.6.1 (2026-10-24)
+
+`webcli notebooklm create` and `webcli notebooklm source add`: make a notebook and fill it with files, URLs, and
+text, so agents can build a notebook to ask. Both are dry runs (exit 2) unless `--confirm`. Not yet run live; the
+request shapes follow notebooklm-py 0.8.5 (see docs/notebooklm-site.md, "To confirm live").
+
+### Added
+
+- **`create TITLE [--file ...] [--url ...] [--urls-file F] [--text T --title T] --confirm [--wait]`**: creates the
+  notebook, adds any sources, and prints `notebook_id`, `url`, and each source. Without `--confirm` it prints the
+  plan without opening a browser.
+- **`source add NOTEBOOK (--file PATH ... | --url URL ... | --urls-file FILE | --text T --title T) --confirm
+  [--wait]`**: files `.md`, `.markdown`, `.txt`, `.pdf` (up to 50 MB), web and YouTube URLs, and pasted text, many
+  per call; each source's id and status. The dry run checks the notebook (read-only). `--wait` polls until each
+  source is ready or errors (`--timeout`, `--interval`); exit 5 if any failed or the wait timed out.
+
+### Guard
+
+- A write policy per command, budgeted from its command line: one `CCqFvf` (create), one `izAoDd` per URL or
+  text, one `o4cbdc` per file, and two `/upload/_/` POSTs per file. Rename, delete, share, source delete/rename/
+  refresh, note writes, chat, and generate stay blocked. The file upload runs inside the page; its one-time URL is
+  checked and never returned.
+- `llmcli notebooklm` is unchanged: it still runs only `status`, `notebooks`, and `ask`.
+
+### Changed
+
+- Version 0.16.0 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest.
+- truefrontier-llmcli / llmcli packages 0.6.0 -> 0.6.1, pinned to truefrontier-webcli==0.16.0.
+
 ## 0.15.0 / llmcli 0.6.0 (2026-10-24)
 
 `llmcli notebooklm`: NotebookLM's ask as an llmcli chat site, the same shape as gemini, chatgpt, and muse, so agents

@@ -1,12 +1,16 @@
 """`webcli notebooklm`: your NotebookLM notebooks from your own signed-in, hidden Chrome. Reads (notebooks, sources,
 source text and guides, notes, Studio artifacts), questions with citations (`ask`), and Studio outputs:
-`generate <kind>` (a dry run that exits 2 unless --confirm), `status ARTIFACT`, and `download ARTIFACT -o PATH`."""
+`generate <kind>` (a dry run that exits 2 unless --confirm), `status ARTIFACT`, and `download ARTIFACT -o PATH`.
+And creating: `create TITLE` (a notebook, optionally with its sources) and `source add NOTEBOOK` (URLs, pasted text,
+local .md / .txt / .pdf files), both dry runs that exit 2 unless --confirm."""
 
 from __future__ import annotations
 
 import functools
+import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import click
 
@@ -54,6 +58,17 @@ NOTES = [
     "<title><ext>). Files are mode 0600. Not completed yet exits 2.",
     "No such notebook, source, or artifact exits 3. A usage limit exits 6. Not signed in exits 4: a person runs "
     "`webcli identity login google:default`.",
+    "`create TITLE` makes a notebook and prints {notebook_id, title, url, sources}; with --file / --url / --urls-file "
+    "/ --text it adds those sources to it in the same run. `source add NOTEBOOK` adds sources to an existing notebook "
+    "and prints {notebook_id, notebook, url, sources: [{kind, input, id, title, type, status, error}]}. Sources: "
+    "--file PATH (repeatable; .md, .markdown, .txt, .pdf, up to 50 MB each), --url URL (repeatable; web pages and "
+    "YouTube), --urls-file FILE (one URL per line; # comments; - for stdin), --text TEXT --title T (pasted text; "
+    "--text - reads stdin). Each source is sent once, in that order (files, URLs, text); one that fails gets its "
+    "error and the rest still go (exit 5 if any failed).",
+    "Without --confirm `create` and `source add` are dry runs: they print the plan ({dryRun: true, ...}, `source add` "
+    "after checking the notebook exists), create nothing, and exit 2. --wait polls the notebook (every --interval s, "
+    "up to --timeout s) until every new source is ready (exit 0) or one errors (exit 5); a timeout exits 5 and they "
+    "keep processing.",
     "`llmcli notebooklm` is this site's ask as an llmcli chat site (ask / -p with -n NOTEBOOK, --chat, -c, the "
     "uniform ask JSON); it runs only the reads and the chat.",
     "Reference: the RPC ids and payload shapes follow teng-lin/notebooklm-py (MIT), re-implemented here.",
@@ -62,13 +77,18 @@ WRITES = [
     "`ask` adds the question and answer to the notebook's chat history (as the app does).",
     "`generate KIND --confirm` creates exactly one Studio output (one CreateArtifact call; the guard allows no other "
     "write). Without --confirm nothing is created.",
-    "Never: creating, renaming, sharing, or deleting notebooks; adding, editing, or removing sources or notes; "
+    "`create TITLE --confirm` creates exactly one notebook (one CreateProject call) and, with sources, adds them. "
+    "`source add NOTEBOOK --confirm` adds exactly the sources named: one AddSources call per URL or text, and per file "
+    "one register call plus its upload (two POSTs to NotebookLM's own upload path). The guard counts each and aborts "
+    "any call past that budget. Without --confirm nothing is created.",
+    "Never: renaming, sharing, or deleting notebooks; editing, refreshing, renaming, or removing sources; notes; "
     "deleting, renaming, or exporting artifacts; research; settings. The guard aborts every one of those RPCs.",
     "`source get -o`, `download`: only the local files you asked for.",
 ]
 
-group = data.site_group(SITE, "NotebookLM: notebooks, sources, notes, ask with citations, and Studio outputs "
-                              "(generate is a dry run unless --confirm). Unofficial. Identity google:default.")
+group = data.site_group(SITE, "NotebookLM: notebooks, sources, notes, ask with citations, Studio outputs, and "
+                              "creating notebooks / adding sources (generate, create, and source add are dry runs "
+                              "unless --confirm). Unofficial. Identity google:default.")
 
 
 def json_flag(f):
@@ -138,7 +158,7 @@ def sources_cmd(notebook, **opts) -> None:
 
 @group.group("source")
 def source_group() -> None:
-    """One source: `source get SOURCE` (its indexed text, or --guide)."""
+    """Sources: `source get SOURCE` (its indexed text, or --guide), `source add NOTEBOOK` (dry run unless --confirm)."""
 
 
 @source_group.command("get")
@@ -235,6 +255,177 @@ def download_cmd(artifact_id, out, notebook, fmt, quiet) -> None:
     saved = data.call(SITE, "download", _id(artifact_id), str(path), _id(notebook) if notebook else None)
     data.emit_record(saved["title"] or saved["id"], saved, fmt)
     raise SystemExit(EXIT_OK)
+
+
+# create / source add
+
+DONE = ("ready", "error")
+
+
+def _source_options(f):
+    for decorator in reversed([
+        click.option("--file", "files", multiple=True, metavar="PATH",
+                     help="A local file to upload: .md, .markdown, .txt, .pdf (repeatable)."),
+        click.option("--url", "urls", multiple=True, metavar="URL", help="A web page or YouTube URL (repeatable)."),
+        click.option("--urls-file", default=None, metavar="FILE",
+                     help="URLs, one per line (blank lines and # comments skipped; - reads stdin)."),
+        click.option("--text", default=None, metavar="TEXT", help="Pasted text to add as a source (- reads stdin)."),
+        click.option("--title", "text_title", default=None, metavar="T", help="The --text source's title."),
+    ]):
+        f = decorator(f)
+    return f
+
+
+def _write_options(f):
+    for decorator in reversed([
+        click.option("--wait", is_flag=True, help="With --confirm: poll until every new source is ready or errors."),
+        click.option("--timeout", type=int, default=600, show_default=True, help="--wait limit in seconds."),
+        click.option("--interval", type=int, default=5, show_default=True, help="--wait poll interval, seconds."),
+        click.option("--confirm", "--yes", "confirm", is_flag=True, help="Create it (default: dry run, exit 2)."),
+        click.option("--dry-run", "dry_run", is_flag=True, help="Print the plan, create nothing, exit 2 (default)."),
+        json_flag,
+        agent_output_options(rows=False),
+    ]):
+        f = decorator(f)
+    return f
+
+
+def _check_url(url: str) -> str:
+    url = url.strip()
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or any(c.isspace() for c in url):
+        raise click.UsageError(f"Not an http(s) URL: {url!r}")
+    return url
+
+
+def _items(files, urls, urls_file, text, text_title) -> list[dict]:
+    """The sources a create / source add names, validated before anything opens: files (exist, a supported suffix,
+    1 byte to 50 MB), URLs (http/https, duplicates dropped), and the one --text (with --title). Files first, then
+    URLs, then text: the order they are added in."""
+    if urls_file == "-" and text == "-":
+        raise click.UsageError("--urls-file - and --text - can't both read stdin.")
+    items: list[dict] = []
+    for raw in files:
+        path = Path(raw).expanduser().resolve()
+        if not path.is_file():
+            raise click.UsageError(f"No such file: {raw}")
+        content_type = parse.UPLOAD_TYPES.get(path.suffix.lower())
+        if not content_type:
+            raise click.UsageError(f"{path.name}: webcli uploads only {', '.join(parse.UPLOAD_TYPES)} files.")
+        size = path.stat().st_size
+        if size == 0:
+            raise click.UsageError(f"{path} is empty.")
+        if size > parse.MAX_UPLOAD_BYTES:
+            raise click.UsageError(f"{path} is over {parse.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+        items.append({"kind": "file", "path": str(path), "name": path.name, "content_type": content_type,
+                      "bytes": size})
+    listed = list(urls)
+    if urls_file:
+        try:
+            body = sys.stdin.read() if urls_file == "-" else Path(urls_file).expanduser().read_text()
+        except OSError as exc:
+            raise click.UsageError(f"Can't read {urls_file}: {exc}") from None
+        listed += [line.strip() for line in body.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    seen = set()
+    for raw in listed:
+        url = _check_url(raw)
+        if url not in seen:
+            seen.add(url)
+            items.append({"kind": "url", "url": url})
+    if text_title is not None and text is None:
+        raise click.UsageError("--title names a --text source; pass --text too.")
+    if text is not None:
+        body = sys.stdin.read() if text == "-" else text
+        if not body.strip():
+            raise click.UsageError("--text is empty.")
+        if not (text_title or "").strip():
+            raise click.UsageError("--text needs --title.")
+        items.append({"kind": "text", "title": text_title.strip(), "text": body})
+    return items
+
+
+def _emit_added(result: dict, fmt, heading: str) -> None:
+    if resolve_format(fmt) == "json":
+        emit_json(result)
+        return
+    click.echo(f"{heading}\n{result['url']}")
+    for row in result["sources"]:
+        line = f"  {row['id'] or '-':<36}  {row['status'] or '-':<10}  {row['kind']:<4}  {row['input']}"
+        click.echo(line + (f"  ({row['error']})" if row.get("error") else ""))
+
+
+def _wait_sources(result: dict, *, timeout: int, interval: int) -> bool:
+    """Poll the notebook until every new source is ready or errored; False on timeout. Updates result in place."""
+    rows = [r for r in result["sources"] if r["id"]]
+    deadline = time.monotonic() + timeout
+    while any(r["status"] not in DONE for r in rows):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(max(interval, 2))
+        fresh = {s["id"]: s for s in data.call(SITE, "sources", result["notebook_id"])["sources"]}
+        for row in rows:
+            if row["id"] in fresh and fresh[row["id"]]["status"]:
+                row["status"] = fresh[row["id"]]["status"]
+    return True
+
+
+def _finish(result: dict, fmt, heading: str, *, wait: bool, timeout: int, interval: int) -> None:
+    finished = _wait_sources(result, timeout=timeout, interval=interval) if wait and result["sources"] else True
+    _emit_added(result, fmt, heading)
+    failed = [r for r in result["sources"] if r.get("error") or r["status"] == "error"]
+    if failed:
+        die(f"{len(failed)} of {len(result['sources'])} sources failed.", EXIT_API,
+            hint=f"run: webcli notebooklm sources {result['notebook_id']}")
+    if not finished:
+        die(f"Sources still processing after {timeout}s; they keep processing.", EXIT_API,
+            hint=f"run: webcli notebooklm sources {result['notebook_id']}")
+    raise SystemExit(EXIT_OK)
+
+
+@group.command("create")
+@click.argument("title")
+@_source_options
+@_write_options
+def create_cmd(title, files, urls, urls_file, text, text_title, wait, timeout, interval, confirm, dry_run, fmt,
+               quiet) -> None:
+    """Create a notebook titled TITLE (dry run, exit 2, unless --confirm), optionally with its sources."""
+    if dry_run and confirm:
+        raise click.UsageError("--dry-run and --confirm contradict each other; pass one.")
+    title = title.strip()
+    if not title:
+        raise click.UsageError("The title is empty.")
+    items = _items(files, urls, urls_file, text, text_title)
+    if not confirm:
+        emit_json({"dryRun": True, "title": title, "sources": [parse.describe_item(i) for i in items],
+                   "calls": parse.write_budget(items, create=True),
+                   "hint": "Nothing was created. Re-run with --confirm to create it."})
+        die("Dry run: nothing was created.", EXIT_USAGE, hint="re-run with --confirm")
+    result = data.call(SITE, "create", title, items, confirm=True)
+    _finish(result, fmt, f"Created notebook {result['title']} ({result['notebook_id']})", wait=wait,
+            timeout=timeout, interval=interval)
+
+
+@source_group.command("add")
+@click.argument("notebook")
+@_source_options
+@_write_options
+def source_add_cmd(notebook, files, urls, urls_file, text, text_title, wait, timeout, interval, confirm, dry_run, fmt,
+                   quiet) -> None:
+    """Add sources to NOTEBOOK: --file (.md/.txt/.pdf), --url, --urls-file, --text with --title (dry run, exit 2,
+    unless --confirm)."""
+    if dry_run and confirm:
+        raise click.UsageError("--dry-run and --confirm contradict each other; pass one.")
+    items = _items(files, urls, urls_file, text, text_title)
+    if not items:
+        raise click.UsageError("Name at least one source: --file, --url, --urls-file, or --text with --title.")
+    nb_id = _id(notebook)
+    if not confirm:
+        plan = data.call(SITE, "plan_sources", nb_id, items)
+        emit_json({"dryRun": True, **plan, "hint": "Nothing was added. Re-run with --confirm to add them."})
+        die("Dry run: nothing was added.", EXIT_USAGE, hint="re-run with --confirm")
+    result = data.call(SITE, "add_sources", nb_id, items, confirm=True)
+    _finish(result, fmt, f"Added to {result['notebook'] or result['notebook_id']}", wait=wait, timeout=timeout,
+            interval=interval)
 
 
 # generate
