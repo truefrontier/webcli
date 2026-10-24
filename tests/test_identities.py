@@ -74,7 +74,7 @@ def test_identity_list_and_login_site():
     Identity("google:work").profile.mkdir(parents=True)
     (Identity("google:work").profile / "Local State").write_text("{}")
     rows = json.loads(CliRunner().invoke(webcli_app.build(), ["identity", "list"]).stdout)
-    assert {r["id"]: r["profileExists"] for r in rows} == {"chatgpt:default": False, "facebook:default": False,
+    assert {r["id"]: r["profileExists"] for r in rows} == {"amazon:default": False, "chatgpt:default": False, "facebook:default": False,
                                                            "google:default": False, "google:work": True,
                                                            "linkedin:default": False, "loom:default": False,
                                                            "messages:default": False, "meta:default": False,
@@ -88,6 +88,7 @@ def test_identity_list_and_login_site():
     assert identities.login_site(Identity("loom:default"), all_sites).name == "loom"
     assert identities.login_site(Identity("messages:default"), all_sites).name == "messages"
     assert identities.login_site(Identity("whatsapp:default"), all_sites).name == "whatsapp"
+    assert identities.login_site(Identity("amazon:default"), all_sites).name == "amazon"
     with pytest.raises(ConfigError):
         identities.login_site(Identity("slack:default"), all_sites)
 
@@ -127,7 +128,7 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
     report = json.loads(result.stdout)
     assert report["home"]["timeMachineExcluded"] is True and report["home"]["spotlightExcluded"] is True
     assert report["home"]["fileVault"] == "on" and report["home"]["private"] is True
-    assert {i["id"]: i["signedIn"] for i in report["identities"]} == {"chatgpt:default": False,
+    assert {i["id"]: i["signedIn"] for i in report["identities"]} == {"amazon:default": False, "chatgpt:default": False,
                                                                       "facebook:default": False,
                                                                       "google:default": False,
                                                                       "linkedin:default": False,
@@ -137,7 +138,7 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
                                                                       "whatsapp:default": False}
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
     assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"],
-                               "webcli": ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom", "messages",
+                               "webcli": ["aa", "amazon", "contacts", "facebook", "gmail", "keep", "linkedin", "loom", "messages",
                                           "notebooklm", "photos", "recorder", "walkie", "whatsapp", "youtube"]}
 
 
@@ -145,10 +146,10 @@ def test_sites_lists_every_llm_site_and_the_data_sites():
     result = CliRunner().invoke(webcli_app.build(), ["sites"])
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"]
-    assert [s["name"] for s in data["webcli"]] == ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom",
+    assert [s["name"] for s in data["webcli"]] == ["aa", "amazon", "contacts", "facebook", "gmail", "keep", "linkedin", "loom",
                                                    "messages", "notebooklm", "photos", "recorder", "walkie", "whatsapp",
                                                    "youtube"]
-    own = {"facebook": "facebook", "linkedin": "linkedin", "loom": "loom", "messages": "messages",
+    own = {"amazon": "amazon", "facebook": "facebook", "linkedin": "linkedin", "loom": "loom", "messages": "messages",
            "whatsapp": "whatsapp"}  # the rest: Google
     for site in data["webcli"]:  # aa, walkie: no sign-in, so no identity (none in `identity list` / `doctor` either)
         no_sign_in = site["name"] in ("aa", "walkie")

@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased: llmcli 0.6.0 (2026-10-24)
+## 0.15.0 / llmcli 0.6.0 (2026-10-24)
 
 `llmcli notebooklm`: NotebookLM's ask as an llmcli chat site, the same shape as gemini, chatgpt, and muse, so agents
 and tmuxlet can use a notebook as a chat backend. It reuses `webcli notebooklm`'s fetch code; nothing is duplicated.
-(webcli's own version is left for whichever of this and the amazon 0.14.0 branch merges second.)
+Merged after amazon 0.14.0, so webcli goes to 0.15.0.
 
 ### Added
 
@@ -26,7 +26,40 @@ and tmuxlet can use a notebook as a chat backend. It reuses `webcli notebooklm`'
 
 ### Changed
 
-- truefrontier-llmcli / llmcli packages 0.5.0 -> 0.6.0 (their webcli pin is left for the second merge).
+- Version 0.15.0 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest.
+- truefrontier-llmcli / llmcli packages 0.5.0 -> 0.6.0, pinned to truefrontier-webcli==0.15.0 (the release with `llmcli notebooklm`).
+
+## 0.14.0 (2026-10-24)
+
+New site: `webcli amazon`, your Amazon.com orders, payment transactions, tracking, and wish lists, read-only, so
+agents can tie a card charge to the order behind it (a $33.90 charge that was two books). Its own identity,
+`amazon:default`; sign in once with `webcli amazon login`. See docs/amazon-site.md.
+
+### Added
+
+- **`orders [--year Y | --since DATE] [--limit N] [--details]`**: order id, date, total, ship-to name, status, and
+  items; `--details` adds each order's invoice (item prices, tax, total, payment).
+- **`order ORDER_ID`**: items with quantities and prices, subtotal, shipping, discounts, tax, gift card, total,
+  shipments, and payment as card brand + last 4 only.
+- **`transactions [--since DATE] [--limit N]`**: Your Payments > Transactions: date, amount, charge or refund, card
+  (brand + last 4), order ids, merchant, pending or completed. Pages with the page's own Next button.
+- **`match AMOUNT [--date DATE] [--window DAYS] [--no-orders]`**: transactions (then order totals) of that amount
+  within DAYS of the date (default 7; without a date, the last 60 days), each with its orders' items.
+- **`track ORDER_ID`**: each shipment's carrier, tracking number, status, and delivery date.
+- **`wishlists`** and **`wishlist LIST [--limit N]`** (by id or name): items with prices and availability.
+- **`status`** and **`login`**; every read has `--json` and the usual agent output flags.
+- **Guard (hard read-only):** GETs only to amazon.com's order, invoice, tracking, transactions, and wish list
+  paths and Amazon's image and static hosts; paths with cart, buy, checkout, return, cancel, subscribe, delete,
+  remove, edit, move, add-to, purchase, or sign-out are refused even under those. The only POST allowed is the
+  transactions page's own page-navigation form (every field `ppw-`, only Default/Next/Previous page events).
+  Product pages, the cart, Buy Now, returns, cancellations, subscriptions, and account settings are all blocked.
+- **Card numbers never leave as digits:** cards are reported as brand + last 4, and any card-number-shaped digit
+  run in any field is masked to its last 4. Addresses are not reported (ship-to name only).
+- **Captchas:** a captcha or bot check exits 4 with a message saying so; webcli never solves or skips one.
+
+### Changed
+
+- Version 0.14.0 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest.
 
 ## 0.13.0 (2026-10-23)
 

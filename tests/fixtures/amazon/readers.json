@@ -1,0 +1,284 @@
+{
+ "captcha": {
+  "gate": {
+   "captcha": true,
+   "host": "www.amazon.com",
+   "path": "/errors/validateCaptcha",
+   "signin": false
+  },
+  "next": null,
+  "orders": [],
+  "ready": false
+ },
+ "captcha_inline": {
+  "gate": {
+   "captcha": true,
+   "host": "www.amazon.com",
+   "path": "/your-orders/orders",
+   "signin": false
+  },
+  "next": null,
+  "orders": [],
+  "ready": false
+ },
+ "invoice": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/gp/css/summary/print.html",
+   "signin": false
+  },
+  "text": "Final Details for Order #111-2223334-5556667\nOrder Placed: October 20, 2026\nAmazon.com order number: 111-2223334-5556667\nOrder Total: $33.90\nShipped on October 21, 2026\nItems Ordered Price\n2 of: The First Book: A Novel\nSold by: Amazon.com Services, Inc\nCondition: New $10.77\n1 of: Second Book (Paperback)\nSold by: Amazon.com Services, Inc\nCondition: New $9.98\nShipping Address:\nPat Example\n1 Example St\nSpringfield, IL 62701\nUnited States\nItem(s) Subtotal: $31.52\nShipping & Handling: $0.00\nTotal before tax: $31.52\nSales Tax: $2.38\nTotal for This Shipment: $33.90\nPayment information\nPayment Method:\nVisa | Last digits: 4242\nBilling address\nPat Example Item(s) Subtotal: $31.52\nShipping & Handling: $0.00\n-----\nTotal before tax: $31.52\nEstimated tax to be collected: $2.38\n-----\nGrand Total: $33.90\nCredit Card transactions Visa ending in 4242: October 21, 2026: $33.90"
+ },
+ "next_clicked": true,
+ "order": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/your-orders/order-details",
+   "signin": false
+  },
+  "items": [
+   {
+    "alt": "The First Book",
+    "asin": "0000000001",
+    "price": "$10.77",
+    "qty": "2",
+    "title": "The First Book: A Novel",
+    "url": "https://www.amazon.com/dp/0000000001"
+   },
+   {
+    "alt": "",
+    "asin": "0000000002",
+    "price": "$9.98",
+    "qty": "",
+    "title": "Second Book (Paperback)",
+    "url": "https://www.amazon.com/gp/product/0000000002"
+   }
+  ],
+  "payment_alts": [
+   "Visa"
+  ],
+  "payment_text": "Payment method\n\u2022\u2022\u2022\u2022 4242",
+  "ship_to": "Pat Example",
+  "shipments": [
+   {
+    "items": [
+     "The First Book: A Novel",
+     "Second Book (Paperback)"
+    ],
+    "status": "Delivered October 22",
+    "text": "Delivered October 22\nThe First Book: A Novel2$10.77\nSecond Book (Paperback)$9.98\nTrack package Return or replace items",
+    "track_url": "https://www.amazon.com/gp/your-account/ship-track?itemId=abc&orderId=111-2223334-5556667&shipmentId=Sx1"
+   }
+  ],
+  "text": "Order Details\nOrdered on October 20, 2026 Order# 111-2223334-5556667\nShip to\nPat Example\n1 Example St\nSpringfield, IL 62701\nPayment method\n\u2022\u2022\u2022\u2022 4242\nOrder Summary\nItem(s) Subtotal:\n$31.52\nShipping & Handling:\n$0.00\nTotal before tax:\n$31.52\nEstimated tax to be collected:\n$2.38\nGrand Total:\n$33.90\nDelivered October 22\nThe First Book: A Novel2$10.77\nSecond Book (Paperback)$9.98\nTrack package Return or replace items\nCustomers also bought",
+  "track_urls": [
+   "https://www.amazon.com/gp/your-account/ship-track?itemId=abc&orderId=111-2223334-5556667&shipmentId=Sx1"
+  ]
+ },
+ "orders": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/your-orders/orders",
+   "signin": false
+  },
+  "next": "https://www.amazon.com/your-orders/orders?timeFilter=months-3&startIndex=10",
+  "orders": [
+   {
+    "details_url": "https://www.amazon.com/gp/your-account/order-details?orderID=111-2223334-5556667&ref=ppx_yo2ov_dt_b_fed_order_details",
+    "header": "Order placed\nOctober 20, 2026\nTotal\n$33.90\nShip to\nPat Example\nOrder # 111-2223334-5556667\nView order details View invoice",
+    "items": [
+     {
+      "alt": "The First Book",
+      "asin": "0000000001",
+      "price": "",
+      "qty": "2",
+      "title": "The First Book: A Novel",
+      "url": "https://www.amazon.com/dp/0000000001?ref=ppx_yo2ov_dt_b_fed_asin_title"
+     },
+     {
+      "alt": "Second Book",
+      "asin": "0000000002",
+      "price": "$9.98",
+      "qty": "",
+      "title": "Second Book (Paperback)",
+      "url": "https://www.amazon.com/gp/product/0000000002"
+     }
+    ],
+    "order_id": "111-2223334-5556667",
+    "ship_to": "Pat Example",
+    "status": "Delivered October 22"
+   },
+   {
+    "details_url": "",
+    "header": "Order placed\nSeptember 30, 2026\nTotal\n$1,204.17\nShip to\nPat Example\nOrder # 112-0000000-0000001",
+    "items": [
+     {
+      "alt": "Laptop Stand",
+      "asin": "B000000003",
+      "price": "",
+      "qty": "",
+      "title": "Laptop Stand, Aluminum",
+      "url": "https://www.amazon.com/dp/B000000003"
+     }
+    ],
+    "order_id": "112-0000000-0000001",
+    "ship_to": "Pat Example",
+    "status": "Arriving Friday"
+   }
+  ],
+  "ready": true
+ },
+ "pager_posts": [
+  {
+   "body": "ppw-widgetState=st&ppw-widgetEvent%3ADefaultNextPageNavigationEvent%3A%7B%22nextPageKey%22%3A%22k2%22%7D=Submit",
+   "url": "https://www.amazon.com/cpe/yourpayments/transactions"
+  }
+ ],
+ "signin": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/ap/signin",
+   "signin": true
+  },
+  "next": null,
+  "orders": [],
+  "ready": false
+ },
+ "track": {
+  "carrier": "Shipped with UPS",
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/gp/your-account/ship-track",
+   "signin": false
+  },
+  "primary": "Delivered Thursday, October 22",
+  "secondary": "Your package was left near the front door.",
+  "text": "Delivered Thursday, October 22\nYour package was left near the front door.\nShipped with UPS\nTracking ID: 1Z999AA10123456784",
+  "tracking": "Tracking ID: 1Z999AA10123456784"
+ },
+ "transactions": {
+  "first": "Mastercard ****5555\n-$12.49\nOrder #113-0000000-0000009\nAMZN Mktp US|",
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/cpe/yourpayments/transactions",
+   "signin": false
+  },
+  "has_next": true,
+  "ready": true,
+  "rows": [
+   {
+    "date": "",
+    "order_links": [
+     "https://www.amazon.com/gp/css/summary/edit.html?orderID=113-0000000-0000009"
+    ],
+    "section": "In Progress",
+    "text": "Mastercard ****5555\n-$12.49\nOrder #113-0000000-0000009\nAMZN Mktp US"
+   },
+   {
+    "date": "October 21, 2026",
+    "order_links": [
+     "https://www.amazon.com/gp/css/summary/edit.html?orderID=111-2223334-5556667"
+    ],
+    "section": "Completed",
+    "text": "Visa ****4242\n-$33.90\nOrder #111-2223334-5556667\nAMAZON.COM"
+   },
+   {
+    "date": "October 2, 2026",
+    "order_links": [
+     "https://www.amazon.com/gp/css/summary/edit.html?orderID=112-0000000-0000001"
+    ],
+    "section": "Completed",
+    "text": "Visa ****4242\n+$15.00\nRefund: Order #112-0000000-0000001\nAMAZON.COM"
+   }
+  ],
+  "text": ""
+ },
+ "wishlist": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/hz/wishlist/ls/AAAAAAAAAAAA",
+   "signin": false
+  },
+  "items": [
+   {
+    "added": "Item added October 3, 2026",
+    "asin": "B000000010",
+    "available": true,
+    "byline": "by Example Co",
+    "item_id": "I1XXXXXXXX",
+    "price_attr": "24.99",
+    "price_text": "$24.99",
+    "purchased": "",
+    "requested": "",
+    "title": "Cast Iron Skillet, 12 inch",
+    "url": "https://www.amazon.com/dp/B000000010/?coliid=I1XXXXXXXX"
+   },
+   {
+    "added": "Item added August 1, 2026",
+    "asin": "B000000011",
+    "available": false,
+    "byline": "",
+    "item_id": "I2XXXXXXXX",
+    "price_attr": "-Infinity",
+    "price_text": "",
+    "purchased": "",
+    "requested": "",
+    "title": "Discontinued Gadget",
+    "url": "https://www.amazon.com/dp/B000000011/"
+   }
+  ],
+  "name": "Shopping List",
+  "next": "https://www.amazon.com/hz/wishlist/slv/items?filter=unpurchased&paginationToken=tok2&itemsLayout=LIST&type=wishlist&lid=AAAAAAAAAAAA",
+  "ready": true
+ },
+ "wishlist_more": {
+  "items": [
+   {
+    "added": "Item added July 9, 2026",
+    "asin": "B000000012",
+    "available": true,
+    "byline": "",
+    "item_id": "I3XXXXXXXX",
+    "price_attr": "7.5",
+    "price_text": "",
+    "purchased": "",
+    "requested": "",
+    "title": "Kitchen Timer",
+    "url": "https://www.amazon.com/dp/B000000012/"
+   }
+  ],
+  "next": null,
+  "status": 200
+ },
+ "wishlists": {
+  "gate": {
+   "captcha": false,
+   "host": "www.amazon.com",
+   "path": "/hz/wishlist/ls/AAAAAAAAAAAA",
+   "signin": false
+  },
+  "lists": [
+   {
+    "id": "AAAAAAAAAAAA",
+    "is_default": true,
+    "name": "Shopping List",
+    "privacy": "Private"
+   },
+   {
+    "id": "BBBBBBBBBBBB",
+    "is_default": false,
+    "name": "Books to read",
+    "privacy": "Shared"
+   }
+  ],
+  "shown": "AAAAAAAAAAAA",
+  "shown_name": "Shopping List"
+ }
+}
