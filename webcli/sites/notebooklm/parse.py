@@ -559,3 +559,20 @@ def write_budget(items: list[dict], *, create: bool = False) -> dict[str, int]:
     if create:
         budget = {ep.RPC["create_notebook"]: 1, **budget}
     return {k: v for k, v in budget.items() if v}
+
+
+# Per-source rejections. On an add, notebooklm-py (_web/sources/add.py) treats any RPC status other than auth, rate
+# limit, or server errors as that one source's failure (SourceAddError: invalid, inaccessible, paywalled, empty, or
+# unparseable input), not an API change. These are the gRPC codes NotebookLM answers a refused import with.
+SOURCE_REJECT_CODES = {3: "INVALID_ARGUMENT", 5: "NOT_FOUND", 9: "FAILED_PRECONDITION"}
+
+
+def source_rejected_message(code: int, kind: str) -> str:
+    """What to tell the user when NotebookLM refuses one source (kind: url, text, or file)."""
+    head = f"NotebookLM couldn't import this source (code {code})."
+    if kind == "url":
+        return (f"{head} The page may be paywalled or blocking imports. Try uploading a PDF or pasting the text "
+                "instead.")
+    if kind == "text":
+        return f"{head} Check that the text isn't empty or too long, or upload it as a .txt or .md file instead."
+    return f"{head} The file may be unsupported, empty, or unreadable. Try another format or paste the text instead."

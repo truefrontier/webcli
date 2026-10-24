@@ -136,10 +136,19 @@ async def _post(page: "Page", path: str, freq: str, *, rpcid: str | None, source
     return res["body"]
 
 
+class SourceRejected(RuntimeError):
+    """NotebookLM refused to import one source (a known per-item code): that source's failure, not an API change."""
+
+    def __init__(self, code: int, kind: str) -> None:
+        self.code = code
+        super().__init__(parse.source_rejected_message(code, kind))
+
+
 async def rpc(page: "Page", name: str, payload: list, *, notebook_id: str | None = None,
-              item: str | None = None) -> Any:
+              item: str | None = None, source_kind: str | None = None) -> Any:
     """batchexecute RPC[name](payload) -> the decoded payload. NotFound (when `item` names what was asked for) on
-    Google's not-found codes, AuthRequired on its auth codes."""
+    Google's not-found codes, AuthRequired on its auth codes, and (when `source_kind` says this adds one source)
+    SourceRejected on the codes NotebookLM refuses one source's import with."""
     rpcid = RPC[name]
     freq = json.dumps([[[rpcid, json.dumps(payload, separators=(",", ":")), None, "generic"]]], separators=(",", ":"))
     source = f"/notebook/{notebook_id}" if notebook_id else "/"
@@ -147,6 +156,8 @@ async def rpc(page: "Page", name: str, payload: list, *, notebook_id: str | None
     try:
         return parse.rpc_payload(body, rpcid)
     except parse.RpcError as exc:
+        if source_kind and exc.code in parse.SOURCE_REJECT_CODES:
+            raise SourceRejected(exc.code, source_kind) from None
         if item and exc.code in parse.NOT_FOUND_CODES | {3, 7}:
             raise NotFound(f"{item} not found (or not shared with this account).", hint=NOTEBOOKS_HINT) from None
         if exc.code in parse.AUTH_CODES:
@@ -483,7 +494,8 @@ async def _add_one(page: "Page", notebook_id: str, item: dict) -> dict:
     if item["kind"] in ("url", "text"):
         params = (parse.url_source_params(notebook_id, item["url"]) if item["kind"] == "url"
                   else parse.text_source_params(notebook_id, item["title"], item["text"]))
-        row = parse.added_source(await rpc(page, "add_source", params, notebook_id=notebook_id))
+        row = parse.added_source(await rpc(page, "add_source", params, notebook_id=notebook_id,
+                                           source_kind=item["kind"]))
         if row is None:
             raise RuntimeError("NotebookLM answered no source id; check `webcli notebooklm sources "
                                f"{notebook_id}` before adding it again. {SNIFF_HINT}")
@@ -501,7 +513,7 @@ async def _upload(page: "Page", notebook_id: str, item: dict) -> dict:
         raise UsageError(f"{path} is over {parse.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
     name = item.get("name") or path.name
     payload = await rpc(page, "add_source_file", parse.register_file_params(notebook_id, name),
-                        notebook_id=notebook_id)
+                        notebook_id=notebook_id, source_kind="file")
     source_id = parse.registered_source_id(payload, name)
     if not source_id:
         raise RuntimeError(f"NotebookLM registered {name} but answered no single source id; check `webcli notebooklm "
