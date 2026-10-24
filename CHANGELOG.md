@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.13.0 (2026-10-23)
+
+New site: `webcli notebooklm`, NotebookLM through the `google:default` identity (no new sign-in). The wire format
+was learned from [teng-lin/notebooklm-py](https://github.com/teng-lin/notebooklm-py) (v0.8.5, MIT License,
+Copyright (c) Teng Lin), the unofficial NotebookLM CLI over the same Playwright session; re-implemented on webcli's
+core, no code copied. See docs/notebooklm-site.md.
+
+### Added
+
+- **Reads:** `status [ARTIFACT]`, `notebooks`, `sources NOTEBOOK`, `source get SOURCE [--guide]` (full indexed
+  text, or summary and keywords), `notes NOTEBOOK`, and `artifacts NOTEBOOK`, all with `--json`.
+- **`ask NOTEBOOK "question"`**: NotebookLM's answer with citations (source id, title, quoted passage).
+- **`generate KIND NOTEBOOK`** for every Studio output: `audio` (deep-dive, brief, critique, debate; short, default,
+  long), `video` (explainer, brief, cinematic, short; ten visual styles or a custom prompt), `report` (briefing doc,
+  study guide, blog post, custom), `quiz` and `flashcards` (quantity, difficulty), `mind-map`, `infographic`
+  (orientation, detail, style), `slide-deck` (detailed or presenter; default or short), and `data-table`, with
+  `--source`, `--language`, and `--instructions`. Nothing is created without `--confirm`: the default is a dry run
+  that prints the plan and exits 2. `--wait` polls until it completes (exit 5 if it fails or times out).
+  `generate kinds` lists them; FAQ and timeline report as unavailable (NotebookLM no longer has them).
+- **`download ARTIFACT -o PATH`**: audio `.m4a`, video `.mp4`, infographic `.png`, slides `.pdf`, report `.md`, and
+  quiz, flashcards, mind map, and data table as `.json`. Media come only from Google media hosts.
+- **Guard:** three fail-closed policies: reads allow only read rpcids (one per call, matching the URL label); `ask`
+  adds only the chat endpoint; `generate --confirm` adds only CreateArtifact. Source, notebook, note, and artifact
+  edits and deletes stay blocked. The daemon treats `generate` as a write op.
+
+### Changed
+
+- Version 0.13.0 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest.
+
 ## 0.12.4 (2026-10-23)
 
 `webcli linkedin posts search` reads results again when LinkedIn serves its search cards without their

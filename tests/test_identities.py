@@ -138,7 +138,7 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
     assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"],
                                "webcli": ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom", "messages",
-                                          "photos", "recorder", "walkie", "whatsapp", "youtube"]}
+                                          "notebooklm", "photos", "recorder", "walkie", "whatsapp", "youtube"]}
 
 
 def test_sites_lists_every_llm_site_and_the_data_sites():
@@ -146,7 +146,8 @@ def test_sites_lists_every_llm_site_and_the_data_sites():
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"]
     assert [s["name"] for s in data["webcli"]] == ["aa", "contacts", "facebook", "gmail", "keep", "linkedin", "loom",
-                                                   "messages", "photos", "recorder", "walkie", "whatsapp", "youtube"]
+                                                   "messages", "notebooklm", "photos", "recorder", "walkie", "whatsapp",
+                                                   "youtube"]
     own = {"facebook": "facebook", "linkedin": "linkedin", "loom": "loom", "messages": "messages",
            "whatsapp": "whatsapp"}  # the rest: Google
     for site in data["webcli"]:  # aa, walkie: no sign-in, so no identity (none in `identity list` / `doctor` either)
