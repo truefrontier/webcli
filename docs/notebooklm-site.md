@@ -107,8 +107,10 @@ Live against Kevin's account on 2026-10-23: `status`, `notebooks`, `sources`, `s
 `artifacts`, `ask` (answer plus citations), `generate report --style study-guide --confirm --wait` (completed in
 about 50 s), `download` of that report (markdown) and of an existing audio overview (m4a), and `status ARTIFACT -n`.
 
-Not yet run live (Kevin's approval pending; tests use synthetic fixtures and a scripted page): `create` and
-`source add`. The request shapes follow notebooklm-py 0.8.5; see "To confirm live" below.
+Live on 2026-10-24 (0.16.0): `create "webcli test" --confirm --json` with no sources made one empty notebook
+(`CCqFvf` reply read correctly; `notebooks` lists it, `sources` shows none), and `source add` dry runs for
+`--file`, `--url`, and `--text` (plan printed, exit 2, nothing added). Not yet run live: `source add --confirm`
+(URL, text, or file upload) and `create` with sources; see "To confirm live" below.
 
 Tested against synthetic fixtures only: generating audio, video, quiz, flashcards, mind-map, infographic,
 slide-deck, and data-table; downloading video, infographic, slides, quiz, flashcards, and mind map; `notes` with
@@ -120,10 +122,10 @@ notes present; and `status ARTIFACT` without `-n` (it searches every notebook).
   (as notebooklm-py does), else `0`.
 - That Chrome lets the in-page fetch set the `x-goog-upload-*` headers and read the `x-goog-upload-url` response
   header (same origin, so it should).
-- Response nesting of `CCqFvf` (notebook row, maybe wrapped once), `izAoDd` (source row, wrapped once or twice),
+- Response nesting of `izAoDd` (source row, wrapped once or twice),
   and `o4cbdc` (exactly one source id); the readers accept each variant.
 - That `text/markdown` is accepted as the upload content type for `.md` (notebooklm-py sends it).
-- What a quota limit looks like on `create` (probably an RPC error code).
+- What a quota limit looks like on `create` (probably an RPC error code). (`CCqFvf` itself is verified.)
 
 ## Proposed write commands (not built)
 

@@ -3,8 +3,9 @@
 ## 0.16.0 / llmcli 0.6.1 (2026-10-24)
 
 `webcli notebooklm create` and `webcli notebooklm source add`: make a notebook and fill it with files, URLs, and
-text, so agents can build a notebook to ask. Both are dry runs (exit 2) unless `--confirm`. Not yet run live; the
-request shapes follow notebooklm-py 0.8.5 (see docs/notebooklm-site.md, "To confirm live").
+text, so agents can build a notebook to ask. Both are dry runs (exit 2) unless `--confirm`. Verified live: `create`
+of an empty notebook and the `source add` dry runs; adding sources (including the file upload) is not yet run live.
+The request shapes follow notebooklm-py 0.8.5 (see docs/notebooklm-site.md, "To confirm live").
 
 ### Added
 
