@@ -229,18 +229,35 @@ async def artifact(artifact_id: str, notebook_id: str | None = None, *, headed: 
         return await _find_artifact(page, artifact_id, notebook_id)
 
 
+async def _resolve_notebook(page: "Page", ref: str) -> str:
+    """A notebook id (or URL, already cleaned) as is; anything else is an exact notebook title, looked up with one
+    ListRecentlyViewedProjects read. No match exits 3; more than one exits 2 naming their ids."""
+    if parse.is_uuid(ref):
+        return ref
+    rows = parse.notebook_by_title(parse.notebooks(await rpc(page, "notebooks", parse.notebooks_params())), ref)
+    if not rows:
+        raise NotFound(f"No notebook titled {ref!r} (and it is not a notebook id or URL).", hint=NOTEBOOKS_HINT)
+    if len(rows) > 1:
+        raise UsageError(f"{len(rows)} notebooks are titled {ref!r}: {', '.join(r['id'] for r in rows)}. "
+                         "Pass the id instead.")
+    return rows[0]["id"]
+
+
 async def ask(notebook_id: str, question: str, source_ids: list[str] | None = None, *,
-              headed: bool = False) -> dict:
+              conversation_id: str | None = None, timeout: int | None = None, headed: bool = False) -> dict:
     """{notebook_id, question, answer, citations: [{number, source_id, source_title, excerpt}], conversation_id}.
-    Asks with every source unless source_ids. The question joins the notebook's chat history, as in the app."""
+    notebook_id may also be an exact notebook title. Asks with every source unless source_ids. The question joins
+    the notebook's chat history, as in the app: its current conversation, or conversation_id's. timeout: seconds to
+    wait for the answer (default ASK_TIMEOUT_MS)."""
     async with browser.site_page(ASK) as page:
         await open_app(page)
+        notebook_id = await _resolve_notebook(page, notebook_id)
         nb = await _notebook(page, notebook_id)
         ids = _pick_sources(nb, source_ids)
-        params = parse.ask_params(notebook_id, question, ids)
+        params = parse.ask_params(notebook_id, question, ids, conversation_id)
         freq = json.dumps([None, json.dumps(params, separators=(",", ":"))], separators=(",", ":"))
         body = await _post(page, QUERY_PATH, freq, rpcid=None, source=f"/notebook/{notebook_id}",
-                           timeout_ms=ASK_TIMEOUT_MS, what="the question")
+                           timeout_ms=timeout * 1000 if timeout else ASK_TIMEOUT_MS, what="the question")
     try:
         got = parse.answer(body)
     except parse.RpcError as exc:

@@ -1,12 +1,12 @@
 [project]
 name = "truefrontier-llmcli"
-version = "0.5.0"
+version = "0.6.0"
 description = "Installs webcli, which provides the llmcli command (chat AIs over your own signed-in Chrome)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "Brandname Maker LLC dba True Frontier" }]
-keywords = ["cli", "agent", "llm", "gemini", "chatgpt", "muse"]
+keywords = ["cli", "agent", "llm", "gemini", "chatgpt", "muse", "notebooklm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Utilities",
 ]
-dependencies = ["truefrontier-webcli==0.5.0"]
+dependencies = ["truefrontier-webcli==0.15.0"]
 
 [project.urls]
 Homepage = "https://pypi.org/project/truefrontier-webcli/"

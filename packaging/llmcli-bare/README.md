@@ -1,6 +1,6 @@
 # llmcli
 
-Installing this package installs [**truefrontier-webcli**](https://pypi.org/project/truefrontier-webcli/), which provides the `llmcli` command — agent-native CLIs for chat AIs (Gemini, ChatGPT, and Meta's Muse) over your own signed-in, hidden Chrome sessions.
+Installing this package installs [**truefrontier-webcli**](https://pypi.org/project/truefrontier-webcli/), which provides the `llmcli` command — agent-native CLIs for chat AIs (Gemini, ChatGPT, Meta's Muse, and NotebookLM) over your own signed-in, hidden Chrome sessions.
 
 ```sh
 pip install llmcli     # equivalent to: pip install truefrontier-webcli

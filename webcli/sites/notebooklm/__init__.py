@@ -1,5 +1,7 @@
 """notebooklm.google.com (webcli notebooklm): notebooks, sources, notes, Studio outputs, ask with citations, and
-generate / download for Studio outputs. A Google data site: runs as google:<account>, no login of its own.
+generate / download for Studio outputs. A Google data site: runs as google:<account>, no login of its own. Its ask
+is also an llmcli site (`llmcli notebooklm`, chat.py): the same ops in the same daemon, limited to the reads and
+the chat.
 
 Built on the RPCs documented by teng-lin/notebooklm-py (MIT), re-implemented in webcli's in-page, guarded style.
 """
@@ -11,6 +13,12 @@ from webcli.sites.base import Site, Strategy
 
 def _cli():
     from webcli.sites.notebooklm.cli import group
+
+    return group
+
+
+def _llm_cli():
+    from webcli.sites.notebooklm.chat import group
 
     return group
 
@@ -30,4 +38,5 @@ ADAPTER = Site(
            "source": Strategy.COOKIE, "notes": Strategy.COOKIE, "artifacts": Strategy.COOKIE, "ask": Strategy.COOKIE,
            "generate": Strategy.COOKIE, "download": Strategy.COOKIE},
     status_op="status",
+    llm_cli=_llm_cli,
 )

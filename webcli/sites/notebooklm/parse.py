@@ -109,10 +109,19 @@ def artifacts_params(notebook_id: str) -> list:
     return [[2], notebook_id, 'NOT artifact.status = "ARTIFACT_STATUS_SUGGESTED"']
 
 
-def ask_params(notebook_id: str, question: str, source_ids: list[str]) -> list:
+def ask_params(notebook_id: str, question: str, source_ids: list[str], conversation_id: str | None = None) -> list:
     """GenerateFreeFormStreamed's params: [[[[sid]]...], question, history, options, conversation, _, _, nb, 1].
-    No history and no conversation id: the server continues the notebook's current conversation."""
-    return [[[[sid]] for sid in source_ids], question, None, [2, None, [1], [1]], None, None, None, notebook_id, 1]
+    No history: the server keeps the history itself. No conversation id: it continues the notebook's current
+    conversation; with one, that conversation (the id an earlier answer returned)."""
+    return [[[[sid]] for sid in source_ids], question, None, [2, None, [1], [1]], conversation_id or None, None, None,
+            notebook_id, 1]
+
+
+def notebook_by_title(rows: list[dict], title: str) -> list[dict]:
+    """The notebooks titled exactly `title` (surrounding spaces ignored); case-insensitive only when no exact match."""
+    want = title.strip()
+    exact = [r for r in rows if (r["title"] or "").strip() == want]
+    return exact or [r for r in rows if (r["title"] or "").strip().casefold() == want.casefold()]
 
 
 # Responses.

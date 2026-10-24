@@ -37,9 +37,13 @@ class Site:
     login: Callable[..., Awaitable[dict]] | None = None
     # async status(headed=False) -> {signedIn, ...} for `doctor` / `identity status` (a daemon op).
     status_op: str | None = "status"
+    # A data site that also offers a chat surface under `llmcli <site>` (notebooklm's ask): its llmcli group,
+    # imported lazily. It runs the same fetch ops in the same daemon; the group itself limits which.
+    llm_cli: Callable[[], click.Group] | None = None
 
     def describe(self) -> dict[str, Any]:
         return {"name": self.name, "kind": self.kind, "binary": "llmcli" if self.kind == "llm" else "webcli",
+                "alsoLlmcli": self.kind != "llm" and self.llm_cli is not None,
                 "provider": self.provider,
                 "defaultIdentity": None if self.provider == NO_IDENTITY else f"{self.provider}:default",
                 "summary": self.summary,

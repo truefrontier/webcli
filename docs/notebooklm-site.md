@@ -25,7 +25,7 @@ All of them take `--json` (same as `--format json`) and webcli's usual `--format
 | `source get SOURCE [-n NOTEBOOK] [--guide] [-o PATH]` | A source's full indexed text, or (`--guide`) its summary and keywords |
 | `notes NOTEBOOK` | Saved notes |
 | `artifacts NOTEBOOK` | Studio outputs, newest first: id, kind, title, status, created |
-| `ask NOTEBOOK "question" [--source S]` | NotebookLM's answer, with citations (source id, title, quoted passage) |
+| `ask NOTEBOOK "question" [--source S]` | NotebookLM's answer, with citations (source id, title, quoted passage). NOTEBOOK may also be the notebook's exact title |
 | `download ARTIFACT -o PATH [-n NOTEBOOK]` | Save an output: audio `.m4a`, video `.mp4`, infographic `.png`, slides `.pdf`, report `.md`, quiz/flashcards/mind map/data table `.json`. A path ending in `/` is a directory |
 | `generate kinds` | Which kinds can be generated (faq and timeline report as unavailable) |
 | `generate KIND NOTEBOOK ... --confirm [--wait]` | Create one Studio output |
@@ -84,3 +84,25 @@ These would each need their own rpcid in a guard policy and a `--confirm` dry ru
 - `artifact delete|rename|export|retry|revise-slide` (`V5N4be`, `rc3d8d`, `Krh3pd`, `Rytqqe`, `KmcKPe`)
 - `research` (fast/deep web research into sources: `Ljjv0c`, `QA9ei`, `LBwxtb`)
 - `chat delete` (`J7Gthc`)
+
+## llmcli notebooklm (the ask, as an llmcli site)
+
+`llmcli notebooklm` is the same site's chat surface, shaped like `llmcli gemini` / `chatgpt` / `muse`, so agents and
+tmuxlet (`--target notebooklm --notebook NB`) can use it as a chat backend:
+
+```sh
+llmcli notebooklm ask -n NOTEBOOK "question" [--source S]... [--chat ID] [--json]
+llmcli notebooklm -p -n NOTEBOOK [PROMPT...] [-c | --chat ID] [--prompt-file F] [--output-file F] [--output-format json]
+llmcli notebooklm notebooks | status | models      # models is always []
+```
+
+- `-n/--notebook`: an id, a notebook URL, or the exact title (case-insensitive when nothing matches exactly; two
+  notebooks with the title exit 2 naming their ids). Env `LLMCLI_NOTEBOOKLM_NOTEBOOK` is the default.
+- The JSON is the uniform llm ask object (`answer`, `chatId` = the conversation id, null model fields, `images: []`,
+  `canvas: null`) with NotebookLM's citations (`number`, `title`, `url: null`, `source_id`, `source_title`,
+  `excerpt`) and `notebook_id`, `notebook`, `question`, `conversation_id`.
+- Conversations: a question continues the notebook's current conversation, as in the app. `--chat ID` sends the
+  conversation id (GenerateFreeFormStreamed param 4) explicitly; `-p -c` reuses the last ask's notebook and
+  conversation (`~/.webcli/sites/notebooklm/<identity>/last_chat`).
+- Scope: it runs only the `status`, `notebooks`, and `ask` fetch ops (`chat.OPS`, checked before every call), and
+  `ask` runs under the ASK guard policy (read rpcids plus the chat endpoint). No generate, download, or edits.
