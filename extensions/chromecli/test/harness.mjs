@@ -101,7 +101,7 @@ export async function loadBackground({ page } = {}) {
       update: async () => ({}),
       onRemoved: event(),
     },
-    permissions: { contains: async ({ origins }) => origins.every((o) => h.granted.has(o)) },
+    permissions: { contains: async ({ origins }) => origins.every((o) => h.granted.has(o)), onAdded: event() },
     scripting: {
       executeScript: async ({ target, func, args, world }) => {
         const frameId = target.frameIds ? target.frameIds[0] : 0;

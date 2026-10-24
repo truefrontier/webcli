@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.2 / llmcli 0.6.3 (2026-10-24)
+
+### Fixed
+
+- chromecli extension popup: clicking **Act** or **Read** on a site Chrome hasn't granted yet showed Chrome's
+  "Allow / Cancel" site-access prompt, and after **Allow** the tab still wasn't shared, so you had to click again
+  (the popup closes while the prompt is open, so its code after the prompt never ran). Now the popup hands the
+  choice (tab, site, mode, and the origins asked for) to the service worker before asking, and the worker applies
+  it as soon as Chrome reports the grant (`permissions.onAdded`), or when the popup next opens, or when the prompt
+  answers with the popup still open. The tab is shared once, with "shared after allow" in the share event.
+  **Cancel** leaves the tab as it was: the choice is applied only when every origin asked for (including Act's
+  frame_act_allow sites) is granted, the popup's next open drops an ungranted one, and it expires after 2 minutes.
+  It is also dropped if the tab moved to another site before Allow. Kept in `chrome.storage.session`; only the
+  popup can set it.
+
+### Changed
+
+- Version 0.16.2 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest;
+  truefrontier-llmcli / llmcli 0.6.2 -> 0.6.3, pinned to truefrontier-webcli==0.16.2. Reload the extension in
+  chrome://extensions to get the fix.
+
 ## 0.16.1 / llmcli 0.6.2 (2026-10-24)
 
 ### Fixed

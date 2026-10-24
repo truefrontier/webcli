@@ -205,8 +205,14 @@ async function share(level) {
   // permissions.request must run straight from the click (user gesture): nothing is awaited before it.
   // 0.11.3: Act also asks for the accepted frame_act_allow origins (one prompt), so listed app frames work there.
   const frames = level === "act" ? (state?.frameActAllow || []).map(allowToPermission).filter(Boolean) : [];
-  const granted = chrome.permissions.request({ origins: [permissionPattern(tab.origin), ...frames] });
-  if (!(await granted)) {
+  const origins = [permissionPattern(tab.origin), ...frames];
+  // 0.16.2: the popup may close while Chrome's Allow / Cancel prompt is open, so the worker keeps this choice and
+  // applies it on Allow (permissions.onAdded). Sent, not awaited: the request below must still be in the click.
+  send({ type: "pendingShare", tabId: tab.id, origin: tab.origin, level, origins }).catch(() => {});
+  let allowed = false;
+  try { allowed = await chrome.permissions.request({ origins }); } catch { allowed = false; }
+  if (!allowed) {
+    await send({ type: "clearPendingShare", tabId: tab.id }).catch(() => {});
     msg(frames.length ? "Chrome didn't grant access to this site and its frame_act_allow app sites; not shared." : "Chrome didn't grant access to this site; not shared.", true);
     return;
   }
@@ -271,4 +277,8 @@ chrome.commands?.getAll?.().then((cmds) => {
   $("shortcut").setAttribute("aria-label", keys.length ? `Shortcut ${keys.join(" ")}` : "No shortcut set");
 }).catch(() => {});
 
-load().then(() => send({ type: "reconnect" }).catch(() => {}));
+// 0.16.2: a share picked before Chrome's Allow prompt closed this popup is applied now (or dropped after Cancel).
+send({ type: "applyPendingShare" }).catch(() => null).then(async (res) => {
+  await load();
+  if (res?.applied) msg(res.level === "act" ? "Shared (act)." : "Shared (read).");
+}).then(() => send({ type: "reconnect" }).catch(() => {}));
