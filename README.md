@@ -3,7 +3,7 @@
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`), and `webcli notebooklm` (NotebookLM notebooks, sources, notes, and `ask` with citations; `generate` creates audio and video overviews, reports, quizzes, flashcards, mind maps, infographics, slide decks, and data tables only with `--confirm`, and `download` saves them; see [docs/notebooklm-site.md](docs/notebooklm-site.md)). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; finds older conversations by contact or number; `send` writes only with `--confirm`, and starts a new conversation only with `--new-ok` and exact `--expect-recipient`s) and `webcli whatsapp` (your WhatsApp chats through WhatsApp Web, unofficial; `send` writes only with `--confirm` and an exact `--expect-chat`). Plus `identity`, `doctor`, `sites`, and `serve`.
+- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`), and `webcli notebooklm` (NotebookLM notebooks, sources, notes, and `ask` with citations; `generate` creates audio and video overviews, reports, quizzes, flashcards, mind maps, infographics, slide decks, and data tables only with `--confirm`, and `download` saves them; see [docs/notebooklm-site.md](docs/notebooklm-site.md)). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; finds older conversations by contact or number; `send` writes only with `--confirm`, and starts a new conversation only with `--new-ok` and exact `--expect-recipient`s) and `webcli whatsapp` (your WhatsApp chats through WhatsApp Web, unofficial; `send` writes only with `--confirm` and an exact `--expect-chat`). And `webcli amazon` (your Amazon orders, payment transactions, package tracking, and wish lists, with `match` to tie a card charge to its order; hard read-only; see [docs/amazon-site.md](docs/amazon-site.md)). Plus `identity`, `doctor`, `sites`, and `serve`.
 - `chromecli`: the tabs you share from your real, signed-in Chrome, through the chromecli extension and a native messaging host: read them, and act in them (open, navigate, click, fill, ...) with your OK in the browser for anything risky; see [chromecli](#chromecli-tabs-you-share).
 
 All three binaries come from one Python package and share one core and one data home, `~/.webcli/`.
@@ -20,7 +20,7 @@ To develop from a checkout instead, see [Develop](#develop).
 
 ## Sign in (a person, once per identity)
 
-Each identity is one Chrome profile. There are seven:
+Each identity is one Chrome profile. There are nine:
 
 | Identity | Used by | Profile |
 |---|---|---|
@@ -32,6 +32,7 @@ Each identity is one Chrome profile. There are seven:
 | `loom:default` | `webcli loom` | `~/.webcli/identities/loom-default/chrome-profile` |
 | `messages:default` | `webcli messages` | `~/.webcli/identities/messages-default/chrome-profile` |
 | `whatsapp:default` | `webcli whatsapp` | `~/.webcli/identities/whatsapp-default/chrome-profile` |
+| `amazon:default` | `webcli amazon` | `~/.webcli/identities/amazon-default/chrome-profile` |
 
 Sign in opens a visible Chrome window, so run it yourself, never from an agent:
 
@@ -44,6 +45,7 @@ webcli identity login linkedin:default   # LinkedIn (writes refuse unless signed
 webcli identity login loom:default       # Loom
 webcli identity login messages:default   # Google Messages: scan the QR code with your phone
 webcli whatsapp login                    # WhatsApp Web (= webcli identity login whatsapp:default): scan its QR code
+webcli amazon login                      # Amazon (= webcli identity login amazon:default): password, maybe a one-time code
 ```
 
 Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
@@ -57,6 +59,8 @@ The Google data sites have no sign-in of their own. One `webcli identity login g
 `webcli messages` has its own identity, `messages:default`, because Google Messages for web pairs with your phone, not with a Google account. `webcli identity login messages:default` opens Messages on its QR code page. On the phone, open Google Messages, then **Device pairing > QR code scanner**, and scan the code. Leave **Remember this computer** on. Login finishes once the conversation list shows and a fresh hidden Chrome on the profile is paired too. The pairing lives in that profile. Nothing is copied from `~/.google-messages-cli`, and there is no `gmsg` alias.
 
 `webcli whatsapp` has its own identity, `whatsapp:default`, linked to your phone as a WhatsApp Web device. `webcli whatsapp login` (same as `webcli identity login whatsapp:default`) opens WhatsApp Web on its QR code. On the phone, open WhatsApp, then **Settings > Linked devices > Link a device**, and scan the code. Login finishes once the chat list shows and a fresh hidden Chrome on the profile is linked too. The link lives in that profile and never leaves this computer; the phone lists it under Linked devices, where you can log it out. No agent scans the code or works around it.
+
+`webcli amazon` has its own identity, `amazon:default`. `webcli amazon login` opens Amazon's sign-in; enter your password and any one-time code Amazon asks for, and keep **Keep me signed in** checked. Login finishes once Your Orders shows and a fresh hidden Chrome on the profile agrees. If Amazon shows a captcha or bot check to a hidden run, `webcli amazon` exits 4 and says so; it never solves or skips one. A person runs `webcli amazon login` again.
 
 `aa` and `walkie` need no sign-in and never open Chrome:
 
@@ -98,6 +102,11 @@ webcli messages read Alice --limit 20           # read-only: reading doesn't mar
 webcli messages send --to Alice --text "On my way"                     # dry run: shows who it would go to
 webcli messages search "(202) 555-0143"                                 # older conversations too, by contact or number
 webcli messages send --to 2025550143 --to "Alex Doe" --text "Hi" --new-ok   # dry run: a new group, who and what
+webcli amazon match 33.90 --date 2026-10-21 --json                     # which order a card charge was (read-only)
+webcli amazon transactions --since 30d --json   # charges and refunds: date, amount, card brand + last 4, order ids
+webcli amazon orders --since 30d --details      # orders with items, totals, and payment (last 4 only)
+webcli amazon track 111-2223334-5556667         # carrier, tracking number, delivery status
+webcli amazon wishlist "Books to read" --json
 webcli whatsapp chats --unread                  # chat list: name, last message, time, unread count
 webcli whatsapp read "Family Group" --limit 30  # opening a chat may send read receipts
 webcli whatsapp send "Alice Smith" --text "On my way" --expect-chat "Alice Smith"   # dry run
