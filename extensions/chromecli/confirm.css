@@ -72,7 +72,10 @@ body.confirm main { flex: 1; padding: 16px 16px 8px; gap: 12px; }
 .queue { flex: 1; color: var(--muted); font-size: 12px; }
 .btn-lg { height: 36px; padding: 0 18px; font-size: 13px; border-radius: 9px; }
 #deny { min-width: 96px; }
-#deny:focus-visible, #deny:focus { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); }
+#deny:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); }
+/* 0.16.2: both buttons are visibly disabled for the first second, then fade in. */
+#deny:disabled { opacity: .45; cursor: default; }
+.actions-row .btn-lg { transition: opacity .2s ease; }
 .btn-allow { min-width: 112px; background: var(--act); color: #fff; border-color: transparent; }
 .btn-allow:hover:not(:disabled) { background: color-mix(in srgb, var(--act) 88%, #000); }
 .btn-allow:disabled { opacity: .45; cursor: default; }

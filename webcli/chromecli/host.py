@@ -482,6 +482,14 @@ class Host:
             gate = f" gated={reasons} confirmed={bool(info.get('confirmedInBrowser'))}"
         if code in ("declined", "confirm_timeout"):
             gate += f" confirm={code}"
+            # 0.16.2: how the in-browser confirm was answered (via=click / escape / window_closed / ...), ms after the
+            # window appeared, and the keys / clicks its first second ignored. Short keys: the log redacts 20+ char tokens.
+            if isinstance(info.get("answeredBy"), str) and info["answeredBy"].isidentifier():
+                gate += f" via={info['answeredBy'][:16]}"
+            for key, name in (("answeredAfterMs", "answer_ms"), ("ignoredKeys", "ignored_keys"),
+                              ("ignoredClicks", "ignored_clicks")):
+                if isinstance(info.get(key), int) and not isinstance(info.get(key), bool):
+                    gate += f" {name}={info[key]}"
         # 0.11.3: an action inside an iframe (frame_act_allow) names the frame and its origin.
         if isinstance(info.get("frameId"), int) and info["frameId"] > 0 and op in FRAME_ACT_OPS:
             gate += f" frame={info['frameId']}"
