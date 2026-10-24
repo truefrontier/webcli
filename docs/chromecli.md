@@ -151,8 +151,12 @@ Jev never removes a heuristic gate on any tab kind.
   `confirm: true`. (b) **In-browser confirm** for gated actions: a `chrome.windows.create({type: "popup"})` window
   (`confirm.html`, popup design, light/dark) showing the tab title, origin, op, element (tag, role, accessible name,
   200 chars of outerHTML with field values blanked), the *Gated because* list, and the value (masked for
-  credential/payment fields). **Deny** has the default focus (Enter / Escape deny); *Allow once* is enabled after
-  0.8s. Closing the window = Deny. `confirm_timeout` (default 60s) → `confirm_timeout`. One confirm at a time, the
+  credential/payment fields). 0.16.2: the window opens focused while Kevin may be typing elsewhere, so **no button has
+  focus** and keys never pick a button (Enter / Space do nothing, even on a Tab-focused button). For the first
+  **1 s** both buttons are visibly disabled and every key and click is ignored, Escape included. After that only a
+  mouse click on Deny / *Allow once*, or Escape (= Deny), answers. Closing the window = Deny. A declined error says how
+  (`answeredBy`: click / escape / window_closed, `answeredAfterMs`, `ignoredKeys` / `ignoredClicks` from the first
+  second), and the host log adds `via= answer_ms= ignored_keys= ignored_clicks=`. `confirm_timeout` (default 60s) → `confirm_timeout`. One confirm at a time, the
   rest queue (popup banner "N agent actions wait for your OK", global badge `?`); a queued confirm whose CLI stopped
   waiting is dropped. **Pause** closes the pending confirm and cancels the queue (`paused`, exit 4). After Allow,
   every precondition is checked again (tab, share, pause, origin, `--expect-*`, the element's fingerprint).

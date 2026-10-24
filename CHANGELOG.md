@@ -14,6 +14,16 @@
   frame_act_allow sites) is granted, the popup's next open drops an ungranted one, and it expires after 2 minutes.
   It is also dropped if the tab moved to another site before Allow. Kept in `chrome.storage.session`; only the
   popup can set it.
+- chromecli confirm window (an agent's gated action: *Allow once* / Deny): it opened with keyboard focus on
+  **Deny**, so a keystroke meant for another app (Space or Enter) denied the action. That denied two
+  developer.apple.com navigations on 2026-10-24: the host log shows each denied about 1.3-1.5 s after the op started
+  (window opening included), too soon for a read. Now **no button has focus** (no `autofocus`, focus dropped on
+  load), and keys never pick a button: Enter / Space do nothing, even on a Tab-focused button. For the **first second**
+  both buttons are visibly disabled and every key and click is ignored, Escape included (Allow was gated for 0.8 s
+  before; Deny wasn't). After that only a mouse click, or Escape (= Deny), answers. Closing the window still denies.
+- A declined in-browser confirm now says how it was answered: the error has `answeredBy` (click / escape /
+  window_closed, or page for a malformed report), `answeredAfterMs`, and `ignoredKeys` / `ignoredClicks` (inputs the
+  first second swallowed); the host log adds `via= answer_ms= ignored_keys= ignored_clicks=`.
 
 ### Changed
 

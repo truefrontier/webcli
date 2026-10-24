@@ -225,3 +225,21 @@ def test_protocol_ops():
                "page.select", "page.press", "page.wait", "page.eval"):
         assert protocol.validate_request({"v": 1, "op": op})["op"] == op
     assert protocol.exit_code("eval_disabled") == 7
+
+
+def test_declined_audit_line_says_how(ext, home):
+    # 0.16.2: the in-browser confirm reports how it was answered; the host log keeps it (junk is dropped).
+    ext(lambda req: {"ok": False, "error": {"code": "declined", "message": "Kevin denied", "tab": 7, "origin": FORM,
+                                            "answeredBy": "click", "answeredAfterMs": 4210, "ignoredKeys": 3,
+                                            "ignoredClicks": 0}}).start()
+    assert run("navigate", "7", "https://example.org/x", "--confirm").exit_code == 4
+    log = (home / "logs" / "chromecli.log").read_text()
+    assert "confirm=declined via=click answer_ms=4210 ignored_keys=3 ignored_clicks=0" in log
+
+
+def test_declined_audit_line_drops_junk_how(ext, home):
+    ext(lambda req: {"ok": False, "error": {"code": "declined", "message": "Kevin denied", "tab": 7, "origin": FORM,
+                                            "answeredBy": "x y=1", "answeredAfterMs": True}}).start()
+    assert run("navigate", "7", "https://example.org/x", "--confirm").exit_code == 4
+    log = (home / "logs" / "chromecli.log").read_text()
+    assert "confirm=declined" in log and " via=" not in log and "answer_ms" not in log

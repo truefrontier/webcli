@@ -1,4 +1,5 @@
-import { countdown, detailRows, headline, hostOf, opIcon, reasonItems } from "./confirm-view.js";
+import { CONFIRM_ARM_MS, answerHow, confirmInput, countdown, detailRows, headline, hostOf, opIcon, reasonItems }
+  from "./confirm-view.js";
 
 const $ = (id) => document.getElementById(id);
 const id = new URLSearchParams(location.search).get("id") || "";
@@ -6,6 +7,11 @@ let info = null;
 let expiresAt = 0;
 let total = 60000;
 let answered = false;
+// 0.16.2: keys and clicks in the first CONFIRM_ARM_MS are ignored (counted for the host log).
+const openedAt = performance.now();
+const since = () => performance.now() - openedAt;
+const ignored = { keys: 0, clicks: 0 };
+let loaded = false;
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -21,11 +27,12 @@ function icon(name) {
   return svg;
 }
 
-async function answer(a) {
+async function answer(a, via) {
   if (answered) return;
   answered = true;
   $("allow").disabled = true; $("deny").disabled = true;
-  try { await chrome.runtime.sendMessage({ type: "confirmAnswer", id, answer: a }); } catch { /* window closes anyway */ }
+  const how = answerHow(via, since(), ignored);
+  try { await chrome.runtime.sendMessage({ type: "confirmAnswer", id, answer: a, how }); } catch { /* window closes anyway */ }
   window.close();
 }
 
@@ -78,6 +85,7 @@ async function load() {
     $("error").hidden = false;
     $("allow").hidden = true;
     $("deny").textContent = "Close";
+    $("deny").disabled = false;
     $("deny").onclick = () => window.close();
     return;
   }
@@ -87,12 +95,38 @@ async function load() {
   $("queue").textContent = res.queued ? `${res.queued} more waiting` : "";
   render();
   tick();
-  $("deny").focus();
-  // A short delay before Allow works, so a click or Enter meant for another window can't approve this one.
-  setTimeout(() => { if (!answered) $("allow").disabled = false; }, 800);
+  loaded = true;
+  // 0.16.2: nothing has focus (a keystroke meant for another app must not land on a button), and both buttons stay
+  // disabled until the window has been up CONFIRM_ARM_MS.
+  document.activeElement?.blur?.();
+  setTimeout(arm, Math.max(0, CONFIRM_ARM_MS - since()));
 }
 
-$("deny").addEventListener("click", () => answer("deny"));
-$("allow").addEventListener("click", () => answer("allow"));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); answer("deny"); } });
+function arm() {
+  if (answered || !loaded) return;
+  $("deny").disabled = false;
+  $("allow").disabled = false;
+  document.body.classList.add("armed");
+}
+
+function onButton(button, e) {
+  const d = confirmInput({ kind: "click", button, detail: e.detail, sinceMs: since() });
+  if (d === "ignore") { if (e.detail > 0) ignored.clicks++; return; }
+  answer(d, "click");
+}
+$("deny").addEventListener("click", (e) => { if (loaded) onButton("deny", e); });
+$("allow").addEventListener("click", (e) => onButton("allow", e));
+// Capture phase, before any button sees it: keys never pick a button; only Escape (after the first second) denies.
+window.addEventListener("keydown", (e) => {
+  const d = confirmInput({ kind: "key", key: e.key, sinceMs: since() });
+  if (since() < CONFIRM_ARM_MS) ignored.keys++;
+  if (e.key === "Enter" || e.key === " " || e.key === "Spacebar" || d === "deny" || since() < CONFIRM_ARM_MS) {
+    e.preventDefault(); e.stopPropagation();
+  }
+  if (d === "deny") answer("deny", "escape");
+}, true);
+// Clicks on the still-disabled buttons never fire "click"; count them (and swallow any early click) here.
+window.addEventListener("pointerdown", (e) => {
+  if (since() < CONFIRM_ARM_MS) { ignored.clicks++; e.preventDefault(); e.stopPropagation(); }
+}, true);
 load();

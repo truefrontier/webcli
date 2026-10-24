@@ -755,7 +755,9 @@ async function pumpConfirm() {
   if (confirmActive || !confirmQueue.length) return;
   const item = confirmQueue.shift();
   // The CLI stops waiting at its deadline; never show (or act on) a confirm nobody waits for.
-  if (item.deadline && Date.now() > item.deadline - 3000) { item.done = true; item.resolve("timeout"); pumpConfirm(); return; }
+  if (item.deadline && Date.now() > item.deadline - 3000) {
+    item.done = true; item.resolve({ answer: "timeout", how: { via: "timeout" } }); pumpConfirm(); return;
+  }
   confirmActive = item;
   const { active } = await getPolicyState();
   let ms = (Number(active.confirm_timeout) || 60) * 1000;
@@ -773,19 +775,31 @@ async function pumpConfirm() {
   refreshConfirmBadge();
 }
 
-function finishConfirm(item, answer) {
+// 0.16.2: how the confirm was answered, for the declined error and the host log: the page's own report
+// (click / escape, ms after the window appeared, keys and clicks ignored in its first second), else window_closed,
+// timeout, paused, or error.
+const CONFIRM_VIA = new Set(["click", "escape"]);
+function confirmHow(how, fallback) {
+  if (!how || typeof how !== "object" || !CONFIRM_VIA.has(how.via)) return { via: fallback };
+  const n = (v, max) => (Number.isFinite(v) ? Math.max(0, Math.min(max, Math.round(v))) : 0);
+  return { via: how.via, afterMs: n(how.afterMs, 3600000), ignoredKeys: n(how.ignoredKeys, 100000),
+    ignoredClicks: n(how.ignoredClicks, 100000) };
+}
+
+function finishConfirm(item, answer, how = null, via = null) {
   if (!item || item.done) return;
   item.done = true;
+  item.how = confirmHow(how, via || (answer === "deny" ? "window_closed" : answer));
   clearTimeout(item.timer);
   if (confirmActive === item) confirmActive = null;
   if (item.windowId != null) chrome.windows.remove(item.windowId).catch(() => {});
-  item.resolve(answer);
+  item.resolve({ answer, how: item.how });
   refreshConfirmBadge();
   pumpConfirm();
 }
 
 function cancelAllConfirms(answer) {
-  for (const item of confirmQueue.splice(0)) { item.done = true; item.resolve(answer); }
+  for (const item of confirmQueue.splice(0)) { item.done = true; item.resolve({ answer, how: { via: answer } }); }
   if (confirmActive) finishConfirm(confirmActive, answer);
   refreshConfirmBadge();
 }
@@ -795,14 +809,24 @@ function refreshConfirmBadge() {
   refreshBadges().catch(() => {});
 }
 
+// The declined error says how (host log: via=, answer_ms=, ignored_keys=, ignored_clicks=).
+function answeredBy(how) {
+  if (!how?.via) return {};
+  const out = { answeredBy: how.via };
+  if (Number.isFinite(how.afterMs)) {
+    Object.assign(out, { answeredAfterMs: how.afterMs, ignoredKeys: how.ignoredKeys, ignoredClicks: how.ignoredClicks });
+  }
+  return out;
+}
+
 // Ask Kevin; resolves on Allow, else throws declined / confirm_timeout / paused (all exit 4).
 async function confirmOrThrow(info, req, where) {
-  const answer = await requestConfirm(info, req?.deadlineMs);
+  const { answer, how } = await requestConfirm(info, req?.deadlineMs);
   if (answer === "allow") return true;
   if (answer === "paused") throw new OpError("paused", "Agents were paused while the action waited for confirmation; nothing was done.", where);
   if (answer === "timeout") throw new OpError("confirm_timeout", "Nobody answered the in-browser confirm in time; nothing was done.", where);
   if (answer === "error") throw new OpError("script_error", "Couldn't open the confirm window; nothing was done.", where);
-  throw new OpError("declined", "Kevin denied the action in the browser; nothing was done.", where);
+  throw new OpError("declined", "Kevin denied the action in the browser; nothing was done.", { ...where, ...answeredBy(how) });
 }
 
 // ---- tab actions (P2)
@@ -2178,7 +2202,7 @@ async function popupMessage(msg) {
     case "confirmAnswer": {
       const item = confirmActive && confirmActive.id === msg.id ? confirmActive : null;
       if (!item) return { ok: false, error: "This request is no longer waiting." };
-      finishConfirm(item, msg.answer === "allow" ? "allow" : "deny");
+      finishConfirm(item, msg.answer === "allow" ? "allow" : "deny", msg.how, "page");
       return { ok: true };
     }
     case "share": {

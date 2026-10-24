@@ -69,10 +69,11 @@ for (const [page, sheet] of [["popup.html", "popup.css"], ["confirm.html", "conf
   assert.ok(!/@import|url\(\s*["']?https?:/i.test(css), `${sheet}: remote import/url`);
 });
 
-test("the confirm window is not web-accessible and Deny is the default focus", () => {
+test("the confirm window is not web-accessible and no button has the default focus (0.16.2)", () => {
   assert.ok(!("web_accessible_resources" in manifest));
   const html = readFileSync(here("confirm.html"), "utf8");
-  assert.match(html, /<button id="deny"[^>]*autofocus/);
+  assert.ok(!/autofocus/.test(html));
+  assert.match(html, /<button id="deny"[^>]*disabled/);
   assert.match(html, /<button id="allow"[^>]*disabled/);
   assert.match(html, /Gated because/);
 });

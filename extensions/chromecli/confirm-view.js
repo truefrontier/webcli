@@ -70,3 +70,23 @@ export function countdown(expiresAt, now) {
   const s = Math.max(0, Math.ceil((Number(expiresAt) - Number(now)) / 1000));
   return { seconds: s, label: `${s}s`, urgent: s <= 10 };
 }
+
+// 0.16.2: the confirm window opens focused while Kevin may be typing in another app. No button has focus, a key never
+// picks a button (Enter / Space on a Tab-focused button included), and for the first CONFIRM_ARM_MS both buttons are
+// disabled and every key and click is ignored, Escape included. After that only a pointer click (or Escape = Deny) counts.
+export const CONFIRM_ARM_MS = 1000;
+
+// What one input does: "allow", "deny", or "ignore". kind: "key" | "click"; detail: the click's MouseEvent.detail
+// (0 = synthesized by Enter / Space on a focused button); sinceMs: time since the window appeared.
+export function confirmInput({ kind, button, key, detail = 1, sinceMs = 0 } = {}) {
+  if (!(sinceMs >= CONFIRM_ARM_MS)) return "ignore";
+  if (kind === "key") return key === "Escape" ? "deny" : "ignore";
+  if (kind === "click" && detail > 0) return button === "allow" ? "allow" : button === "deny" ? "deny" : "ignore";
+  return "ignore";
+}
+
+// How the answer was given, sent with confirmAnswer so the host log can say (via, ms after the window appeared,
+// and how many keys / clicks were ignored before it).
+export function answerHow(via, sinceMs, ignored = {}) {
+  return { via, afterMs: Math.max(0, Math.round(Number(sinceMs) || 0)), ignoredKeys: ignored.keys | 0, ignoredClicks: ignored.clicks | 0 };
+}
