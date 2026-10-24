@@ -1,14 +1,16 @@
-"""Browser-side work for webcli notebooklm. Reads, the chat (`ask`), and one create (`generate --confirm`).
+"""Browser-side work for webcli notebooklm. Reads, the chat (`ask`), one Studio create (`generate --confirm`), and
+notebook / source creation (`create --confirm`, `source add --confirm`).
 
 Every call is the app's own RPC, made by fetch() inside the signed-in notebooklm.google.com page (BATCH_JS,
 QUERY_JS): the `at` token, build label, and session id are read from WIZ_global_data there and never reach Python,
 which gets back only the response body. Each command's page runs under one guard policy (guard.READ / ASK /
-GENERATE). Artifact files are fetched with the profile's cookies (page.request), every hop checked
+GENERATE, or a budgeted guard.write_policy for create / source add). Artifact files are fetched with the profile's cookies (page.request), every hop checked
 (guard.media_url_allowed), and written 0600 where the command asked.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,8 +20,9 @@ from webcli.core import browser
 from webcli.core.errors import AuthRequired, NotFound, RateLimited, UsageError
 from webcli.sites import google
 from webcli.sites.notebooklm import parse
-from webcli.sites.notebooklm.endpoints import APP_HOSTS, APP_URL, BATCH_PATH, QUERY_PATH, RPC  # noqa: F401
-from webcli.sites.notebooklm.guard import ASK, GENERATE, POLICY, READ, media_url_allowed  # noqa: F401 (POLICY: capture)
+from webcli.sites.notebooklm.endpoints import APP_HOSTS, APP_URL, BATCH_PATH, NOTEBOOK_URL, QUERY_PATH, RPC, UPLOAD, \
+    UPLOAD_PATH  # noqa: F401
+from webcli.sites.notebooklm.guard import ASK, GENERATE, POLICY, READ, media_url_allowed, write_policy  # noqa: F401
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -52,6 +55,45 @@ async ({path, freq, rpcid, sourcePath, timeoutMs}) => {
   }
 }
 """
+# A file source's bytes: the resumable upload start, then "upload, finalize" to the URL its x-goog-upload-url header
+# names, both on the page's own host (so its cookies go along and the guard sees both POSTs). The upload URL carries
+# an upload_id and never leaves the page: only the two statuses come back. A URL that is not this host's upload path
+# with exactly one upload_id is refused before any bytes are sent.
+_UPLOAD = """
+async ({uploadPath, authuser, startBody, contentType, b64, timeoutMs}) => {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const common = {method: 'POST', credentials: 'include', redirect: 'manual'};
+  let start;
+  try {
+    start = await fetch(uploadPath + '?' + new URLSearchParams({authuser}), {...common,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'x-goog-authuser': authuser,
+        'x-goog-upload-command': 'start', 'x-goog-upload-header-content-length': String(bytes.length),
+        'x-goog-upload-header-content-type': contentType, 'x-goog-upload-protocol': 'resumable'},
+      body: startBody});
+  } catch (e) {
+    return {start: -1, upload: null, trusted: null, error: String(e).slice(0, 200)};
+  }
+  if (start.type === 'opaqueredirect' || !start.ok) return {start: start.type === 'opaqueredirect' ? 0 : start.status,
+    upload: null, trusted: null};
+  let target;
+  try { target = new URL(start.headers.get('x-goog-upload-url') || '', location.origin); } catch (e) { target = null; }
+  const trusted = !!target && target.origin === location.origin && target.pathname === uploadPath
+    && target.searchParams.getAll('upload_id').filter(Boolean).length === 1;
+  if (!trusted) return {start: start.status, upload: null, trusted: false};
+  try {
+    const up = await fetch(target.href, {...common, signal: AbortSignal.timeout(timeoutMs),
+      headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8', 'x-goog-authuser': authuser,
+        'x-goog-upload-command': 'upload, finalize', 'x-goog-upload-offset': '0'},
+      body: bytes});
+    return {start: start.status, upload: up.type === 'opaqueredirect' ? 0 : up.status, trusted: true,
+            final: up.headers.get('x-goog-upload-status')};
+  } catch (e) {
+    return {start: start.status, upload: -1, trusted: true, error: String(e).slice(0, 200)};
+  }
+}
+"""
+UPLOAD_TIMEOUT_MS = 300_000
 HAS_TOKEN_JS = "() => !!(window.WIZ_global_data && window.WIZ_global_data.SNlM0e)"
 RPC_TIMEOUT_MS = 60_000
 ASK_TIMEOUT_MS = 180_000
@@ -360,3 +402,136 @@ def _target(path: str, row: dict) -> Path:
     if not target.parent.is_dir():
         raise UsageError(f"{target.parent} is not a directory.")
     return target
+
+
+# Notebook and source creation.
+
+async def plan_sources(notebook_id: str, items: list[dict], *, headed: bool = False) -> dict:
+    """What `source add` would add, checked against the notebook (it exists). Read-only."""
+    async with browser.site_page(READ) as page:
+        await open_app(page)
+        nb = await _notebook(page, notebook_id)
+    return {"notebook_id": notebook_id, "notebook": nb["title"], "url": NOTEBOOK_URL.format(id=notebook_id),
+            "existing_sources": len(nb["sources"]), "sources": [parse.describe_item(item) for item in items],
+            "calls": parse.write_budget(items)}
+
+
+async def create(title: str, items: list[dict] | None = None, *, confirm: bool = False,
+                 headed: bool = False) -> dict:
+    """Create a notebook (one CreateProject) and add `items` to it. {notebook_id, title, url, sources: [...]}.
+    confirm must be True: the CLI's dry run never reaches here."""
+    if not confirm:
+        raise UsageError("create needs --confirm.")
+    items = items or []
+    async with browser.site_page(write_policy(parse.write_budget(items, create=True))) as page:
+        await open_app(page)
+        payload = await rpc(page, "create_notebook", parse.create_notebook_params(title))
+        nb = parse.created_notebook(payload)
+        if nb is None:
+            raise RuntimeError("NotebookLM accepted the create but answered no notebook id; check `webcli notebooklm "
+                               f"notebooks` before creating again. {SNIFF_HINT}")
+        rows = await _add_items(page, nb["id"], items) if items else []
+    return {"notebook_id": nb["id"], "title": nb["title"] or title, "url": nb["url"], "sources": rows}
+
+
+async def add_sources(notebook_id: str, items: list[dict], *, confirm: bool = False, headed: bool = False) -> dict:
+    """Add `items` (URLs, pasted text, local files) to a notebook, each sent once. {notebook_id, notebook, url,
+    sources: [{kind, input, id, title, type, status, error}]}: one row per item, in order; a failed item has id None
+    and its error, and the rest still go."""
+    if not confirm:
+        raise UsageError("source add needs --confirm.")
+    if not items:
+        raise UsageError("Nothing to add.")
+    async with browser.site_page(write_policy(parse.write_budget(items))) as page:
+        await open_app(page)
+        nb = await _notebook(page, notebook_id)
+        rows = await _add_items(page, notebook_id, items)
+    return {"notebook_id": notebook_id, "notebook": nb["title"], "url": NOTEBOOK_URL.format(id=notebook_id),
+            "sources": rows}
+
+
+async def _add_items(page: "Page", notebook_id: str, items: list[dict]) -> list[dict]:
+    """Each item once, in order; then one GetProject read for the fresh statuses. Sign-in and usage-limit errors stop
+    the run (they would stop the rest too); any other error is that item's."""
+    rows = []
+    for item in items:
+        row = parse.describe_item(item)
+        try:
+            got = await _add_one(page, notebook_id, item)
+            row.update({"id": got.get("id"), "title": got.get("title"), "status": got.get("status"), "error": None})
+            if got.get("type"):
+                row["type"] = got["type"]
+        except (AuthRequired, RateLimited):
+            raise
+        except Exception as exc:
+            row.update({"id": None, "title": None, "status": "failed", "error": str(exc)})
+        rows.append(row)
+    if any(r["id"] for r in rows):
+        try:
+            fresh = {s["id"]: s for s in (await _notebook(page, notebook_id))["sources"]}
+        except Exception:
+            fresh = {}
+        for row in rows:
+            if row["id"] in fresh:
+                src = fresh[row["id"]]
+                row["status"] = src["status"] or row["status"]
+                row["title"] = src["title"] or row["title"]
+    return rows
+
+
+async def _add_one(page: "Page", notebook_id: str, item: dict) -> dict:
+    if item["kind"] in ("url", "text"):
+        params = (parse.url_source_params(notebook_id, item["url"]) if item["kind"] == "url"
+                  else parse.text_source_params(notebook_id, item["title"], item["text"]))
+        row = parse.added_source(await rpc(page, "add_source", params, notebook_id=notebook_id))
+        if row is None:
+            raise RuntimeError("NotebookLM answered no source id; check `webcli notebooklm sources "
+                               f"{notebook_id}` before adding it again. {SNIFF_HINT}")
+        return row
+    return await _upload(page, notebook_id, item)
+
+
+async def _upload(page: "Page", notebook_id: str, item: dict) -> dict:
+    """Register the file (o4cbdc), then upload its bytes in the page (_UPLOAD). {id, title, status}."""
+    path = Path(item["path"])
+    data = path.read_bytes()
+    if not data:
+        raise UsageError(f"{path} is empty.")
+    if len(data) > parse.MAX_UPLOAD_BYTES:
+        raise UsageError(f"{path} is over {parse.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    name = item.get("name") or path.name
+    payload = await rpc(page, "add_source_file", parse.register_file_params(notebook_id, name),
+                        notebook_id=notebook_id)
+    source_id = parse.registered_source_id(payload, name)
+    if not source_id:
+        raise RuntimeError(f"NotebookLM registered {name} but answered no single source id; check `webcli notebooklm "
+                           f"sources {notebook_id}` before adding it again. {SNIFF_HINT}")
+    res = await page.evaluate(_UPLOAD, {"uploadPath": UPLOAD_PATH, "authuser": await _authuser(page),
+                                        "startBody": parse.upload_start_body(notebook_id, name, source_id),
+                                        "contentType": item["content_type"],
+                                        "b64": base64.b64encode(data).decode(), "timeoutMs": UPLOAD_TIMEOUT_MS})
+    where = f"source {source_id} was registered but has no content; delete it in NotebookLM before adding {name} again"
+    if res.get("start") in (0, 401, 403) or res.get("upload") in (0, 401, 403):
+        raise AuthRequired(f"NotebookLM refused the upload of {name}; the session is missing or expired ({where}).")
+    if res.get("start") != 200:
+        raise RuntimeError(f"Starting the upload of {name} failed (HTTP {res.get('start')}; {where}).{google.blocked()}")
+    if res.get("trusted") is False:
+        raise RuntimeError(f"NotebookLM's upload URL for {name} was not on its own upload path; nothing was sent "
+                           f"({where}). {SNIFF_HINT}")
+    if res.get("upload") != 200:
+        raise RuntimeError(f"Uploading {name} failed (HTTP {res.get('upload')}; {where}).{google.blocked()}")
+    return {"id": source_id, "title": name, "status": "processing"}
+
+
+async def _authuser(page: "Page") -> str:
+    """The upload's authuser: the page URL's, else the signed-in email (what notebooklm-py prefers), else 0."""
+    from urllib.parse import parse_qs
+
+    found = parse_qs(urlsplit(page.url).query).get("authuser")
+    if found and found[0]:
+        return found[0]
+    try:
+        email = await page.evaluate(google.EMAIL_JS)
+    except Exception:
+        email = None
+    return email.strip() if isinstance(email, str) and email.strip() else "0"

@@ -56,6 +56,12 @@ quiz = [[A_QUIZ, "Quiz", 4, None, 3, None, None, None, None, [quiz_html, [2]]]]
 mind_map = [[A_MAP, "Mind map", 4, None, 3, None, None, None, None,
              [None, [4], None, json.dumps({"name": "Root", "children": [{"name": "Leaf"}]})]]]
 created = [artifact("eeeeeeee-0000-4000-8000-000000000001", None, 2, 1, 1773486700)]
+NEW_NB, NEW_SRC, NEW_FILE = ("ffffffff-1111-4111-8111-11111111111" + c for c in "123")
+new_notebook = ["New synthetic notebook", None, NEW_NB, None, None,
+                [1, None, None, None, None, [1773486800, 0], None, None, [1773486800, 0]]]
+added_source = [[[[NEW_SRC], "Example page", [None, 0, [1773486900, 0], None, 5, None, None, ["https://example.com/"]],
+                  [None, 1]]]]
+registered = [[[[NEW_FILE]]]]
 
 
 def answer_chunk(text, final, cites):
@@ -71,6 +77,8 @@ here = Path(__file__).parent
 for name, rpcid, payload in [("notebooks", "wXbhsf", notebooks), ("notebook", "rLM1Ne", notebook),
                              ("source", "hizoJc", source_text), ("guide", "tr032e", guide), ("notes", "cFji9", notes),
                              ("artifacts", "gArtLc", artifacts), ("quiz", "v9rmvd", quiz),
-                             ("mind_map", "v9rmvd", mind_map), ("created", "R7cb6c", created)]:
+                             ("mind_map", "v9rmvd", mind_map), ("created", "R7cb6c", created),
+                             ("new_notebook", "CCqFvf", new_notebook), ("added_source", "izAoDd", added_source),
+                             ("registered", "o4cbdc", registered)]:
     (here / f"{name}.txt").write_text(frame(rpcid, payload))
 (here / "answer.txt").write_text(answer)

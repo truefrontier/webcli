@@ -457,3 +457,105 @@ def download_kind(row: dict) -> str:
 
 EXTENSIONS = {"audio": ".m4a", "video": ".mp4", "infographic": ".png", "slide_deck": ".pdf", "report": ".md",
               "quiz": ".json", "flashcards": ".json", "mind_map": ".json", "data_table": ".json"}
+
+
+# Notebook and source creation (`create`, `source add`). Shapes per notebooklm-py's web payload builders (MIT): every
+# one ends in CONTEXT, the request-options block NotebookLM's web client sends (the flat `[2], [1]` tail it replaced
+# is rejected by migrated accounts).
+
+# Local files `source add --file` uploads, by suffix: the content type the upload start announces.
+UPLOAD_TYPES = {".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain", ".pdf": "application/pdf"}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # webcli's cap (the bytes cross into the page as base64); NotebookLM allows 200 MB
+_YOUTUBE = re.compile(r"(?:^|\.)(?:youtube\.com|youtu\.be)$")
+
+
+def create_notebook_params(title: str) -> list:
+    """CCqFvf (CreateProject): [title, None, None, ctx]."""
+    return [title, None, None, CONTEXT]
+
+
+def is_youtube(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    return bool(_YOUTUBE.search((urlsplit(url).hostname or "").lower()))
+
+
+def url_source_params(notebook_id: str, url: str) -> list:
+    """izAoDd for one URL: a web page's URL sits at spec[2], a YouTube video's at spec[7]; spec[10] is always 1."""
+    spec: list = [None] * 11
+    spec[7 if is_youtube(url) else 2] = [url]
+    spec[10] = 1
+    return [[spec], notebook_id, CONTEXT]
+
+
+def text_source_params(notebook_id: str, title: str, text: str) -> list:
+    """izAoDd for pasted text: spec[1] [title, text], spec[3] 2 (the web UI's pasted-text code), spec[10] 1."""
+    return [[[None, [title, text], None, 2, None, None, None, None, None, None, 1]], notebook_id, CONTEXT]
+
+
+def register_file_params(notebook_id: str, filename: str) -> list:
+    """o4cbdc: registers a file source by name; the bytes follow by resumable upload under the id it answers."""
+    return [[[filename]], notebook_id, CONTEXT]
+
+
+def upload_start_body(notebook_id: str, filename: str, source_id: str) -> str:
+    """The resumable upload start request's JSON body."""
+    return json.dumps({"PROJECT_ID": notebook_id, "SOURCE_NAME": filename, "SOURCE_ID": source_id})
+
+
+def created_notebook(payload: Any) -> dict | None:
+    """CCqFvf -> {id, title, url}. The answer is the new notebook's row [title, sources, id, ...]; one extra wrapper
+    ([[title, sources, id, ...]]) is accepted too. None when there is no id."""
+    for row in (payload, at(payload, 0)):
+        notebook_id = _str(at(row, 2))
+        if notebook_id and is_uuid(notebook_id):
+            title = (_str(at(row, 0)) or "").replace("thought\n", "").strip()
+            return {"id": notebook_id, "title": title, "url": ep.NOTEBOOK_URL.format(id=notebook_id)}
+    return None
+
+
+def added_source(payload: Any) -> dict | None:
+    """izAoDd -> the new source's row ({id, title, type, status, ...}). Google answers it nested once or twice
+    ([[[[id], title, meta, settings]]] or [[[id], title, ...]]); the entry is the first list whose [0] is [id]."""
+    for row in (at(payload, 0, 0), at(payload, 0), payload):
+        if isinstance(row, list) and isinstance(at(row, 0), list) and is_uuid(_str(at(row, 0, 0)) or ""):
+            return _source_row(row)
+    return None
+
+
+def registered_source_id(payload: Any, filename: str) -> str | None:
+    """o4cbdc -> the registered source's id: the one id in its answer ([[id]], [[[[id]]]], or a row naming it with
+    the filename). None when there is no id, or more than one."""
+    found: list[str] = []
+
+    def walk(node: Any, depth: int) -> None:
+        if depth > 8:
+            return
+        if isinstance(node, str):
+            if is_uuid(node) and node != filename and node not in found:
+                found.append(node)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, depth + 1)
+
+    walk(payload, 0)
+    return found[0] if len(found) == 1 else None
+
+
+def describe_item(item: dict) -> dict:
+    """One source item ({kind: url|text|file, ...}, as the CLI builds them) as a plan / result row."""
+    if item["kind"] == "url":
+        return {"kind": "url", "input": item["url"], "type": "youtube" if is_youtube(item["url"]) else "web_page"}
+    if item["kind"] == "text":
+        return {"kind": "text", "input": item["title"], "type": "pasted_text", "chars": len(item["text"])}
+    return {"kind": "file", "input": item["path"], "type": item["content_type"], "bytes": item["bytes"]}
+
+
+def write_budget(items: list[dict], *, create: bool = False) -> dict[str, int]:
+    """The guard budget for one create / source add: one CreateProject (create), one AddSources per URL or text, and
+    per file one register plus two upload POSTs (start, then upload+finalize)."""
+    files = sum(1 for item in items if item["kind"] == "file")
+    budget = {ep.RPC["add_source"]: len(items) - files, ep.RPC["add_source_file"]: files, ep.UPLOAD: 2 * files}
+    if create:
+        budget = {ep.RPC["create_notebook"]: 1, **budget}
+    return {k: v for k, v in budget.items() if v}
