@@ -49,6 +49,11 @@ SOURCES are any mix of `--file PATH` (repeatable; `.md`, `.markdown`, `.txt`, `.
 `--text TEXT --title T` (`--text -` reads stdin). Everything is checked before a browser opens (missing file,
 unsupported type, non-http URL, `--text` without `--title`: exit 2); duplicate URLs are dropped. Each source is
 sent once, in the order files, URLs, text; one that fails is reported with its error and the rest still go.
+When NotebookLM refuses to import a source (RPC code 3, 5, or 9: a paywalled or bot-blocked page, an empty or
+unreadable input), that source is `failed` with an error such as "NotebookLM couldn't import this source (code 9).
+The page may be paywalled or blocking imports. Try uploading a PDF or pasting the text instead." Other codes keep
+the "API may have changed" hint. When any source fails, the run exits 5 and the stderr error names the failed
+inputs (`"2 of 5 sources failed: URL1, URL2."`, with all of them in the JSON `failed` list).
 
 Without `--confirm` (or with `--dry-run`) nothing is written and the command exits 2: `create` prints the title and
 the planned calls without opening a browser; `source add` also checks the notebook (read-only) and shows its title

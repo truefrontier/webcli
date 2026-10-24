@@ -174,7 +174,9 @@ def page(monkeypatch):
 
     def call(arg):
         calls.append(arg)
-        return {"status": 200, "contentType": "application/json", "body": fixture(ANSWERS[arg["rpcid"]])}
+        queued = scripted.replies.get(arg["rpcid"])
+        body = queued.pop(0) if queued else fixture(ANSWERS[arg["rpcid"]])
+        return {"status": 200, "contentType": "application/json", "body": body}
 
     def upload(arg):
         uploads.append(arg)
@@ -182,6 +184,7 @@ def page(monkeypatch):
 
     scripted = ScriptedPage(answers={"SNlM0e": call, "oPEP7c": "kevin@example.com", "x-goog-upload-command": upload})
     scripted.calls, scripted.uploads = calls, uploads
+    scripted.replies = {}  # rpcid -> bodies answered (in order) before falling back to the fixture
     scripted.upload_answer = {"start": 200, "upload": 200, "trusted": True, "final": "final"}
     return install(monkeypatch, scripted)
 
@@ -263,6 +266,76 @@ def test_plan_sources_is_read_only(page):
     got = browser.run(fetch.plan_sources(NB, [{"kind": "url", "url": "https://example.com/"}]))
     assert page.policy is guard.READ and [c["rpcid"] for c in page.calls] == ["rLM1Ne"]
     assert got["existing_sources"] == 2 and got["calls"] == {ADD: 1}
+
+
+def status_reply(rpcid: str, code: int) -> str:
+    """batchexecute's answer when an RPC fails: no payload, the status code at index 5."""
+    return ")]}'\n\n" + json.dumps([["wrb.fr", rpcid, None, None, None, [code], "generic"]])
+
+
+def test_status_reply_is_what_parse_reads_as_an_error_code():
+    with pytest.raises(parse.RpcError) as caught:
+        parse.rpc_payload(status_reply(ADD, 9), ADD)
+    assert caught.value.code == 9
+
+
+@pytest.mark.parametrize("kind", ["url", "text", "file"])
+def test_rejection_messages_name_the_code_and_what_to_try(kind):
+    message = parse.source_rejected_message(9, kind)
+    assert message.startswith("NotebookLM couldn't import this source (code 9).")
+    assert "API may have changed" not in message
+    if kind == "url":
+        assert message == ("NotebookLM couldn't import this source (code 9). The page may be paywalled or blocking "
+                           "imports. Try uploading a PDF or pasting the text instead.")
+
+
+def test_a_refused_url_is_that_sources_failure_and_the_rest_still_go(page):
+    page.replies[ADD] = [status_reply(ADD, 9)]
+    items = [{"kind": "url", "url": "https://paywalled.example.com/article"},
+             {"kind": "url", "url": "https://open.example.org/page"}]
+    got = browser.run(fetch.add_sources(NB, items, confirm=True))
+    refused, added = got["sources"]
+    assert refused == {"kind": "url", "input": "https://paywalled.example.com/article", "type": "web_page",
+                       "id": None, "title": None, "status": "failed",
+                       "error": parse.source_rejected_message(9, "url")}
+    assert added["id"] == NEW_SRC and added["error"] is None
+    assert [c["rpcid"] for c in page.calls] == ["rLM1Ne", ADD, ADD, "rLM1Ne"]
+
+
+@pytest.mark.parametrize("code", sorted(parse.SOURCE_REJECT_CODES))
+def test_each_known_rejection_code_is_per_source(page, code, tmp_path):
+    md = tmp_path / "a.md"
+    md.write_text("x")
+    page.replies[ADD] = [status_reply(ADD, code), status_reply(ADD, code)]
+    page.replies[REGISTER] = [status_reply(REGISTER, code)]
+    items = [{"kind": "url", "url": "https://blocked.example.net/"}, {"kind": "text", "title": "T", "text": "t"},
+             {"kind": "file", "path": str(md), "name": "a.md", "content_type": "text/markdown", "bytes": 1}]
+    got = browser.run(fetch.add_sources(NB, items, confirm=True))
+    assert [s["error"] for s in got["sources"]] == [parse.source_rejected_message(code, k) for k in
+                                                    ("url", "text", "file")]
+    assert page.uploads == []  # a refused file is never uploaded
+
+
+def test_unknown_codes_keep_the_api_change_hint(page):
+    page.replies[ADD] = [status_reply(ADD, 13)]
+    got = browser.run(fetch.add_sources(NB, [{"kind": "url", "url": "https://example.com/"}], confirm=True))
+    error = got["sources"][0]["error"]
+    assert "error code 13" in error and "API may have changed" in error and "couldn't import" not in error
+
+
+def test_rejection_codes_dont_hide_auth_or_usage_limits(page):
+    page.replies[ADD] = [status_reply(ADD, 16)]
+    with pytest.raises(fetch.AuthRequired):
+        browser.run(fetch.add_sources(NB, [{"kind": "url", "url": "https://example.com/"}], confirm=True))
+    page.replies[ADD] = [status_reply(ADD, 8)]
+    with pytest.raises(fetch.RateLimited):
+        browser.run(fetch.add_sources(NB, [{"kind": "url", "url": "https://example.com/"}], confirm=True))
+
+
+def test_rejection_codes_only_apply_to_source_adds(page):
+    page.replies["rLM1Ne"] = [status_reply("rLM1Ne", 9)]
+    with pytest.raises(RuntimeError, match="API may have changed"):
+        browser.run(fetch.add_sources(NB, [{"kind": "url", "url": "https://example.com/"}], confirm=True))
 
 
 # The CLI, over a faked daemon.
@@ -353,6 +426,36 @@ def test_source_add_exits_5_when_a_source_fails_or_wait_times_out(calls):
     answers["sources"] = lambda nb, **_: {"sources": [{"id": NEW_SRC, "status": "processing"}]}
     assert run("source", "add", NB, "--url", "https://example.com/", "--yes", "--wait", "--timeout",
                "0").exit_code == 5
+
+
+def test_the_failure_summary_names_the_failed_inputs(calls, monkeypatch):
+    _, answers = calls
+    result = json.loads(json.dumps(ADDED))
+    bad = {"kind": "url", "type": "web_page", "id": None, "title": None, "status": "failed",
+           "error": parse.source_rejected_message(9, "url")}
+    result["sources"] += [dict(bad, input="https://paywalled.example.com/a"),
+                          dict(bad, input="https://blocked.example.net/b")]
+    answers["add_sources"] = lambda *a, **k: result
+    out = run("source", "add", NB, "--url", "https://example.com/", "--url", "https://paywalled.example.com/a",
+              "--url", "https://blocked.example.net/b", "--confirm", "--json")
+    assert out.exit_code == 5
+    assert json.loads(out.stdout)["sources"][1]["error"].startswith("NotebookLM couldn't import this source")
+    error = json.loads(out.stderr.strip().splitlines()[-1])
+    assert error["error"] == ("2 of 3 sources failed: https://paywalled.example.com/a, "
+                              "https://blocked.example.net/b.")
+    assert error["failed"] == ["https://paywalled.example.com/a", "https://blocked.example.net/b"]
+    assert error["code"] == 5
+
+
+def test_a_long_failure_summary_is_shortened_but_json_lists_all(calls):
+    _, answers = calls
+    bad = {"kind": "url", "type": "web_page", "id": None, "title": None, "status": "failed", "error": "x"}
+    result = dict(ADDED, sources=[dict(bad, input=f"https://site{i}.example.com/") for i in range(12)])
+    answers["add_sources"] = lambda *a, **k: result
+    out = run("source", "add", NB, "--url", "https://example.com/", "--confirm", "--json")
+    error = json.loads(out.stderr.strip().splitlines()[-1])
+    assert out.exit_code == 5 and error["error"].endswith("https://site9.example.com/, and 2 more.")
+    assert len(error["failed"]) == 12
 
 
 def test_source_add_validates_before_anything_opens(calls, tmp_path):

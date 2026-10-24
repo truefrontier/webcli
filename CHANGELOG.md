@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.16.1 / llmcli 0.6.2 (2026-10-24)
+
+### Fixed
+
+- `webcli notebooklm source add` / `create`: a source NotebookLM refuses to import (RPC code 9, also 3 and 5; a
+  paywalled or bot-blocked page, an empty or unreadable input) is now that source's failure with a plain error,
+  "NotebookLM couldn't import this source (code 9). The page may be paywalled or blocking imports. Try uploading a
+  PDF or pasting the text instead." (with text- and file-specific wording), instead of "NotebookLM's API may have
+  changed". Unknown codes and structural errors keep that hint; auth and usage-limit codes still stop the run.
+  notebooklm-py treats these the same way (a per-item SourceAddError).
+- The exit-5 summary names the failed inputs: `"2 of 5 sources failed: URL1, URL2."` (the first 10, then "and N
+  more"); the JSON error has all of them in `failed`.
+
+### Changed
+
+- Version 0.16.1 for webcli, the chromecli package (and its webcli pin), and the chromecli extension manifest;
+  truefrontier-llmcli / llmcli 0.6.1 -> 0.6.2, pinned to truefrontier-webcli==0.16.1.
+
 ## 0.16.0 / llmcli 0.6.1 (2026-10-24)
 
 `webcli notebooklm create` and `webcli notebooklm source add`: make a notebook and fill it with files, URLs, and
