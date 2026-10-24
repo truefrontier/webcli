@@ -60,7 +60,7 @@ HOUSEKEEPING_SECONDS = 300
 SUN_PATH_MAX = 104  # macOS sockaddr_un.sun_path, NUL included: a longer $WEBCLI_HOME can't host a daemon
 SENT_HINT = "The prompt may have been sent: check the chat list before sending it again."
 WRITE_HINT = "The write may have gone out: check the site before running it again."
-WRITE_OPS = frozenset({"send", "post", "label_change", "create_filter", "delete_filter"})  # never just "Retry."
+WRITE_OPS = frozenset({"send", "post", "label_change", "create_filter", "delete_filter", "generate"})  # never just "Retry."
 RESTARTING = "The webcli daemon is stopping or restarting; nothing was run. Retry in a moment."
 
 # The lock wait of the request being served (each request carries its command's --lock-wait).

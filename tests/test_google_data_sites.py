@@ -1,4 +1,5 @@
-"""What keep, photos, youtube, recorder, contacts, and gmail share: how they register, that no verb ever asks for a visible Chrome,
+"""What keep, photos, youtube, recorder, contacts, gmail, and notebooklm share:
+how they register, that no verb ever asks for a visible Chrome,
 that each verb exists with its options, that secrets never reach output, errors, or logs, that the identity daemon
 serves them only on a google identity, and the shared download and save helpers.
 
@@ -36,7 +37,7 @@ from conftest import LaunchStopped, make_profile
 from google_fakes import APIResponse, ScriptedPage
 from test_no_visible_window import assert_hidden
 
-SITES = ("keep", "photos", "youtube", "recorder", "contacts", "gmail")
+SITES = ("keep", "photos", "youtube", "recorder", "contacts", "gmail", "notebooklm")
 VERBS = {
     "keep": {"list", "get", "info", "search", "status", "agent-help"},
     "photos": {"list", "search", "info", "albums", "download", "status", "agent-help"},
@@ -44,13 +45,18 @@ VERBS = {
     "recorder": {"list", "info", "search", "transcript", "download", "sync", "status", "agent-help"},
     "contacts": {"list", "get", "search", "other", "labels", "export", "status", "label", "agent-help"},
     "gmail": {"filters", "status", "agent-help"},
+    "notebooklm": {"status", "notebooks", "sources", "source", "notes", "artifacts", "ask", "generate", "download",
+                   "agent-help"},
 }
 SUBVERBS = {("contacts", "label"): {"add", "remove"}, ("gmail", "filters"): {"list", "create", "delete"},
-            ("youtube", "playlist"): {"create"}}
+            ("youtube", "playlist"): {"create"}, ("notebooklm", "source"): {"get"},
+            ("notebooklm", "generate"): {"kinds", "audio", "video", "report", "quiz", "flashcards", "mind-map",
+                                         "infographic", "slide-deck", "data-table"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
 WRITE = {"--dry-run", "--confirm", "--yes"} | RECORD
 SELECTORS = {"--from-label", "--query", "--ids"}
+GENERATE = {"--source", "--language", "--instructions", "--wait", "--timeout", "--interval", "--json"} | WRITE
 # (site, verb, arguments, options)
 WIRING = [
     ("keep", "list", [], {"--limit", "--archived", "--id-only"} | ROWS),
@@ -87,6 +93,23 @@ WIRING = [
                                      "--skip-inbox", "--mark-as-read", "--star", "--delete-it", "--never-spam"} | WRITE),
     ("gmail", "filters delete", ["FILTER_ID"], WRITE),
     ("gmail", "status", [], RECORD),
+    ("notebooklm", "status", ["[ARTIFACT]"], {"--notebook", "--json"} | RECORD),
+    ("notebooklm", "notebooks", [], {"--json"} | ROWS),
+    ("notebooklm", "sources", ["NOTEBOOK"], {"--json"} | ROWS),
+    ("notebooklm", "source get", ["SOURCE"], {"--notebook", "--guide", "--output", "--json"} | RECORD),
+    ("notebooklm", "notes", ["NOTEBOOK"], {"--json"} | ROWS),
+    ("notebooklm", "artifacts", ["NOTEBOOK"], {"--json"} | ROWS),
+    ("notebooklm", "ask", ["NOTEBOOK", "QUESTION"], {"--source", "--json"} | RECORD),
+    ("notebooklm", "download", ["ARTIFACT"], {"--output", "--notebook", "--json"} | RECORD),
+    ("notebooklm", "generate audio", ["NOTEBOOK"], {"--style", "--length"} | GENERATE),
+    ("notebooklm", "generate video", ["NOTEBOOK"], {"--style", "--visual", "--visual-prompt"} | GENERATE),
+    ("notebooklm", "generate report", ["NOTEBOOK"], {"--style"} | GENERATE),
+    ("notebooklm", "generate quiz", ["NOTEBOOK"], {"--quantity", "--difficulty"} | GENERATE),
+    ("notebooklm", "generate flashcards", ["NOTEBOOK"], {"--quantity", "--difficulty"} | GENERATE),
+    ("notebooklm", "generate mind-map", ["NOTEBOOK"], GENERATE),
+    ("notebooklm", "generate infographic", ["NOTEBOOK"], {"--orientation", "--detail", "--visual"} | GENERATE),
+    ("notebooklm", "generate slide-deck", ["NOTEBOOK"], {"--style", "--length"} | GENERATE),
+    ("notebooklm", "generate data-table", ["NOTEBOOK"], GENERATE),
 ]
 HIDDEN_COMMANDS = [
     ("keep", "list"), ("keep", "search", "picnic"), ("keep", "info", "abc"), ("keep", "get", "abc"),
@@ -109,6 +132,10 @@ HIDDEN_COMMANDS = [
     ("gmail", "status"), ("gmail", "filters", "list"), ("gmail", "filters", "delete", "1234567890123"),
     ("gmail", "filters", "delete", "1234567890123", "--confirm"),
     ("gmail", "filters", "create", "--from", "a@example.com", "--star", "--confirm"),
+    ("notebooklm", "status"), ("notebooklm", "notebooks"), ("notebooklm", "sources", "nb1"),
+    ("notebooklm", "source", "get", "s1"), ("notebooklm", "notes", "nb1"), ("notebooklm", "artifacts", "nb1"),
+    ("notebooklm", "ask", "nb1", "What is it?"), ("notebooklm", "download", "a1", "-o", "{tmp}/"),
+    ("notebooklm", "generate", "audio", "nb1"), ("notebooklm", "generate", "report", "nb1", "--confirm"),
 ]
 # Synthetic values in the shapes these sites carry. None of these is real.
 PSID = "g.a000testPSIDvalue0123456789abcdefFAKE0076"
@@ -248,7 +275,9 @@ def test_bad_ids_are_usage_errors_before_any_chrome(fake_playwright):
 @pytest.mark.parametrize("args", [("photos", "download", "AF1QipX", "-o", "{tmp}"), ("keep", "list"),
                                   ("youtube", "history"), ("recorder", "sync", "-o", "{tmp}"), ("contacts", "list"),
                                   ("contacts", "label", "add", "L", "--ids", "c1", "--confirm"),
-                                  ("gmail", "filters", "list"), ("gmail", "filters", "delete", "123", "--confirm")])
+                                  ("gmail", "filters", "list"), ("gmail", "filters", "delete", "123", "--confirm"),
+                                  ("notebooklm", "ask", "nb1", "Q?"), ("notebooklm", "download", "a1", "-o", "{tmp}/"),
+                                  ("notebooklm", "generate", "audio", "nb1", "--confirm")])
 def test_cookies_tokens_and_signed_links_never_reach_output_errors_or_logs(monkeypatch, tmp_path, args):
     async def failing(*_args, **_kwargs):
         raise RuntimeError(f"Fetching failed at {SIGNED}; Cookie: __Secure-1PSID={PSID}; "
