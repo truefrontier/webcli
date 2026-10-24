@@ -91,7 +91,9 @@ chromecli agent-help [--format json]
 - Kevin shares a tab from the toolbar popup's Off / Read / Act switch: **Read** (Share-read, badge R, blue) or **Act**
   (Share-act, badge A, orange: read and act); **Off** unshares. The popup also lists every shared tab
   (unshare one with its x). Sharing asks Chrome for host access to that origin (`optional_host_permissions`; no blanket
-  host permission). Shares are (tab, origin, level) in `chrome.storage.session`: cleared when Chrome restarts, revoked
+  host permission). Clicking **Allow** in that prompt finishes the share; no second click (0.16.2: the worker
+  keeps the choice while the prompt is open and applies it on the grant; **Cancel** leaves the tab as it was).
+  Shares are (tab, origin, level) in `chrome.storage.session`: cleared when Chrome restarts, revoked
   when the tab navigates to another origin or a denied URL, or is replaced/closed.
 - **Pause agents** (popup or Cmd+Shift+Period): badge II; every op but `status` exits 4 `paused`. Persists across restarts
   until resumed. **Unshare all** in the popup.

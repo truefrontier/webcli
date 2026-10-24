@@ -24,6 +24,7 @@ import {
 import {
   BATCH_MAX, checkClause, clauseScopeBody, mapBody, pageContext, parseClauseScope, parseMap, quoteKey, splitQuote,
 } from "./clauses.js";
+import { makePendingShare, pendingLive } from "./pending-share.js";
 import {
   CHUNK_BYTES, GRANT_ERROR, isActive, recBadge, recButton, recView, recordOptions, refusal, validRecId,
 } from "./recorder.js";
@@ -2076,6 +2077,67 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// ---- 0.16.2: the share picked while Chrome's site-access prompt was open (see pending-share.js)
+let pendingChain = Promise.resolve();
+function pendingOp(fn) { // in arrival order (the popup's pendingShare then share), apart from the shares lock
+  const run = pendingChain.then(fn, fn);
+  pendingChain = run.catch(() => {});
+  return run;
+}
+let lastAutoShare = null; // the last share applied from a pending choice (in memory)
+const AUTO_SHARE_DEDUPE_MS = 10_000;
+const getPendingShare = async () => (await chrome.storage.session.get("pendingShare")).pendingShare || null;
+const clearPendingShare = () => chrome.storage.session.set({ pendingShare: null });
+
+async function shareTab(tabId, wantOrigin, level, reason = "shared") {
+  if (!["read", "act"].includes(level)) return { ok: false, error: "bad level" };
+  const tab = await chrome.tabs.get(tabId);
+  const st = await getPolicyState();
+  const origin = originOf(tab.url || "");
+  const why = denied(tab.url || "", st.active);
+  if (!origin || why) return { ok: false, error: `Can't share: ${why || "not an http(s) page"}` };
+  if (wantOrigin !== origin) return { ok: false, error: "The tab changed; reopen the popup." };
+  if (!(await hasHostPermission(origin))) return { ok: false, error: "Chrome didn't grant access to this site." };
+  await withLock(async () => {
+    const shares = await getShares();
+    shares[tab.id] = { origin, level, at: Date.now() };
+    await setShares(shares);
+  });
+  post({ event: "share_changed", tab: tab.id, origin, level, reason });
+  const ex = denyException(tab.url || "", st.active);
+  await auditAdd({ op: `share-${level}`, tab: tab.id, origin, outcome: "ok", ...(ex ? { denyExcept: ex } : {}) });
+  await updateBadge(tab.id);
+  return { ok: true };
+}
+
+// Apply the pending share if Chrome now grants every origin it asked for. Kept while the prompt may still be open
+// (permissions.onAdded for some other grant); dropped when expired, applied, refused, or (dropIfNotGranted, the
+// popup reopened so the prompt is gone) not granted: Cancel leaves the tab as it was.
+function applyPendingShare({ dropIfNotGranted = false } = {}) {
+  return pendingOp(async () => {
+    const p = await getPendingShare();
+    if (!p) return { ok: true, applied: false };
+    if (!pendingLive(p)) { await clearPendingShare(); return { ok: true, applied: false, expired: true }; }
+    let granted = false;
+    try { granted = await chrome.permissions.contains({ origins: p.origins }); } catch { granted = false; }
+    if (!granted) {
+      if (dropIfNotGranted) await clearPendingShare();
+      return { ok: true, applied: false };
+    }
+    await clearPendingShare();
+    const current = (await getShares())[p.tabId];
+    if (current?.origin === p.origin && current.level === p.level) return { ok: true, applied: false, already: true };
+    let res;
+    try { res = await shareTab(p.tabId, p.origin, p.level, "shared after allow"); } catch (e) {
+      res = { ok: false, error: String(e?.message || e) };
+    }
+    if (res.ok) lastAutoShare = { tabId: p.tabId, origin: p.origin, level: p.level, at: Date.now() };
+    return res.ok ? { ok: true, applied: true, level: p.level, tabId: p.tabId } : { ...res, applied: false };
+  });
+}
+
+chrome.permissions.onAdded?.addListener(() => applyPendingShare().catch(() => {}));
+
 async function popupMessage(msg) {
   switch (msg?.type) {
     case "state": {
@@ -2120,25 +2182,34 @@ async function popupMessage(msg) {
       return { ok: true };
     }
     case "share": {
-      if (!["read", "act"].includes(msg.level)) return { ok: false, error: "bad level" };
-      const tab = await chrome.tabs.get(msg.tabId);
-      const st = await getPolicyState();
-      const origin = originOf(tab.url || "");
-      const why = denied(tab.url || "", st.active);
-      if (!origin || why) return { ok: false, error: `Can't share: ${why || "not an http(s) page"}` };
-      if (msg.origin !== origin) return { ok: false, error: "The tab changed; reopen the popup." };
-      if (!(await hasHostPermission(origin))) return { ok: false, error: "Chrome didn't grant access to this site." };
-      await withLock(async () => {
-        const shares = await getShares();
-        shares[tab.id] = { origin, level: msg.level, at: Date.now() };
-        await setShares(shares);
+      // onAdded already applied this very choice (the popup stayed open): don't share, post, and audit it twice.
+      const auto = lastAutoShare;
+      lastAutoShare = null;
+      if (auto && auto.tabId === msg.tabId && auto.origin === msg.origin && auto.level === msg.level
+        && Date.now() - auto.at < AUTO_SHARE_DEDUPE_MS && (await getShares())[msg.tabId]?.level === msg.level) {
+        return { ok: true };
+      }
+      const res = await shareTab(msg.tabId, msg.origin, msg.level);
+      // The popup's own answer: the choice is applied (or refused), so it no longer waits on the prompt.
+      await pendingOp(async () => {
+        const p = await getPendingShare();
+        if (p && p.tabId === msg.tabId) await clearPendingShare();
       });
-      post({ event: "share_changed", tab: tab.id, origin, level: msg.level, reason: "shared" });
-      const ex = denyException(tab.url || "", st.active);
-      await auditAdd({ op: `share-${msg.level}`, tab: tab.id, origin, outcome: "ok", ...(ex ? { denyExcept: ex } : {}) });
-      await updateBadge(tab.id);
-      return { ok: true };
+      return res;
     }
+    // 0.16.2: Act / Read clicked while Chrome asks for site access. Sent (not awaited) right before
+    // permissions.request; applied once every origin it asked for is granted, dropped on Cancel or after 2 minutes.
+    case "pendingShare": return pendingOp(async () => {
+      await chrome.storage.session.set({ pendingShare: makePendingShare(msg) });
+      return { ok: true };
+    });
+    case "clearPendingShare": return pendingOp(async () => {
+      const p = await getPendingShare();
+      if (p && (msg.tabId == null || p.tabId === msg.tabId)) await clearPendingShare();
+      return { ok: true };
+    });
+    // The popup opened: Chrome's prompt is closed, so apply the choice if it was allowed, else drop it.
+    case "applyPendingShare": return applyPendingShare({ dropIfNotGranted: true });
     case "unshare": await revoke(msg.tabId, "unshared"); return { ok: true };
     case "recordStart": return popupRecordStart(String(msg.recId || ""));
     case "recordStop": {
