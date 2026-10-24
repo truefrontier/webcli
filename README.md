@@ -2,7 +2,7 @@
 
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
-- `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), and `llmcli muse` (Meta's Muse at muse.ai, musecli parity).
+- `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), `llmcli muse` (Meta's Muse at muse.ai, musecli parity), and `llmcli notebooklm` (ask one NotebookLM notebook, answers with citations; the same site as `webcli notebooklm`).
 - `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`), and `webcli notebooklm` (NotebookLM notebooks, sources, notes, and `ask` with citations; `generate` creates audio and video overviews, reports, quizzes, flashcards, mind maps, infographics, slide decks, and data tables only with `--confirm`, and `download` saves them; see [docs/notebooklm-site.md](docs/notebooklm-site.md)). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; finds older conversations by contact or number; `send` writes only with `--confirm`, and starts a new conversation only with `--new-ok` and exact `--expect-recipient`s) and `webcli whatsapp` (your WhatsApp chats through WhatsApp Web, unofficial; `send` writes only with `--confirm` and an exact `--expect-chat`). Plus `identity`, `doctor`, `sites`, and `serve`.
 - `chromecli`: the tabs you share from your real, signed-in Chrome, through the chromecli extension and a native messaging host: read them, and act in them (open, navigate, click, fill, ...) with your OK in the browser for anything risky; see [chromecli](#chromecli-tabs-you-share).
 
@@ -24,7 +24,7 @@ Each identity is one Chrome profile. There are seven:
 
 | Identity | Used by | Profile |
 |---|---|---|
-| `google:default` | `llmcli gemini`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail`, `webcli notebooklm` | `~/.webcli/identities/google-default/chrome-profile` |
+| `google:default` | `llmcli gemini`, `llmcli notebooklm`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail`, `webcli notebooklm` | `~/.webcli/identities/google-default/chrome-profile` |
 | `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
 | `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
 | `facebook:default` | `webcli facebook` | `~/.webcli/identities/facebook-default/chrome-profile` |
@@ -71,6 +71,8 @@ llmcli chatgpt -p -m gpt-6 "Summarize this" --file notes.md
 llmcli gemini ask "Draw a fox" --image-out ~/Downloads/
 llmcli chatgpt chats list --format md
 llmcli muse -p --chat main "What's on my list today?"   # muse: no models, files, or images
+llmcli notebooklm -p -n "Research notes" "What do my sources say about X?"   # -n: notebook id, URL, or title
+llmcli notebooklm ask -n NOTEBOOK_ID "Summarize" --source SOURCE_ID --json   # answer + citations
 llmcli gemini agent-help --format json          # commands, flags, exit codes, env
 webcli aa digest smart-fast --limit 5           # Artificial Analysis: smart and fast LLMs
 webcli walkie meetings transcript standup --format md

@@ -32,7 +32,7 @@ NOTES = [
     "run one at a time in that identity's daemon, a hidden headless Chrome: no window, no Dock icon, no focus change.",
     "Every command loads notebooklm.google.com and calls the app's own RPCs from inside the page (batchexecute, and "
     "GenerateFreeFormStreamed for `ask`); the session token never leaves the page. NOTEBOOK is a notebook id from "
-    "`notebooks` (a notebook URL works too); SOURCE from `sources NOTEBOOK`; ARTIFACT from `artifacts NOTEBOOK`.",
+    "`notebooks` (a notebook URL works too; `ask` also takes its exact title); SOURCE from `sources NOTEBOOK`; ARTIFACT from `artifacts NOTEBOOK`.",
     "Output: a table on a terminal, JSON when piped; --format json (or --json) forces JSON everywhere.",
     "`ask` uses every source unless --source (repeatable). The question joins the notebook's chat history, as if "
     "typed in the app. JSON: {answer, citations: [{number, source_id, source_title, excerpt}], conversation_id}.",
@@ -54,6 +54,8 @@ NOTES = [
     "<title><ext>). Files are mode 0600. Not completed yet exits 2.",
     "No such notebook, source, or artifact exits 3. A usage limit exits 6. Not signed in exits 4: a person runs "
     "`webcli identity login google:default`.",
+    "`llmcli notebooklm` is this site's ask as an llmcli chat site (ask / -p with -n NOTEBOOK, --chat, -c, the "
+    "uniform ask JSON); it runs only the reads and the chat.",
     "Reference: the RPC ids and payload shapes follow teng-lin/notebooklm-py (MIT), re-implemented here.",
 ]
 WRITES = [

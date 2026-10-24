@@ -11,7 +11,8 @@ from webcli.sites.llm import env_help
 
 NOTES = [
     "Sites: `llmcli <site> ...`; each has its own `agent-help`: gemini (identity google:default), chatgpt "
-    "(identity chatgpt:default), muse (Meta's Muse at muse.ai; identity meta:default, a Meta account).",
+    "(identity chatgpt:default), muse (Meta's Muse at muse.ai; identity meta:default, a Meta account), notebooklm "
+    "(ask one NotebookLM notebook with -n, answers with citations; identity google:default).",
     "Every command runs Chrome headless: no window, no Dock icon, no focus change. Only `identity login` / `<site> "
     "login` and an explicit --headed show a window, and login needs a person.",
     "Uniform ask JSON on every site: answer, chatId, requestedModel, servedModel, servedModelDisplay, fallback, "
@@ -28,11 +29,14 @@ def build() -> click.Group:
     @click.group(cls=output.AgentGroup, name="llmcli")
     @click.version_option(__version__, prog_name="llmcli")
     def main() -> None:
-        """Chat AIs (Gemini, ChatGPT, Muse) from your own signed-in Chrome, hidden. Data home: ~/.webcli/"""
+        """Chat AIs (Gemini, ChatGPT, Muse, NotebookLM) from your own signed-in Chrome, hidden. Data home: ~/.webcli/"""
         output.env_format()
 
     for site in sites.of_kind("llm"):
         main.add_command(site.cli(), site.name)
+    for site in sites.registry().values():  # data sites with a chat surface (notebooklm)
+        if site.kind != "llm" and site.llm_cli is not None:
+            main.add_command(site.llm_cli(), site.name)
     main.add_command(identity_group())
     main.add_command(doctor_command())
     main.add_command(serve_command())

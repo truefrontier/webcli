@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased: llmcli 0.6.0 (2026-10-24)
+
+`llmcli notebooklm`: NotebookLM's ask as an llmcli chat site, the same shape as gemini, chatgpt, and muse, so agents
+and tmuxlet can use a notebook as a chat backend. It reuses `webcli notebooklm`'s fetch code; nothing is duplicated.
+(webcli's own version is left for whichever of this and the amazon 0.14.0 branch merges second.)
+
+### Added
+
+- **`llmcli notebooklm ask -n NOTEBOOK PROMPT`** and **`llmcli notebooklm -p -n NOTEBOOK [PROMPT]`** (stdin, `-`,
+  `--prompt-file`, `--output-file`, `--output-format json`, `--quiet`, `--timeout`), plus `notebooks`, `status`,
+  `models` (always `[]`), `login`, `serve`, and `agent-help`. `--source` (repeatable) narrows the sources.
+- **Notebook by id, URL, or exact title** (`-n`, or env `LLMCLI_NOTEBOOKLM_NOTEBOOK`). `webcli notebooklm ask` takes
+  a title too. Two notebooks with the same title exit 2 naming both ids; none exits 3.
+- **Multi-turn:** every answer's conversation id is `chatId`; `--chat ID` sends into it, `-p -c` continues the last
+  ask's notebook and conversation.
+- **Uniform ask JSON** (answer, chatId, null model fields, images, canvas) with NotebookLM's citations (`number`,
+  `title`, `url: null`, `source_id`, `source_title`, `excerpt`).
+- `Site.llm_cli`: a data site can offer an llmcli chat surface; `webcli sites` shows it as `alsoLlmcli`.
+
+### Scope
+
+- `llmcli notebooklm` runs only the `status`, `notebooks`, and `ask` ops (checked before every call); `ask` runs
+  under the ASK guard policy (read rpcids plus GenerateFreeFormStreamed). No generate, download, or edits.
+
+### Changed
+
+- truefrontier-llmcli / llmcli packages 0.5.0 -> 0.6.0 (their webcli pin is left for the second merge).
+
 ## 0.13.0 (2026-10-23)
 
 New site: `webcli notebooklm`, NotebookLM through the `google:default` identity (no new sign-in). The wire format
