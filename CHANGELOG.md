@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.16.3 / llmcli 0.6.4 (2026-10-24)
+
+### Changed
+
+- chromecli: a tab Kevin shared (Read or Act) **keeps its share and level when it moves to another host of the same
+  site** (registrable domain, by the Public Suffix List): `appstoreconnect.apple.com` <-> `developer.apple.com` no
+  longer needs sharing again. Before, any change of origin ended the share. Multi-tenant suffixes count as separate
+  sites (`alice.github.io` vs `bob.github.io`, `a.vercel.app` vs `b.vercel.app`, `pages.dev`, `herokuapp.com`, ...).
+  The share still ends on another site, on https -> http, and on any denied host or path (the deny list always wins:
+  `appleid.apple.com`, `accounts.google.com`, `/checkout`, ...). A bot-opened tab's auto-share never follows.
+- Sharing now asks Chrome for the whole site, `*://*.SITE/*` (an IP or `localhost`: its host, as before), so moving
+  between its hosts doesn't prompt. A share made before 0.16.3 has only its own host: the first move ends it with
+  "share it again to cover *.SITE"; one re-share fixes it.
+- An agent's `chromecli navigate` to another host of the same site, on a tab Kevin shared Act (and with that host
+  granted), is treated like a same-origin move: not gated, and the tab stays his Act share (`sameSite: true`,
+  `site`) instead of turning into a bot-opened tab. Other cross-site navigates are unchanged. Page-action gates
+  (submit, buy, send, delete, password / card fields, Jev) are unchanged; a recording still stops when its tab leaves
+  the origin it started on.
+- The popup shows the site under the current tab ("Shared across *.apple.com" / "Read / Act covers *.apple.com") and
+  in each shared tab's tooltip. A carry is logged: `share-carried` in the popup's activity, and
+  `event=share_changed ... reason=same_site from=ORIGIN site=SITE` in the host log.
+
+### Added
+
+- `extensions/chromecli/psl.js` (eTLD+1, exceptions and wildcards) and `psl-data.js`, the bundled Public Suffix List
+  (2026-10-22, ICANN + private, MPL-2.0), regenerated with `scripts/update_psl.py`; never fetched at run time.
+- Version 0.16.3 for webcli, the chromecli package (and its webcli pin), and the extension manifest;
+  truefrontier-llmcli / llmcli 0.6.3 -> 0.6.4, pinned to truefrontier-webcli==0.16.3. Reload the extension.
+
 ## 0.16.2 / llmcli 0.6.3 (2026-10-24)
 
 ### Fixed

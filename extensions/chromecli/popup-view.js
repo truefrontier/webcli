@@ -135,6 +135,12 @@ export function grantJev(g) {
 }
 
 // "https://www.example.com:8443" -> "www.example.com:8443"; non-URLs pass through.
+// 0.16.3: the site (registrable domain) line under the tab: a share covers, and follows the tab across, *.site.
+export function siteNote(site, shared) {
+  if (!site) return "";
+  return shared ? `Shared across *.${site} (follows this tab between ${site} hosts)` : `Read / Act covers *.${site}`;
+}
+
 export function hostOf(origin) {
   try { return new URL(origin).host || String(origin); } catch { return String(origin || ""); }
 }

@@ -14,7 +14,8 @@ import {
   JEV_STORAGE_KEYS, JevError, LOCATE_MAX, buildSnapshot, callJev, classifyBody, classifyGate, fallbackFor, heuristicPick, heuristicRank, jevConfig,
   jevMode, locateBody, mergeReasons, parseClassify, parseLocate,
 } from "./jev.js";
-import { badgeFor, levelAllows, revokeReason } from "./shares.js";
+import { badgeFor, carrySite, levelAllows, revokeReason } from "./shares.js";
+import { sameSite, siteOf } from "./psl.js";
 import { extractPage } from "./page/extract.js";
 import { classifyFrames, frameGeometry, frameOrigin, mergeRead, parseFrameRef, pickScrollTarget, shortUrl, skippedList } from "./frames.js";
 import {
@@ -221,8 +222,8 @@ async function revokeDenied() {
   for (const id of Object.keys(shares)) {
     let tab = null;
     try { tab = await chrome.tabs.get(Number(id)); } catch { /* closed */ }
-    const why = tab ? revokeReason(shares[id], tab.url || "", active) : "closed";
-    if (why) await revoke(Number(id), why);
+    if (tab) await settleShare(Number(id), tab.url || "", active);
+    else await revoke(Number(id), "closed");
   }
 }
 
@@ -242,6 +243,44 @@ async function revoke(tabId, reason) {
     await auditAdd({ op: "unshare", tab: tabId, origin: gone.origin, outcome: reason });
     await updateBadge(tabId);
   }
+}
+
+// 0.16.3: what a tab's new URL does to its share: kept (same origin), carried (another host of the same site, see
+// carrySite; needs host access there, which a share asks for as *://*.site/*), or revoked as before.
+async function settleShare(tabId, url, policy) {
+  const share = (await getShares())[tabId];
+  const why = revokeReason(share, url, policy);
+  if (!why) return share ? "kept" : "none";
+  const site = why === "origin changed" ? carrySite(share, url, policy) : null;
+  if (site) {
+    const to = originOf(url);
+    if (await hasHostPermission(to)) return (await carryShare(tabId, share.origin, to, site)) ? "carried" : "kept";
+    await revoke(tabId, `origin changed (no access to ${new URL(to).hostname}; share it again to cover *.${site})`);
+    return "revoked";
+  }
+  // A move within the site onto a denied host / path (appleid.apple.com) says why; other moves read as before.
+  const deniedWhy = why === "origin changed" && sameSite(share.origin, originOf(url) || "") ? denied(url, policy) : null;
+  await revoke(tabId, deniedWhy ? `denied (${deniedWhy})` : why);
+  return "revoked";
+}
+
+async function carryShare(tabId, from, to, site) {
+  let moved = null;
+  await withLock(async () => {
+    const shares = await getShares();
+    const s = shares[tabId];
+    if (!s || s.origin !== from) return;
+    moved = shares[tabId] = { ...s, origin: to, site, carriedFrom: from };
+    await setShares(shares);
+  });
+  if (!moved) return false;
+  // A recording still stops when its tab leaves the origin it was started on (the Start window says so).
+  const rec = recFor(tabId);
+  if (rec) stopRecording(rec.recId, "origin changed").catch(() => {});
+  post({ event: "share_changed", tab: tabId, origin: to, level: moved.level, reason: "same site", from, site });
+  await auditAdd({ op: "share-carried", tab: tabId, origin: to, outcome: `${moved.level} (same site ${site})`, from, site });
+  await updateBadge(tabId);
+  return true;
 }
 
 async function updateBadge(tabId) {
@@ -303,13 +342,10 @@ async function access(tab, need = "read") {
     if (pendingAffects(st, { url })) throw new OpError("policy_pending", `Tab ${tab.id}'s origin waits on a pending policy change.`, { tab: tab.id, origin });
     throw new OpError("origin_blocked", `Tab ${tab.id} is on a denied origin (${why}).`, { tab: tab.id, origin });
   }
-  const shares = await getShares();
-  const share = shares[tab.id];
+  if ((await getShares())[tab.id]) await settleShare(tab.id, url, st.active);
+  const share = (await getShares())[tab.id];
   if (share) {
-    const reason = revokeReason(share, url, st.active);
-    if (reason) {
-      await revoke(tab.id, reason);
-    } else if (levelAllows(share.level, need)) {
+    if (levelAllows(share.level, need)) {
       return share.level;
     } else {
       throw new OpError("not_act_shared", `Tab ${tab.id} is shared for read only.`, { tab: tab.id, origin });
@@ -971,7 +1007,12 @@ async function tabNavigate(args, req) {
   const url = String(args.url || "");
   const { origin, level } = await checkDestination(url); // the deny list always applies
   // 0.9.1: a same-origin move in a tab Kevin Share-act'd himself isn't gated; cross-origin and bot tabs are as before.
-  const sameOriginAct = originOf(tab.url || "") === origin && (await tabKind(tab)) === "act";
+  // 0.16.3: so is a move to another host of the same site (his share covers *.site and follows the tab) when Chrome
+  // already grants that host; the share is carried, not replaced by a bot-opened one.
+  const kind = await tabKind(tab);
+  const siteMove = kind === "act" && originOf(tab.url || "") !== origin
+    && !!carrySite((await getShares())[tab.id], url, (await getPolicyState()).active) && await hasHostPermission(origin);
+  const sameOriginAct = (originOf(tab.url || "") === origin || siteMove) && kind === "act";
   const reasons = gateReasons("navigate", null, { allowlisted: !!level || sameOriginAct });
   let confirmedInBrowser = false;
   const g = reasons.length && canSkip(reasons) ? await findGrant("navigate", { origin, url }) : {};
@@ -987,21 +1028,27 @@ async function tabNavigate(args, req) {
     if (await getPaused()) throw new OpError("paused", "Agents were paused; nothing was done.");
   }
   const cross = originOf(tab.url || "") !== origin;
-  if (cross) {
+  const carry = cross && siteMove && (await tabKind(tab)) === "act";
+  if (cross && !carry) {
     // A cross-origin navigate by the agent makes it a bot-opened tab on the new origin (spec 6.4).
     await revoke(tab.id, "navigated by agent");
     await markBot(tab.id);
   }
   await chrome.tabs.update(tab.id, { url });
   let share = { level: null };
-  if (cross) {
+  if (carry) {
+    await waitFor(async () => { const t = await chrome.tabs.get(tab.id); return originOf(t.pendingUrl || t.url || "") === origin; }, 10000);
+    await settleShare(tab.id, url, (await getPolicyState()).active);
+    share = { level: (await getShares())[tab.id]?.level ?? null };
+  } else if (cross) {
     await waitFor(async () => { const t = await chrome.tabs.get(tab.id); return originOf(t.pendingUrl || t.url || "") === origin; }, 10000);
     share = await autoShare(tab.id, url);
   } else {
     share = { level: (await getShares())[tab.id]?.level ?? null };
   }
   return { tab: tab.id, op: "navigate", url, origin, crossOrigin: cross, share: share.level,
-    ...(share.skipped ? { shareSkipped: share.skipped } : {}), botOpened: cross || !!(await getBotTabs())[tab.id],
+    ...(carry ? { sameSite: true, site: siteOf(origin) } : {}),
+    ...(share.skipped ? { shareSkipped: share.skipped } : {}), botOpened: (cross && !carry) || !!(await getBotTabs())[tab.id],
     gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true, verified: true };
 }
 
@@ -2176,11 +2223,11 @@ async function popupMessage(msg) {
         let t = null;
         try { t = await chrome.tabs.get(Number(id)); } catch { /* gone; revoked on its own */ }
         const rec = recFor(Number(id));
-        shared.push({ tabId: Number(id), origin: s.origin, level: s.level, at: s.at ?? null,
+        shared.push({ tabId: Number(id), origin: s.origin, level: s.level, at: s.at ?? null, site: s.botOpened ? null : siteOf(s.origin),
           title: t?.title || "", favIconUrl: t?.favIconUrl || "", windowId: t?.windowId ?? null,
           ...(rec ? { rec: { ...recView(rec), button: recButton(rec) } } : {}) });
       }
-      return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url), favIconUrl: tab.favIconUrl || "" },
+      return { ok: true, tab: tab && { id: tab.id, title: tab.title, url, origin: originOf(url), site: siteOf(url), favIconUrl: tab.favIconUrl || "" },
         shared,
         share: tab ? shares[tab.id] || null : null, deniedReason: tab ? denied(url, st.active) : null,
         paused, pending: st.pending, policyHash: st.active.hash, host: hostStatus, frameActAllow: st.active.frame_act_allow || [],
@@ -2282,8 +2329,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     const shares = await getShares();
     if (shares[tabId]) {
       const { active } = await getPolicyState();
-      const why = revokeReason(shares[tabId], changeInfo.url, active);
-      if (why) await revoke(tabId, why);
+      await settleShare(tabId, changeInfo.url, active);
     }
     if (inheriting.has(tabId)) await inheritShare(tabId, changeInfo.url);
   }

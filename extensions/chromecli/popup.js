@@ -1,5 +1,6 @@
-import { allowToPermission, permissionPattern } from "./policy.js";
-import { auditRow, confirmsLabel, grantJev, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, loosenWords, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
+import { allowToPermission } from "./policy.js";
+import { sitePermissionPattern } from "./psl.js";
+import { siteNote, auditRow, confirmsLabel, grantJev, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, loosenWords, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
 let tab = null;
@@ -71,6 +72,8 @@ function render() {
   $("origin").textContent = tab ? tab.origin || tab.url || "" : "";
   $("origin").title = tab ? tab.url || "" : "";
   setFavicon($("fav"), tab?.favIconUrl, tab?.title, tab?.origin);
+  $("site").textContent = siteNote(tab?.site, !!state.share && !state.share.botOpened);
+  $("site").hidden = !$("site").textContent;
 
   const reason = state.deniedReason;
   $("denied").hidden = !reason;
@@ -148,7 +151,8 @@ function sharedRow(s) {
   const host = hostOf(s.origin);
   const title = s.title || host;
   const isCurrent = s.tabId === tab?.id;
-  const main = el("button", { class: "srow-main", title: `${title}\n${host}`, "aria-label": `Switch to ${title} (${host})` },
+  const scope = s.site ? `\nShared across *.${s.site}` : "";
+  const main = el("button", { class: "srow-main", title: `${title}\n${host}${scope}`, "aria-label": `Switch to ${title} (${host})` },
     el("span", { class: "srow-title" }, title));
   main.addEventListener("click", async () => {
     try {
@@ -205,7 +209,8 @@ async function share(level) {
   // permissions.request must run straight from the click (user gesture): nothing is awaited before it.
   // 0.11.3: Act also asks for the accepted frame_act_allow origins (one prompt), so listed app frames work there.
   const frames = level === "act" ? (state?.frameActAllow || []).map(allowToPermission).filter(Boolean) : [];
-  const origins = [permissionPattern(tab.origin), ...frames];
+  // 0.16.3: the whole site (*://*.apple.com/*), so the share can follow the tab between its hosts without a prompt.
+  const origins = [sitePermissionPattern(tab.origin), ...frames];
   // 0.16.2: the popup may close while Chrome's Allow / Cancel prompt is open, so the worker keeps this choice and
   // applies it on Allow (permissions.onAdded). Sent, not awaited: the request below must still be in the click.
   send({ type: "pendingShare", tabId: tab.id, origin: tab.origin, level, origins }).catch(() => {});
