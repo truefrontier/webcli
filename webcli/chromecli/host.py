@@ -14,6 +14,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -281,8 +282,16 @@ class Host:
             if kind == "paused_changed" and self.hello is not None:
                 self.hello["paused"] = msg.get("paused")
             origin = redact_url(str(msg.get("origin"))) if msg.get("origin") else ""
+            # 0.16.3: a share that followed its tab to another host of the same site says from where and which site.
+            carried = ""
+            if msg.get("from"):
+                carried += f" from={redact_url(str(msg.get('from')))}"
+            if isinstance(msg.get("site"), str) and re.fullmatch(r"[a-z0-9.-]{1,253}", msg["site"]):
+                carried += f" site={msg['site']}"
+            reason = msg.get("reason")
+            reason = reason.replace(" ", "_") if isinstance(reason, str) and reason == "same site" else reason
             audit(f"event={kind} tab={msg.get('tab')} origin={origin} level={msg.get('level')} "
-                  f"paused={msg.get('paused')} reason={msg.get('reason')}")
+                  f"paused={msg.get('paused')} reason={reason}{carried}")
         elif kind == "grants_cleared":
             audit(f"event={kind} count={msg.get('count')} reason={redact_text(str(msg.get('reason')))[:60]}")
         elif kind in ("grant_added", "grant_refused"):

@@ -24,6 +24,23 @@ let n = 0;
 
 // page(tabId, spec, func, frameId) -> the injected function's result (a fake page). h.frames: tabId -> the
 // webNavigation.getAllFrames rows (default: the top frame only); h.frameThrows: frameIds whose injection throws.
+// Like Chrome: a granted match pattern covers a requested one ("*://*.apple.com/*" covers
+// "https://developer.apple.com/*" and "https://apple.com/*"; "*" scheme = http and https).
+const PAT = /^(\*|https?):\/\/(\*\.)?([^/:]+)\/\*$/;
+export function grantedCovers(granted, want) {
+  if (granted.has(want)) return true;
+  const w = PAT.exec(want);
+  if (!w) return false;
+  for (const g of granted) {
+    const m = PAT.exec(g);
+    if (!m) continue;
+    const schemeOk = m[1] === "*" ? true : m[1] === w[1];
+    const hostOk = m[2] ? (w[3] === m[3] || w[3].endsWith(`.${m[3]}`)) : (!w[2] && w[3] === m[3]);
+    if (schemeOk && hostOk && (m[1] === "*" || w[1] !== "*")) return true;
+  }
+  return false;
+}
+
 export async function loadBackground({ page } = {}) {
   const h = { posted: [], granted: new Set(), windowsCreated: [], windowsRemoved: [], tabsCreated: [], tabsRemoved: [],
     tabsUpdated: [], injected: [], notes: [], page: page || (() => ({ ok: true })), frames: new Map(), frameThrows: new Map(),
@@ -101,7 +118,7 @@ export async function loadBackground({ page } = {}) {
       update: async () => ({}),
       onRemoved: event(),
     },
-    permissions: { contains: async ({ origins }) => origins.every((o) => h.granted.has(o)), onAdded: event() },
+    permissions: { contains: async ({ origins }) => origins.every((o) => grantedCovers(h.granted, o)), onAdded: event() },
     scripting: {
       executeScript: async ({ target, func, args, world }) => {
         const frameId = target.frameIds ? target.frameIds[0] : 0;

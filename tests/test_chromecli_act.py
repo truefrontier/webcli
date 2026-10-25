@@ -243,3 +243,20 @@ def test_declined_audit_line_drops_junk_how(ext, home):
     assert run("navigate", "7", "https://example.org/x", "--confirm").exit_code == 4
     log = (home / "logs" / "chromecli.log").read_text()
     assert "confirm=declined" in log and " via=" not in log and "answer_ms" not in log
+
+
+def test_share_carried_event_is_logged(home):
+    # 0.16.3: a share that follows its tab to another host of the same site is logged with from= and site=.
+    import io
+
+    from webcli.chromecli.host import Host
+
+    h = Host(io.BytesIO(), io.BytesIO())
+    h.on_event({"event": "share_changed", "tab": 5, "origin": "https://developer.example.com", "level": "act",
+                "reason": "same site", "from": "https://connect.example.com", "site": "example.com"})
+    h.on_event({"event": "share_changed", "tab": 5, "origin": "https://x.example.com", "level": "act",
+                "reason": "same site", "site": "bad site; rm"})
+    log = (home / "logs" / "chromecli.log").read_text()
+    assert ("event=share_changed tab=5 origin=https://developer.example.com level=act paused=None reason=same_site "
+            "from=https://connect.example.com site=example.com") in log
+    assert "bad site" not in log

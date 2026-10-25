@@ -90,11 +90,27 @@ chromecli agent-help [--format json]
 
 - Kevin shares a tab from the toolbar popup's Off / Read / Act switch: **Read** (Share-read, badge R, blue) or **Act**
   (Share-act, badge A, orange: read and act); **Off** unshares. The popup also lists every shared tab
-  (unshare one with its x). Sharing asks Chrome for host access to that origin (`optional_host_permissions`; no blanket
-  host permission). Clicking **Allow** in that prompt finishes the share; no second click (0.16.2: the worker
-  keeps the choice while the prompt is open and applies it on the grant; **Cancel** leaves the tab as it was).
-  Shares are (tab, origin, level) in `chrome.storage.session`: cleared when Chrome restarts, revoked
-  when the tab navigates to another origin or a denied URL, or is replaced/closed.
+  (unshare one with its x). Sharing asks Chrome for host access to the tab's whole **site**, `*://*.SITE/*`
+  (`optional_host_permissions`; no blanket host permission; an IP or `localhost` gets just its host). Clicking
+  **Allow** in that prompt finishes the share; no second click (0.16.2: the worker keeps the choice while the prompt
+  is open and applies it on the grant; **Cancel** leaves the tab as it was). Shares are (tab, origin, level) in
+  `chrome.storage.session`: cleared when Chrome restarts, revoked when the tab navigates to another site or a denied
+  URL, or is replaced/closed.
+- **Same-site moves (0.16.3)**: SITE is the registrable domain (eTLD+1) by the Public Suffix List, bundled in
+  `psl-data.js` (ICANN and private sections; regenerate with `scripts/update_psl.py`, never fetched at run time).
+  A share Kevin made follows its tab to another host of the same site and keeps Read / Act:
+  `appstoreconnect.apple.com` <-> `developer.apple.com` (both `apple.com`). Multi-tenant suffixes are their own sites
+  (`alice.github.io` and `bob.github.io`, `a.vercel.app` and `b.vercel.app`, `*.pages.dev`, `*.herokuapp.com`).
+  The share still ends on another site, on https -> http, and on any denied host or path: the deny list always wins
+  (`appleid.apple.com` and `accounts.google.com` are denied by default, so a share never follows a tab there). A
+  share made before 0.16.3 only has its own host granted: moving ends it with "share it again to cover *.SITE". A
+  bot-opened tab's auto-share never follows. An agent's `navigate` within the site on Kevin's Act tab is treated like
+  a same-origin move: not gated, and the tab stays Kevin's Act share (`sameSite: true, site`) instead of becoming
+  bot-opened. Page-action gates (submit, buy, send, delete, password / card fields, Jev) are unchanged. A
+  recording still stops when its tab leaves the origin it started on. Each carry is in the popup's activity
+  (`share-carried`) and the host log (`event=share_changed ... reason=same_site from=ORIGIN site=SITE`); the popup
+  shows the site under the tab ("Shared across *.apple.com") and in each shared tab's tooltip. Only a code change
+  (and Kevin's extension reload) changes this rule; nothing in the CLI or policy can.
 - **Pause agents** (popup or Cmd+Shift+Period): badge II; every op but `status` exits 4 `paused`. Persists across restarts
   until resumed. **Unshare all** in the popup.
 - **Deny**: built-in (any non-http(s) scheme, Chrome Web Store) can't be removed; the default list (banks, sign-in,

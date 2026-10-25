@@ -4,9 +4,11 @@
 // (permissions.onAdded, the popup's next open, or the request's own answer). Cancel never applies it.
 // Pure helpers; background.js does the storage and the share.
 import { permissionPattern } from "./policy.js";
+import { registrableDomain } from "./psl.js";
 
 export const PENDING_SHARE_TTL_MS = 2 * 60 * 1000; // long enough to read the prompt, short enough not to linger
-const PATTERN = /^https?:\/\/(\*\.)?[a-z0-9.-]+(:\d+)?\/\*$/i;
+// 0.16.3: "*://*.site/*" too (a share asks for its whole site); a wildcard never sits on a public suffix (*.com, *.github.io).
+const PATTERN = /^(?:https?|\*):\/\/(\*\.)?([a-z0-9.-]+)(:\d+)?\/\*$/i;
 
 // {tabId, origin, level, origins, at, expiresAt} from the popup's message, or throws (bad input).
 export function makePendingShare(msg, now = Date.now()) {
@@ -17,7 +19,8 @@ export function makePendingShare(msg, now = Date.now()) {
   const main = permissionPattern(origin);
   if (!main) throw new Error("bad origin");
   const origins = [...new Set([main, ...(Array.isArray(msg.origins) ? msg.origins : [])].map(String))];
-  if (!origins.every((o) => PATTERN.test(o))) throw new Error("bad origins");
+  const ok = (o) => { const m = PATTERN.exec(o); return !!m && (!m[1] || registrableDomain(m[2]) !== null); };
+  if (!origins.every(ok)) throw new Error("bad origins");
   return { tabId: msg.tabId, origin, level, origins, at: now, expiresAt: now + PENDING_SHARE_TTL_MS };
 }
 
