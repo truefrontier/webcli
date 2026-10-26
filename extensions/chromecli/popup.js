@@ -1,5 +1,4 @@
-import { allowToPermission } from "./policy.js";
-import { sitePermissionPattern } from "./psl.js";
+import { loosenRequest, shareDeniedMessage, shareRequest } from "./share-request.js";
 import { siteNote, auditRow, confirmsLabel, grantJev, grantMeta, grantScope, grantsSub, hostOf, jevView, LEVEL_HINT, levelOf, loosenLabel, loosenWords, monogram, safeFavicon, shortcutKeys, statusOf } from "./popup-view.js";
 
 const $ = (id) => document.getElementById(id);
@@ -207,18 +206,19 @@ function msg(text, err = false) {
 
 async function share(level) {
   // permissions.request must run straight from the click (user gesture): nothing is awaited before it.
-  // 0.11.3: Act also asks for the accepted frame_act_allow origins (one prompt), so listed app frames work there.
-  const frames = level === "act" ? (state?.frameActAllow || []).map(allowToPermission).filter(Boolean) : [];
-  // 0.16.3: the whole site (*://*.apple.com/*), so the share can follow the tab between its hosts without a prompt.
-  const origins = [sitePermissionPattern(tab.origin), ...frames];
+  // 0.16.4: scheme-specific origins (https://*.apple.com/*) that the manifest's optional_host_permissions contain;
+  // 0.16.3's "*://*.apple.com/*" was refused by Chrome before any prompt. Act also asks for frame_act_allow (0.11.3).
+  const req = shareRequest(tab.origin, level, state?.frameActAllow || []);
+  const { origins } = req;
   // 0.16.2: the popup may close while Chrome's Allow / Cancel prompt is open, so the worker keeps this choice and
   // applies it on Allow (permissions.onAdded). Sent, not awaited: the request below must still be in the click.
   send({ type: "pendingShare", tabId: tab.id, origin: tab.origin, level, origins }).catch(() => {});
   let allowed = false;
-  try { allowed = await chrome.permissions.request({ origins }); } catch { allowed = false; }
+  let error = null;
+  try { allowed = await chrome.permissions.request({ origins }); } catch (e) { error = e; allowed = false; }
   if (!allowed) {
-    await send({ type: "clearPendingShare", tabId: tab.id }).catch(() => {});
-    msg(frames.length ? "Chrome didn't grant access to this site and its frame_act_allow app sites; not shared." : "Chrome didn't grant access to this site; not shared.", true);
+    await send({ type: "clearPendingShare", tabId: tab.id, error: error ? String(error.message || error).slice(0, 160) : null }).catch(() => {});
+    msg(shareDeniedMessage(req, error), true);
     return;
   }
   const res = await send({ type: "share", tabId: tab.id, origin: tab.origin, level });
@@ -260,9 +260,7 @@ $("retry").addEventListener("click", async () => {
   setTimeout(async () => { $("retry").disabled = false; await load(); }, 600);
 });
 $("accept").addEventListener("click", async () => {
-  const origins = (state.pending?.loosening || [])
-    .filter((l) => l.kind === "read_allow_added" || l.kind === "act_allow_added" || l.kind === "frame_act_allow_added")
-    .map((l) => allowToPermission(l.value)).filter(Boolean);
+  const origins = loosenRequest(state.pending?.loosening || []); // 0.16.4: host patterns as http + https
   if (origins.length) { try { await chrome.permissions.request({ origins }); } catch { /* optional */ } }
   await send({ type: "acceptPolicy" });
   msg("Policy accepted.");

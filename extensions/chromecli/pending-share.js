@@ -7,8 +7,9 @@ import { permissionPattern } from "./policy.js";
 import { registrableDomain } from "./psl.js";
 
 export const PENDING_SHARE_TTL_MS = 2 * 60 * 1000; // long enough to read the prompt, short enough not to linger
-// 0.16.3: "*://*.site/*" too (a share asks for its whole site); a wildcard never sits on a public suffix (*.com, *.github.io).
-const PATTERN = /^(?:https?|\*):\/\/(\*\.)?([a-z0-9.-]+)(:\d+)?\/\*$/i;
+// 0.16.3: "https://*.site/*" too (a share asks for its whole site); a wildcard never sits on a public suffix
+// (*.com, *.github.io). 0.16.4: http or https only: Chrome refuses "*://" against this manifest.
+const PATTERN = /^https?:\/\/(\*\.)?([a-z0-9.-]+)(:\d+)?\/\*$/i;
 
 // {tabId, origin, level, origins, at, expiresAt} from the popup's message, or throws (bad input).
 export function makePendingShare(msg, now = Date.now()) {

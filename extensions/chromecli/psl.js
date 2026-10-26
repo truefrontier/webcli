@@ -39,15 +39,6 @@ export function siteOf(originOrUrl) {
   } catch { return null; }
 }
 
-// The host permission a share asks for: every host of the site ("*://*.apple.com/*", which also matches apple.com),
-// or just the origin's host when it has no site (an IP, localhost).
-export function sitePermissionPattern(origin) {
-  const site = siteOf(origin);
-  if (site) return `*://*.${site}/*`;
-  const u = new URL(origin);
-  return `${u.protocol}//${u.hostname}/*`;
-}
-
 // Can a share made on `from` follow its tab to `to`? Same site, http(s) both, and never https -> http.
 export function sameSite(from, to) {
   try {

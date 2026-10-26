@@ -2,7 +2,8 @@
 // keeps its level; another site, a denied host or path, or https -> http still ends it, as before.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registrableDomain, sameSite, siteOf, sitePermissionPattern } from "../psl.js";
+import { registrableDomain, sameSite, siteOf } from "../psl.js";
+import { sitePermissions } from "../share-request.js";
 import { PSL_VERSION } from "../psl-data.js";
 import { carrySite } from "../shares.js";
 import { DEFAULT_POLICY } from "../policy.js";
@@ -44,10 +45,11 @@ test("sameSite: one registrable domain, http(s), never https -> http", () => {
   assert.equal(siteOf("https://developer.apple.com/account"), "apple.com");
 });
 
-test("sitePermissionPattern: *://*.site/*, or the exact host without a site", () => {
-  assert.equal(sitePermissionPattern("https://appstoreconnect.apple.com"), "*://*.apple.com/*");
-  assert.equal(sitePermissionPattern("https://alice.github.io"), "*://*.alice.github.io/*");
-  assert.equal(sitePermissionPattern("http://127.0.0.1:8765"), "http://127.0.0.1/*");
+test("sitePermissions: https://*.site/* (http + https for an http tab), or the exact host without a site", () => {
+  assert.deepEqual(sitePermissions("https://appstoreconnect.apple.com"), ["https://*.apple.com/*"]);
+  assert.deepEqual(sitePermissions("https://alice.github.io"), ["https://*.alice.github.io/*"]);
+  assert.deepEqual(sitePermissions("http://intranet.example.com"), ["http://*.example.com/*", "https://*.example.com/*"]);
+  assert.deepEqual(sitePermissions("http://127.0.0.1:8765"), ["http://127.0.0.1/*"]);
 });
 
 test("carrySite: the deny list wins; another site, bot-opened, or same origin don't carry", () => {
@@ -63,8 +65,8 @@ test("carrySite: the deny list wins; another site, bot-opened, or same origin do
 
 test("pendingShare accepts a site pattern, never one on a public suffix", () => {
   const base = { tabId: 2, origin: "https://appstoreconnect.apple.com", level: "act" };
-  assert.ok(makePendingShare({ ...base, origins: ["*://*.apple.com/*"] }).origins.includes("*://*.apple.com/*"));
-  for (const bad of ["*://*.com/*", "*://*.github.io/*", "*://*.co.uk/*", "*://*/*"]) {
+  assert.ok(makePendingShare({ ...base, origins: ["https://*.apple.com/*"] }).origins.includes("https://*.apple.com/*"));
+  for (const bad of ["https://*.com/*", "https://*.github.io/*", "https://*.co.uk/*", "https://*/*", "*://*.apple.com/*"]) {
     assert.throws(() => makePendingShare({ ...base, origins: [bad] }), undefined, bad);
   }
 });
@@ -78,7 +80,7 @@ test("popup: the site line", () => {
 // ---- in the service worker
 const ASC = "https://appstoreconnect.apple.com";
 const DEV = "https://developer.apple.com";
-async function appleTab(h, level = "act", { pattern = "*://*.apple.com/*" } = {}) {
+async function appleTab(h, level = "act", { pattern = "https://*.apple.com/*" } = {}) {
   h.tabs.set(5, { id: 5, windowId: 10, active: true, url: `${ASC}/apps`, title: "App Store Connect", status: "complete", index: 5 });
   h.granted.add(pattern);
   assert.equal((await h.message({ type: "share", tabId: 5, origin: ASC, level })).ok, true);
@@ -159,14 +161,14 @@ test("a share made before 0.16.3 (only its own host granted) ends cleanly, sayin
 test("multi-tenant hosts are separate sites: alice.github.io -> bob.github.io ends the share", async () => {
   const h = await loadBackground();
   h.tabs.set(6, { id: 6, windowId: 10, active: true, url: "https://alice.github.io/", title: "", status: "complete", index: 6 });
-  h.granted.add("*://*.alice.github.io/*");
+  h.granted.add("https://*.alice.github.io/*");
   assert.equal((await h.message({ type: "share", tabId: 6, origin: "https://alice.github.io", level: "act" })).ok, true);
   await go(h, 6, "https://docs.alice.github.io/");
   assert.equal((await shareOf(h, 6)).level, "act", "a host under the same tenant is the same site");
   await go(h, 6, "https://bob.github.io/");
   assert.equal(await shareOf(h, 6), null);
   h.tabs.set(7, { id: 7, windowId: 10, active: true, url: "https://a.vercel.app/", title: "", status: "complete", index: 7 });
-  h.granted.add("*://*.a.vercel.app/*");
+  h.granted.add("https://*.a.vercel.app/*");
   await h.message({ type: "share", tabId: 7, origin: "https://a.vercel.app", level: "read" });
   await go(h, 7, "https://b.vercel.app/");
   assert.equal(await shareOf(h, 7), null);

@@ -246,7 +246,7 @@ async function revoke(tabId, reason) {
 }
 
 // 0.16.3: what a tab's new URL does to its share: kept (same origin), carried (another host of the same site, see
-// carrySite; needs host access there, which a share asks for as *://*.site/*), or revoked as before.
+// carrySite; needs host access there, which a share asks for as https://*.site/*), or revoked as before.
 async function settleShare(tabId, url, policy) {
   const share = (await getShares())[tabId];
   const why = revokeReason(share, url, policy);
@@ -2277,6 +2277,10 @@ async function popupMessage(msg) {
     case "clearPendingShare": return pendingOp(async () => {
       const p = await getPendingShare();
       if (p && (msg.tabId == null || p.tabId === msg.tabId)) await clearPendingShare();
+      // 0.16.4: Chrome refused the request itself (no prompt shown); keep the reason in the activity panel.
+      if (msg.error && p && p.tabId === msg.tabId) {
+        await auditAdd({ op: "share-request", tab: p.tabId, origin: p.origin, outcome: `refused: ${String(msg.error).slice(0, 160)}` });
+      }
       return { ok: true };
     });
     // The popup opened: Chrome's prompt is closed, so apply the choice if it was allowed, else drop it.

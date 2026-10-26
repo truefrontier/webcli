@@ -62,6 +62,25 @@ def tokenish(value: str) -> bool:
     return bool(_OPAQUE.match(value)) and any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
 
 
+_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+){3,}(?:\.[a-z0-9]{1,5})?$")
+
+
+def slugish(segment: str) -> bool:
+    """A readable URL path slug ("mit-report-95-percent-ai-pilots-failing"), not a token: lowercase, 4+ hyphenated
+    parts, each short (<= 12), and most of them plain words of 2+ letters. Random ids with dashes fail it: their
+    parts mix letters and digits (beyond short words like q3, v2) or run long. Only redact_url's path segments use this; query values and free text
+    still go through tokenish. Trailing sentence punctuation (a URL at the end of an error message) is ignored."""
+    segment = segment.rstrip(".,;:!?)")
+    if not _SLUG.match(segment):
+        return False
+    parts = segment.rsplit(".", 1)[0].split("-") if "." in segment else segment.split("-")
+    if any(len(part) > 12 for part in parts):
+        return False
+    words = sum(1 for part in parts if part.isalpha() and len(part) >= 2)
+    mixed = sum(1 for part in parts if not part.isalpha() and not part.isdigit() and len(part) > 3)  # q3, v2, 4k ok
+    return words * 3 >= len(parts) * 2 and mixed == 0
+
+
 # Hosts whose links are signed grants in the path or query: keep only the host. ChatGPT's file CDN and Azure blobs;
 # Google's signed image links (lh3 /gg/, /gg-dl/, /rd-gg-dl/...).
 _SIGNED_HOST = re.compile(
@@ -79,7 +98,7 @@ def redact_url(url: str) -> str:
     if _SIGNED_HOST.fullmatch(parts.hostname or ""):
         return f"{parts.scheme}://{host}/{REDACTED}" if parts.scheme else f"//{host}/{REDACTED}"
     netloc = f"{REDACTED}@{host}" if "@" in parts.netloc else parts.netloc
-    path = "/".join(REDACTED if tokenish(seg) or seg.lower().startswith("eyj") else seg
+    path = "/".join(REDACTED if (tokenish(seg) and not slugish(seg)) or seg.lower().startswith("eyj") else seg
                     for seg in parts.path.split("/"))
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     signed = any(k.lower() in SIGNED_PARAMS for k, _ in pairs)
