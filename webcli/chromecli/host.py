@@ -105,6 +105,14 @@ def _target_summary(target: Any) -> str:
     return ""
 
 
+def _brief(el: dict) -> str:
+    """tag#id[role] of an element description, for the audit line (no names or text)."""
+    tag = re.sub(r"[^a-z0-9-]", "", str(el.get("tag") or "?").lower())[:16] or "?"
+    ident = f"#{redact_text(str(el['id']))[:40]}" if el.get("id") else ""
+    role = f"[{redact_text(str(el['role']))[:20]}]" if el.get("role") else ""
+    return (tag + ident + role).replace(" ", "_")
+
+
 def _grant_summary(args: dict) -> str:
     """One grant's fields for the audit line (values only as digests)."""
     parts = [f"grant_op={redact_text(str(args.get('op')))[:10]} origin={redact_url(str(args.get('origin')))}"]
@@ -543,6 +551,10 @@ class Host:
                      f" narrowed={narrowed or '-'}")
             if jc.get("reason"):
                 gate += f" jev_reason={json.dumps(redact_text(str(jc['reason']))[:300], ensure_ascii=False)}"
+        res = info.get("resolved") if isinstance(info.get("resolved"), dict) else None
+        if res and isinstance(res.get("from"), dict):  # 0.17.1: a non-HTML click target and what it resolved to
+            el = info.get("element") if isinstance(info.get("element"), dict) else {}
+            gate += f" resolved={_brief(el)}<-{_brief(res['from'])} via={redact_text(str(res.get('via')))[:20]}"
         opened = info.get("openedTabs") if isinstance(info.get("openedTabs"), list) else []
         if opened:
             gate += " opened=" + ",".join(f"{o.get('id')}:{o.get('share') or 'none'}" for o in opened[:10] if isinstance(o, dict))

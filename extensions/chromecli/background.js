@@ -1210,7 +1210,9 @@ async function pageOp(op, args, req) {
   if (jevFailed) extra.push(...fallbackFor(kind, element));
   // Jev only adds gates; the heuristic ones always stay.
   const reasons = mergeReasons(gateReasons(op, element, { key: args.key }), extra);
-  const where = { tab: tab.id, origin, ...fwhere, element, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
+  // 0.17.1: a click on a non-HTML target (an SVG icon) acts on, and is gated as, its resolved HTML element.
+  const rx = d.resolved ? { resolved: d.resolved } : {};
+  const where = { tab: tab.id, origin, ...fwhere, element, ...rx, reasons, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}) };
   let confirmedInBrowser = false;
   // A pre-approval grant can answer the gate, unless a reason is never skippable (secret / payment fields, eval).
   const g = reasons.length && canSkip(reasons)
@@ -1237,7 +1239,7 @@ async function pageOp(op, args, req) {
   const t0 = Date.now();
   const done = await inject(tab, origin, pageAction, { ...spec, mode: "do", value: args.value, fingerprint: d.fingerprint },
     { afterDispatch: true, ...fopt });
-  const out = { tab: tab.id, origin, ...fwhere, op, element, gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true,
+  const out = { tab: tab.id, origin, ...fwhere, op, element, ...rx, gated: reasons.length > 0, reasons, confirmedInBrowser, ...grantResult(g.used), dispatched: true,
     verified: null, jev, tabKind: kind, ...(jevInfo ? { jevInfo } : {}), ...(found ? { found } : {}), ...(done.selected ? { selected: done.selected } : {}), ...(done.effect ? { effect: done.effect } : {}) };
   // The page went away mid-call (a click that navigates can do that): it was dispatched, the result is unknown.
   if (done.lost) out.resultLost = String(done.lost).slice(0, 200);
@@ -1735,7 +1737,7 @@ async function pageProbeOp(args) {
   const jev = await getJev();
   const jevApplies = jev.configured && (op === "click" || op === "press") && args.jev !== "off";
   const bar = kind === "act" ? jev.actSafeFloor : jev.floor;
-  return { ...base, ...(pframe.frameId ? { frameId: pframe.frameId, frameOrigin: pframe.frameOrigin } : {}), found: true, element: d.element, gateEstimate: {
+  return { ...base, ...(pframe.frameId ? { frameId: pframe.frameId, frameOrigin: pframe.frameOrigin } : {}), found: true, element: d.element, ...(d.resolved ? { resolved: d.resolved } : {}), gateEstimate: {
     heuristic, wouldPrompt: heuristic.length ? true : jevApplies ? "depends_on_jev" : false,
     ...(jevApplies ? { jev: `Jev classifies at run time: no Jev prompt if it is >= ${bar} sure the ${op} is safe (${kind} tab).` } : {}),
     grantSkippable: heuristic.length ? canSkip(heuristic) : null } };

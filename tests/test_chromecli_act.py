@@ -260,3 +260,18 @@ def test_share_carried_event_is_logged(home):
     assert ("event=share_changed tab=5 origin=https://developer.example.com level=act paused=None reason=same_site "
             "from=https://connect.example.com site=example.com") in log
     assert "bad site" not in log
+
+
+def test_resolved_click_target_is_in_the_audit_line(ext, home):
+    # 0.17.1: a click on an <svg> icon acts on its button; the log names both (tag#id[role] only, no names).
+    ext(lambda req: {"ok": True, "result": {
+        "tab": 7, "origin": FORM, "op": "click", "dispatched": True, "gated": False, "reasons": [],
+        "element": {"tag": "button", "id": "add-user-btn", "role": "button", "name": "Add user"},
+        "resolved": {"via": "clickable_ancestor", "from": {"tag": "svg", "id": "add-user-btn-icon", "role": None,
+                                                           "name": "secret label"}}}}).start()
+    r = run("click", "--tab", "7", "--selector", "svg#add-user-btn-icon", "--expect-origin", FORM, "--confirm")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["resolved"]["via"] == "clickable_ancestor"
+    log = (home / "logs" / "chromecli.log").read_text()
+    assert "resolved=button#add-user-btn[button]<-svg#add-user-btn-icon via=clickable_ancestor" in log
+    assert "secret label" not in log
