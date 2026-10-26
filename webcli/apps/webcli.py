@@ -8,6 +8,7 @@ import click
 from webcli import __version__, sites
 from webcli.apps.common import doctor_command, identity_group, serve_command
 from webcli.core import output
+from webcli.feed.cli import group as feed_group
 from webcli.core.output import EXIT_OK, agent_output_options, emit_json, emit_rows, resolve_format
 from webcli.sites.llm import env_help
 
@@ -22,6 +23,8 @@ NOTES = [
     "phone by QR code (a person scans it), not a Google account.",
     "Every command that opens Chrome runs it headless: no window, no Dock icon, no focus change. Only `identity login` "
     "and an explicit --headed show a window, and login needs a person.",
+    "`webcli feed pull` reads the feed sites (youtube, gnews, perplexity, linkedin; x by file) into one "
+    "newsfeed.items/1 file, signed in first with a public fallback; `webcli feed agent-help` has the rest.",
     "`identity` and `doctor` are shared with `llmcli` (one data home ~/.webcli); either binary manages the same store.",
     "`doctor` reports the data home's H4 hardening (permissions, Time Machine, Spotlight, .nosync), FileVault, and "
     "each identity's profile, daemon, and sign-in (checked headless; --no-browser skips that).",
@@ -64,6 +67,7 @@ def build() -> click.Group:
 
     for site in sites.of_kind("data"):
         main.add_command(site.cli(), site.name)
+    main.add_command(feed_group)
     main.add_command(identity_group())
     main.add_command(doctor_command())
     main.add_command(serve_command())

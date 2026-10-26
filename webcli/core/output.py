@@ -440,6 +440,20 @@ def agent_output_options(*, formats: tuple[str, ...] = ("table", "md", "json"), 
     return decorator
 
 
+def json_flag(f: Callable) -> Callable:
+    """--json: the same as --format json. Put it above agent_output_options (it sets fmt)."""
+    import functools
+
+    @click.option("--json", "as_json", is_flag=True, help="JSON output (same as --format json).")
+    @functools.wraps(f)
+    def wrapper(*args, as_json=False, **kwargs):
+        if as_json:
+            kwargs["fmt"] = "json"
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
 def write_options(f: Callable) -> Callable:
     """--dry-run (the default for every write verb) / --confirm (alias --yes): the plumbing for future data-site
     writes. A verb calls confirm_write(confirm, plan) and does the write only when it returns True."""

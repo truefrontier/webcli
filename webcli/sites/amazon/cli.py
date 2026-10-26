@@ -3,12 +3,12 @@ own signed-in, hidden Chrome. Built so an agent can match a card charge (say $33
 
 from __future__ import annotations
 
-import functools
 from datetime import date
 
 import click
 
 from webcli.core.output import (
+    json_flag,
     EXIT_AUTH,
     EXIT_NOT_FOUND,
     EXIT_OK,
@@ -61,19 +61,6 @@ WRITES = ["Nothing. HARD read-only: no purchase, cart change, return, cancellati
 
 group = data.site_group(SITE, "Amazon.com: orders, card transactions, match a charge, tracking, wish lists. HARD "
                               "read-only (unofficial). Identity amazon:default.")
-
-
-def json_flag(f):
-    """--json: the same as --format json."""
-
-    @click.option("--json", "as_json", is_flag=True, help="JSON output (same as --format json).")
-    @functools.wraps(f)
-    def wrapper(*args, as_json=False, **kwargs):
-        if as_json:
-            kwargs["fmt"] = "json"
-        return f(*args, **kwargs)
-
-    return wrapper
 
 
 def _order_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:

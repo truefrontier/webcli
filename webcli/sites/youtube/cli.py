@@ -19,6 +19,7 @@ from webcli.core.output import (
     emit_csv,
     emit_json,
     emit_md,
+    json_flag,
     note_showing,
     resolve_format,
     rows_table,
@@ -51,6 +52,12 @@ NOTES = [
     "YYYY-MM-DD or ISO 8601 (local time when no offset).",
     "Rows: title, channel, channelUrl, videoId, url, watchedAt (ISO 8601), watchedAtPrecision (exact|day), "
     "durationSec (YouTube source only), isShort, source (myactivity|youtube-history). No history exits 3.",
+    "subs: every channel you subscribe to (rows: id = channel id, url, title, author = @handle, snippet, thumbnail, "
+    "metrics.subscribers). uploads (FEsubscriptions, newest first; --since 48h|3d|1w|ISO) and home (FEwhat_to_watch, "
+    "your recommendations): rows source, id (videoId), url, title, author (channel), channelUrl, publishedAt "
+    "(approximate, from YouTube's \"2d ago\"), publishedText, snippet, thumbnail, metrics {views, durationSec}, isShort. "
+    "Shorts are DROPPED by default (Shorts shelves, Short items, /shorts/ URLs); --include-shorts keeps them. "
+    "Pages are read 1s apart.",
     "`playlist create --title T VIDEO...` takes video ids or links (youtu.be, watch?v=, /shorts/, /embed/, /live/), "
     "in playlist order; a bad one or one given twice exits 2. --privacy defaults to private.",
 ]
@@ -65,7 +72,8 @@ WRITES = [
     "playlistId, url}). 8 (error \"sent_unverified\") when the create went out but the read-back didn't match or "
     "YouTube's answer was unreadable (playlistId may be null): check your playlists instead of creating it again. 5 "
     "when the guard passed nothing (nothing was created).",
-    "Never: likes, subscriptions, comments, other playlist edits (adding to or deleting a playlist), history pause or "
+    "subs, uploads, and home only read (browse FEchannels / FEsubscriptions / FEwhat_to_watch).",
+    "Never: likes, subscriptions, \"not interested\", watch-history writes, comments, other playlist edits (adding to or deleting a playlist), history pause or "
     "clear.",
 ]
 
@@ -143,6 +151,102 @@ def history_cmd(limit, since, source, fmt, compact, select, quiet, as_csv) -> No
     else:
         rows_table("YouTube watch history", [{c: _cell(r, c) for c in COLUMNS} for r in rows], COLUMNS)
     note_showing(len(rows), quiet=quiet, noun="watches")
+    raise SystemExit(EXIT_OK)
+
+
+FEED_FIELDS = ("source", "id", "url", "title", "author", "channelUrl", "publishedAt", "publishedText", "snippet",
+               "thumbnail", "metrics", "isShort", "auth")
+FEED_COMPACT = ("publishedText", "author", "title", "url")
+FEED_COLUMNS = ["age", "channel", "title", "views"]
+SUB_FIELDS = ("source", "id", "url", "title", "author", "publishedAt", "snippet", "thumbnail", "metrics", "auth")
+SUB_COMPACT = ("title", "author", "url")
+
+
+def _emit_rows(title: str, rows: list[dict], fields, compact_fields, columns, cell, *, fmt, compact, select, quiet,
+               as_csv, noun) -> None:
+    shown = select_fields(rows, select) if select else [{k: r.get(k) for k in (compact_fields if compact else fields)}
+                                                         for r in rows]
+    out = "csv" if as_csv else resolve_format(fmt)
+    if out == "csv":
+        emit_csv(shown)
+    elif out == "json":
+        emit_json(shown)
+    elif out == "md":
+        emit_md(shown)
+    else:
+        rows_table(title, [{c: cell(r, c) for c in columns} for r in rows], columns)
+    note_showing(len(rows), quiet=quiet, noun=noun)
+
+
+def _feed_cell(row: dict, col: str) -> str:
+    if col == "age":
+        return row.get("publishedText") or ""
+    if col == "channel":
+        return truncate(row.get("author"), 24)
+    if col == "title":
+        return truncate(row.get("title"), 60)
+    views = (row.get("metrics") or {}).get("views")
+    return "" if views is None else f"{views:,}"
+
+
+def _sub_cell(row: dict, col: str) -> str:
+    if col == "subscribers":
+        n = (row.get("metrics") or {}).get("subscribers")
+        return "" if n is None else f"{n:,}"
+    return truncate(row.get(col), 40)
+
+
+@group.command("subs")
+@json_flag
+@agent_output_options()
+def subs_cmd(fmt, compact, select, quiet, as_csv) -> None:
+    """The channels you subscribe to (READ-ONLY). Exit 3 when there are none."""
+    rows = data.call(SITE, "subs")
+    if not rows:
+        die("No subscriptions found.", EXIT_NOT_FOUND)
+    _emit_rows("YouTube subscriptions", rows, SUB_FIELDS, SUB_COMPACT, ["title", "author", "subscribers"], _sub_cell,
+               fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv, noun="channels")
+    raise SystemExit(EXIT_OK)
+
+
+def _since_text(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    from webcli.sites.youtube.feeds import parse_since as feed_since
+
+    try:
+        feed_since(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+    return value
+
+
+@group.command("uploads")
+@click.option("--since", default=None, callback=_since_text, help="Only uploads newer than 48h / 3d / 1w or an ISO date.")
+@click.option("--limit", default=DEFAULT_LIMIT, show_default=True, type=click.IntRange(1, 500), help="Max videos.")
+@click.option("--include-shorts", is_flag=True, help="Keep Shorts (dropped by default).")
+@json_flag
+@agent_output_options()
+def uploads_cmd(since, limit, include_shorts, fmt, compact, select, quiet, as_csv) -> None:
+    """New videos from your subscriptions, newest first, no Shorts by default (READ-ONLY). Exit 3 when none."""
+    rows = data.call(SITE, "uploads", limit, since, include_shorts)
+    if not rows:
+        die("No subscription uploads found" + (f" since {since}." if since else "."), EXIT_NOT_FOUND)
+    _emit_rows("YouTube subscription uploads", rows, FEED_FIELDS, FEED_COMPACT, FEED_COLUMNS, _feed_cell, fmt=fmt,
+               compact=compact, select=select, quiet=quiet, as_csv=as_csv, noun="videos")
+    raise SystemExit(EXIT_OK)
+
+
+@group.command("home")
+@click.option("--limit", default=DEFAULT_LIMIT, show_default=True, type=click.IntRange(1, 500), help="Max videos.")
+@click.option("--include-shorts", is_flag=True, help="Keep Shorts and Shorts shelves (dropped by default).")
+@json_flag
+@agent_output_options()
+def home_cmd(limit, include_shorts, fmt, compact, select, quiet, as_csv) -> None:
+    """YouTube's home recommendations, no Shorts by default (READ-ONLY). Exit 3 when there are none."""
+    rows = data.call(SITE, "home", limit, include_shorts)
+    if not rows:
+        die("YouTube home showed no videos.", EXIT_NOT_FOUND)
+    _emit_rows("YouTube home", rows, FEED_FIELDS, FEED_COMPACT, FEED_COLUMNS, _feed_cell, fmt=fmt, compact=compact,
+               select=select, quiet=quiet, as_csv=as_csv, noun="videos")
     raise SystemExit(EXIT_OK)
 
 

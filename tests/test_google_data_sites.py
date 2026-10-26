@@ -41,7 +41,7 @@ SITES = ("keep", "photos", "youtube", "recorder", "contacts", "gmail", "notebook
 VERBS = {
     "keep": {"list", "get", "info", "search", "status", "agent-help"},
     "photos": {"list", "search", "info", "albums", "download", "status", "agent-help"},
-    "youtube": {"history", "status", "playlist", "agent-help"},
+    "youtube": {"history", "status", "playlist", "subs", "uploads", "home", "agent-help"},
     "recorder": {"list", "info", "search", "transcript", "download", "sync", "status", "agent-help"},
     "contacts": {"list", "get", "search", "other", "labels", "export", "status", "label", "agent-help"},
     "gmail": {"filters", "status", "agent-help"},
@@ -74,6 +74,9 @@ WIRING = [
     ("photos", "status", [], RECORD),
     ("youtube", "history", [], {"--limit", "--since", "--source"} | ROWS),
     ("youtube", "status", [], RECORD),
+    ("youtube", "subs", [], {"--json"} | ROWS),
+    ("youtube", "uploads", [], {"--since", "--limit", "--include-shorts", "--json"} | ROWS),
+    ("youtube", "home", [], {"--limit", "--include-shorts", "--json"} | ROWS),
     ("recorder", "list", [], {"--id-only"} | ROWS),
     ("recorder", "info", ["RECORDING_ID"], ROWS),
     ("recorder", "search", ["QUERY"], {"--id-only"} | ROWS),
