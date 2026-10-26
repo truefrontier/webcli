@@ -325,3 +325,74 @@ async def create_playlist(title: str, video_ids: list[str], privacy: str = "priv
         except Exception:
             pass
     return out
+
+
+# Feed reads (subs, uploads, home): browse FEchannels / FEsubscriptions / FEwhat_to_watch and their continuations,
+# through the same read-only guard (browse is a read POST). Pages are FEED_PAUSE_S apart.
+
+FEED_PAUSE_S = 1.0
+FEED_MAX_PAGES = 10
+
+
+async def subs(*, headed: bool = False) -> list[dict]:
+    """Every channel you subscribe to (FEchannels: one page)."""
+    from webcli.sites.youtube.feeds import channels
+
+    async with browser.site_page(POLICY) as page:
+        if not await signed_in(page):
+            raise AuthRequired("Not signed in to YouTube.")
+        return channels(await yt_call(page, "browse", {"browseId": "FEchannels"}))
+
+
+async def _video_feed(browse_id: str, limit: int, since: str | None, include_shorts: bool) -> list[dict]:
+    import asyncio
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    from webcli.sites.youtube.feeds import UPLOADS_SKIP, parse_since, videos
+    from webcli.sites.youtube.parse import continuation_token
+
+    try:
+        cutoff = parse_since(since)
+    except ValueError as exc:
+        raise UsageError(str(exc)) from None
+    now = _dt.now(_tz.utc)
+    rows: list[dict] = []
+    seen: set[str] = set()
+    async with browser.site_page(POLICY) as page:
+        if not await signed_in(page):
+            raise AuthRequired("Not signed in to YouTube.")
+        body: dict = {"browseId": browse_id}
+        tokens: set[str] = set()
+        for n in range(FEED_MAX_PAGES):
+            if n:
+                await asyncio.sleep(FEED_PAUSE_S)
+            resp = await yt_call(page, "browse", body)
+            reached = False
+            skip = UPLOADS_SKIP if browse_id == "FEsubscriptions" else ()
+            for row in videos(resp, now, include_shorts=include_shorts, skip_shelves=skip):
+                if row["id"] in seen:
+                    continue
+                if cutoff and row["publishedAt"] and row["publishedAt"] < cutoff.astimezone(_tz.utc).isoformat(
+                        timespec="seconds").replace("+00:00", "Z"):
+                    reached = True
+                    continue
+                seen.add(row["id"])
+                rows.append(row)
+            token = continuation_token(resp)
+            if len(rows) >= limit or (reached and browse_id == "FEsubscriptions") or not token or token in tokens:
+                break
+            tokens.add(token)
+            body = {"continuation": token}
+    return rows[:limit]
+
+
+async def uploads(limit: int = 50, since: str | None = None, include_shorts: bool = False, *,
+                  headed: bool = False) -> list[dict]:
+    """New videos from your subscriptions, newest first (FEsubscriptions). Shorts dropped unless include_shorts."""
+    return await _video_feed("FEsubscriptions", limit, since, include_shorts)
+
+
+async def home(limit: int = 50, include_shorts: bool = False, *, headed: bool = False) -> list[dict]:
+    """YouTube's home recommendations (FEwhat_to_watch). Shorts shelves and Shorts dropped unless include_shorts."""
+    return await _video_feed("FEwhat_to_watch", limit, None, include_shorts)

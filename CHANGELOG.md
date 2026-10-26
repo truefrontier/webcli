@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.17.0 / llmcli 0.7.0 (2026-10-26)
+
+### Added
+
+- **`webcli perplexity status | discover | login`**: Perplexity Discover, read-only (GETs of `/discover`,
+  `/rest/discover/feed`, `/rest/discover/topics`, and `/api/auth/session` only: no query, like, follow, or
+  bookmark). `discover [--topic top|tech|science|finance|arts|sports] [--limit 30]` pages 20 at a time, 1.5 s apart.
+  New identity `perplexity:default`; `webcli perplexity login` is for a person (visible window).
+- **`webcli gnews status | foryou [--section ...] [--limit 30]`**: Google News For you as rendered, as
+  google:default. GETs only (no follow, hide, or save RPC leaves). Rows link to news.google.com (the publisher URL is
+  not resolved).
+- **`webcli youtube subs | uploads [--since 48h] [--limit 50] | home [--limit 50]`**: your subscriptions, their new
+  videos newest first, and your home recommendations. Shorts are left out unless `--include-shorts`. Read-only
+  browse calls.
+- **`webcli feed pull | show | schedule | push`**: pulls youtube (uploads + home), gnews, perplexity, and linkedin
+  (and an X file with `--x-file`) through their own read commands into one `newsfeed.items/1` file
+  (`~/.webcli/feeds/YYYY-MM-DD-HHMM.json`, atomic, 0600), with a `sources` block of per-site status, auth, and
+  needs_login hints. A failing site is skipped and logged (partial: exit 5). `schedule install [--at 05:30,12:30]
+  [--no-load]` writes the `ai.truefrontier.webcli.feed` LaunchAgent; `push --to URL [--token-env NAME]` PUTs the
+  latest file. Config: `~/.webcli/feed.toml`. See [docs/feed.md](docs/feed.md).
+- **Signed in first, public fallback** is the shared default for feed adapters: each reads as its identity and
+  falls back to the public feed only when that identity is missing or expired, marking rows `auth: "public"` and
+  saying how a person signs in. Perplexity and Google News have public feeds; YouTube and LinkedIn exit 4.
+- `--json` (same as `--format json`) is now shared (`webcli.core.output.json_flag`).
+- Version 0.17.0 for webcli, the chromecli package (and its pin), and the extension; truefrontier-llmcli / llmcli
+  0.6.5 -> 0.7.0, pinned to truefrontier-webcli==0.17.0.
+
 ## 0.16.4 / llmcli 0.6.5 (2026-10-26)
 
 ### Fixed
