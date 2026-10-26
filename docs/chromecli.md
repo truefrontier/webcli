@@ -90,8 +90,12 @@ chromecli agent-help [--format json]
 
 - Kevin shares a tab from the toolbar popup's Off / Read / Act switch: **Read** (Share-read, badge R, blue) or **Act**
   (Share-act, badge A, orange: read and act); **Off** unshares. The popup also lists every shared tab
-  (unshare one with its x). Sharing asks Chrome for host access to the tab's whole **site**, `*://*.SITE/*`
-  (`optional_host_permissions`; no blanket host permission; an IP or `localhost` gets just its host). Clicking
+  (unshare one with its x). Sharing asks Chrome for host access to the tab's whole **site**, `https://*.SITE/*`
+  (plus `http://*.SITE/*` for an http tab; an IP or `localhost` gets just its host; `optional_host_permissions`, no
+  blanket host permission). 0.16.4: every requested origin is scheme-specific, because Chrome only accepts an origin
+  that one manifest entry (`http://*/*` or `https://*/*`) contains: 0.16.3's `*://*.SITE/*` was refused without a
+  prompt. If Chrome refuses a request, the popup says so with Chrome's reason and the activity panel logs
+  `share-request refused: ...`; a Cancel says "Chrome didn't grant access to *.SITE". Clicking
   **Allow** in that prompt finishes the share; no second click (0.16.2: the worker keeps the choice while the prompt
   is open and applies it on the grant; **Cancel** leaves the tab as it was). Shares are (tab, origin, level) in
   `chrome.storage.session`: cleared when Chrome restarts, revoked when the tab navigates to another site or a denied

@@ -64,7 +64,8 @@ NOTES = [
     "--file PATH (repeatable; .md, .markdown, .txt, .pdf, up to 50 MB each), --url URL (repeatable; web pages and "
     "YouTube), --urls-file FILE (one URL per line; # comments; - for stdin), --text TEXT --title T (pasted text; "
     "--text - reads stdin). Each source is sent once, in that order (files, URLs, text); one that fails gets its "
-    "error and the rest still go (exit 5 if any failed; the stderr error lists the failed inputs, JSON `failed`). "
+    "error and the rest still go (exit 5 if any failed; the stderr error lists the failed inputs; JSON stdout and the "
+    "JSON error both carry `failed`). "
     "A page NotebookLM won't import (paywall, bot block: RPC code 3/5/9) fails with \"NotebookLM couldn't import "
     "this source (code N)\" and a suggestion: upload a PDF or paste the text instead.",
     "Without --confirm `create` and `source add` are dry runs: they print the plan ({dryRun: true, ...}, `source add` "
@@ -376,10 +377,12 @@ FAILED_SHOWN = 10  # inputs named in the summary line (JSON `failed` lists them 
 
 def _finish(result: dict, fmt, heading: str, *, wait: bool, timeout: int, interval: int) -> None:
     finished = _wait_sources(result, timeout=timeout, interval=interval) if wait and result["sources"] else True
-    _emit_added(result, fmt, heading)
     failed = [r for r in result["sources"] if r.get("error") or r["status"] == "error"]
+    inputs = [r["input"] for r in failed]
+    # 0.16.4: the failed inputs on stdout too (top-level `failed`, [] when none), not only in the stderr error.
+    result["failed"] = inputs
+    _emit_added(result, fmt, heading)
     if failed:
-        inputs = [r["input"] for r in failed]
         shown = ", ".join(inputs[:FAILED_SHOWN]) + (f", and {len(inputs) - FAILED_SHOWN} more"
                                                     if len(inputs) > FAILED_SHOWN else "")
         die(f"{len(failed)} of {len(result['sources'])} sources failed: {shown}.", EXIT_API, failed=inputs,

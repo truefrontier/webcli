@@ -388,7 +388,7 @@ def test_create_confirm_prints_id_and_url(calls):
     seen, _ = calls
     result = run("create", "My notebook", "--confirm", "--json")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == {"notebook_id": NEW_NB, "title": "My notebook", "url": "u", "sources": []}
+    assert json.loads(result.stdout) == {"notebook_id": NEW_NB, "title": "My notebook", "url": "u", "sources": [], "failed": []}
     assert seen == [("create", ("My notebook", []), {"confirm": True, "headed": False})]
 
 
@@ -440,6 +440,8 @@ def test_the_failure_summary_names_the_failed_inputs(calls, monkeypatch):
               "--url", "https://blocked.example.net/b", "--confirm", "--json")
     assert out.exit_code == 5
     assert json.loads(out.stdout)["sources"][1]["error"].startswith("NotebookLM couldn't import this source")
+    # 0.16.4: stdout's JSON has the same top-level `failed` list as the stderr error.
+    assert json.loads(out.stdout)["failed"] == ["https://paywalled.example.com/a", "https://blocked.example.net/b"]
     error = json.loads(out.stderr.strip().splitlines()[-1])
     assert error["error"] == ("2 of 3 sources failed: https://paywalled.example.com/a, "
                               "https://blocked.example.net/b.")
@@ -456,6 +458,26 @@ def test_a_long_failure_summary_is_shortened_but_json_lists_all(calls):
     error = json.loads(out.stderr.strip().splitlines()[-1])
     assert out.exit_code == 5 and error["error"].endswith("https://site9.example.com/, and 2 more.")
     assert len(error["failed"]) == 12
+    assert len(json.loads(out.stdout)["failed"]) == 12
+
+
+def test_json_stdout_has_an_empty_failed_list_when_nothing_failed(calls):
+    _, answers = calls
+    answers["add_sources"] = lambda *a, **k: json.loads(json.dumps(ADDED))
+    out = run("source", "add", NB, "--url", "https://example.com/", "--confirm", "--json")
+    assert out.exit_code == 0, out.output
+    assert json.loads(out.stdout)["failed"] == []
+
+
+def test_a_long_article_slug_is_not_redacted_in_the_failure_summary(calls):
+    _, answers = calls
+    url = "https://news.example.com/2025/08/18/study-finds-95-percent-of-ai-pilots-at-companies-failing-cfo"
+    bad = {"kind": "url", "type": "web_page", "id": None, "title": None, "status": "failed", "error": "x", "input": url}
+    answers["add_sources"] = lambda *a, **k: dict(ADDED, sources=[bad])
+    out = run("source", "add", NB, "--url", url, "--confirm", "--json")
+    error = json.loads(out.stderr.strip().splitlines()[-1])
+    assert error["failed"] == [url] and error["error"] == f"1 of 1 sources failed: {url}."
+    assert json.loads(out.stdout)["failed"] == [url]
 
 
 def test_source_add_validates_before_anything_opens(calls, tmp_path):

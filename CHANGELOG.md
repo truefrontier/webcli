@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.16.4 / llmcli 0.6.5 (2026-10-26)
+
+### Fixed
+
+- chromecli: **sharing a tab failed on every site with a registrable domain** in 0.16.3 ("Chrome didn't grant access
+  to this site ...; not shared", with no Chrome prompt shown). The popup asked for `*://*.apple.com/*`; Chrome only
+  accepts an origin that ONE `optional_host_permissions` entry contains, and neither `http://*/*` nor `https://*/*`
+  contains a `*://` (http and https) pattern, so `chrome.permissions.request` threw and the popup read it as a no.
+  Shares now ask for `https://*.SITE/*` (and `http://*.SITE/*` too for an http tab), which also covers the apex
+  (`apple.com`). The request still runs straight from the click (nothing awaited first). Accepting a policy that
+  adds an allow-list host pattern had the same latent `*://` problem; it now asks for http + https.
+- The share-failure message names the real domain: "Chrome didn't grant access to *.apple.com (and
+  asdescribed.truefrontier.app for its app frames); not shared." instead of the literal "this site and its
+  frame_act_allow app sites" (Act also asks for the `frame_act_allow` origins). When Chrome refuses the request
+  itself, the popup says so with Chrome's reason, and the activity panel logs `share-request refused: ...`.
+- notebooklm: a readable article slug in a URL path (`.../2025/08/18/study-finds-95-percent-of-ai-pilots-failing`)
+  is no longer redacted as a token in the stderr failure summary; dashed hex ids, letter-digit chunks, opaque
+  strings, query values and signed links still are.
+
+### Added
+
+- notebooklm `create` / `source add` `--json`: a top-level `failed` array on stdout (every failed input, `[]` when
+  none), the same list the stderr JSON error carries.
+- `extensions/chromecli/share-request.js`: what a share requests, checked in tests against the manifest with
+  Chrome's containment rule (the test harness now models it, including `https://*/*`).
+- Version 0.16.4 for webcli, the chromecli package (and its pin), and the extension; truefrontier-llmcli / llmcli
+  0.6.4 -> 0.6.5, pinned to truefrontier-webcli==0.16.4. Reload the extension, then share again.
+
 ## 0.16.3 / llmcli 0.6.4 (2026-10-24)
 
 ### Changed

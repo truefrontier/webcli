@@ -35,7 +35,9 @@ export function grantedCovers(granted, want) {
     const m = PAT.exec(g);
     if (!m) continue;
     const schemeOk = m[1] === "*" ? true : m[1] === w[1];
-    const hostOk = m[2] ? (w[3] === m[3] || w[3].endsWith(`.${m[3]}`)) : (!w[2] && w[3] === m[3]);
+    // "https://*/*" (host "*") matches every host, like the manifest's optional_host_permissions.
+    const hostOk = m[3] === "*" && !m[2] ? true
+      : m[2] ? (w[3] === m[3] || w[3].endsWith(`.${m[3]}`)) : (!w[2] && w[3] === m[3]);
     if (schemeOk && hostOk && (m[1] === "*" || w[1] !== "*")) return true;
   }
   return false;

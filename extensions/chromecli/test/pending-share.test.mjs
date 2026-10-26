@@ -174,3 +174,17 @@ test("popup: Act / Read still asks Chrome straight from the click, after handing
   assert.ok(body.includes('type: "clearPendingShare"'), "Cancel clears it");
   assert.ok(src.includes('send({ type: "applyPendingShare" })'), "the popup applies a pending choice when it opens");
 });
+
+test("0.16.4: Chrome refusing the request itself (no prompt) is kept in the activity panel; a plain Cancel isn't", async () => {
+  const h = await loadBackground();
+  await pick(h, "act");
+  await h.message({ type: "clearPendingShare", tabId: 2 });
+  assert.ok(!(await audits(h)).includes("share-request"));
+  await pick(h, "act");
+  await h.message({ type: "clearPendingShare", tabId: 2, error: "Only permissions specified in the manifest may be requested." });
+  const { audit } = await h.chrome.storage.session.get("audit");
+  const row = audit.find((a) => a.op === "share-request");
+  assert.equal(row.origin, ORIGIN);
+  assert.equal(row.outcome, "refused: Only permissions specified in the manifest may be requested.");
+  assert.equal(pending(h), null);
+});

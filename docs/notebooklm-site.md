@@ -36,7 +36,7 @@ All of them take `--json` (same as `--format json`) and webcli's usual `--format
 
 ```bash
 webcli notebooklm create "Q3 research"                                   # dry run: prints the plan, exits 2
-webcli notebooklm create "Q3 research" --confirm --json                  # {"notebook_id", "title", "url", "sources": []}
+webcli notebooklm create "Q3 research" --confirm --json                  # {"notebook_id", "title", "url", "sources": [], "failed": []}
 webcli notebooklm create "Q3 research" --file notes.md --url https://example.com/a --confirm --wait
 webcli notebooklm source add NOTEBOOK --file a.md --file b.txt --file paper.pdf --confirm --wait --json
 webcli notebooklm source add NOTEBOOK --url https://example.com/a --url https://youtu.be/VIDEO --confirm
@@ -53,7 +53,10 @@ When NotebookLM refuses to import a source (RPC code 3, 5, or 9: a paywalled or 
 unreadable input), that source is `failed` with an error such as "NotebookLM couldn't import this source (code 9).
 The page may be paywalled or blocking imports. Try uploading a PDF or pasting the text instead." Other codes keep
 the "API may have changed" hint. When any source fails, the run exits 5 and the stderr error names the failed
-inputs (`"2 of 5 sources failed: URL1, URL2."`, with all of them in the JSON `failed` list).
+inputs (`"2 of 5 sources failed: URL1, URL2."`, with all of them in the JSON error's `failed` list). 0.16.4: the
+`--json` stdout result has the same top-level `failed` array (every failed input, as given; `[]` when none), so a
+script can read it without parsing stderr. Article URLs keep their full path in that summary: a readable hyphenated
+slug is not redacted as a token any more (real tokens in paths, query values and signed links still are).
 
 Without `--confirm` (or with `--dry-run`) nothing is written and the command exits 2: `create` prints the title and
 the planned calls without opening a browser; `source add` also checks the notebook (read-only) and shows its title
