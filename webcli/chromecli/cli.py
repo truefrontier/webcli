@@ -73,7 +73,11 @@ NOTES = [
     "answer: exit 4 confirm_timeout; Pause while waiting: exit 4 paused. Never retry a declined action on your own.",
     "Post-checks: fill/type/select read the value back; --verify-url-prefix / --verify-text wait up to 10s. A check that "
     "fails after the action went out: exit 8 sent_unverified (don't repeat; read the page). Result JSON: {tab, origin, "
-    "op, element, gated, reasons, confirmedInBrowser, dispatched, verified}.",
+    "op, element, gated, reasons, confirmedInBrowser, dispatched, verified, resolved?}. "
+    "Click on a non-HTML target (an <svg> icon or <path>, 0.17.1): it acts on the closest clickable HTML ancestor "
+    "(button, a, [role=button], label, [onclick]), else the nearest HTML ancestor with the pointer/mouse/click sequence "
+    "dispatched at the icon's center; element, gates, Jev and grants describe that resolved element and "
+    "resolved {via clickable_ancestor|nearest_html|dispatch, from {tag, id, role, name}} names the original.",
     "eval is disabled (exit 7 eval_disabled): Chrome's MV3 isolated-world CSP forbids running code strings.",
     "PRE-APPROVALS (0.10.1: --user-approved + Jev scope check, no popup toggle). A bot may ONLY create a grant "
     "that quotes Kevin's own words from the current conversation "

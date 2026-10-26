@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.17.1 / llmcli 0.7.1 (2026-10-26)
+
+### Fixed
+
+- **chromecli `click` on an SVG icon** (e.g. `--selector "svg#add-user-btn-icon"`) failed every time with
+  `script_error ... el.click is not a function`: SVGElement (and SVG `<path>`, MathML) has no `.click()`. A click
+  target that isn't an HTMLElement now resolves, in the page, to:
+  1. the closest clickable HTML ancestor (`button`, `a`, `[role=button]`, `label`, `[onclick]`): the
+     pointerdown/mousedown/pointerup/mouseup sequence goes to the icon at its center, then the ancestor's own
+     `.click()` (so a button submits, a link navigates);
+  2. else the nearest HTML ancestor: the full pointerdown/mousedown/pointerup/mouseup/click MouseEvent sequence is
+     dispatched at the icon's center (the icon's own listeners fire; the click bubbles to that ancestor);
+  3. else (no HTML ancestor) the same sequence on the element alone.
+- The element that gates, Jev, grants (selector hits match the icon or its control), the confirm window, the
+  fingerprint, and the visible/disabled checks see is the **resolved** element: an icon inside "Delete account"
+  still asks first, and an icon inside a disabled button is refused. Results and `probe` carry
+  `resolved {via, from {tag, id, role, name}}`; the host audit line adds
+  `resolved=button#add-user-btn[button]<-svg#add-user-btn-icon via=clickable_ancestor` (tag, id, and role only).
+- Other ops (type, fill, select, press) are unchanged.
+- Version 0.17.1 for webcli, the chromecli package (and its pin), and the extension (**reload it** in
+  chrome://extensions: the fix is in the extension's page script); llmcli / llmcli-bare 0.7.1 pinned to
+  truefrontier-webcli==0.17.1.
+
 ## 0.17.0 / llmcli 0.7.0 (2026-10-26)
 
 ### Added

@@ -1,6 +1,6 @@
 [project]
 name = "truefrontier-llmcli"
-version = "0.7.0"
+version = "0.7.1"
 description = "Installs webcli, which provides the llmcli command (chat AIs over your own signed-in Chrome)."
 readme = "README.md"
 license = "MIT"
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Utilities",
 ]
-dependencies = ["truefrontier-webcli==0.17.0"]
+dependencies = ["truefrontier-webcli==0.17.1"]
 
 [project.urls]
 Homepage = "https://pypi.org/project/truefrontier-webcli/"

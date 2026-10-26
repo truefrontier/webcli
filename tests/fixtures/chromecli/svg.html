@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SVG click targets</title>
+<style>body{font:14px sans-serif;margin:40px} svg{display:block} .row{margin:20px 0}</style></head>
+<body>
+<form id="people" action="/people" onsubmit="event.preventDefault(); log.push('submit')">
+  <div class="row">
+    <button id="add-user-btn" type="button" aria-label="Add user">
+      <svg id="add-user-btn-icon" width="24" height="24" viewBox="0 0 24 24"><path id="add-user-btn-path" d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+    </button>
+  </div>
+  <div class="row">
+    <button id="delete-btn" type="button" aria-label="Delete account"><svg id="delete-icon" width="20" height="20"><rect width="20" height="20"/></svg></button>
+    <button id="off-btn" type="button" disabled aria-label="Disabled action"><svg id="off-icon" width="20" height="20"><rect width="20" height="20"/></svg></button>
+  </div>
+  <div class="row">
+    <a id="svg-link" href="#linked" aria-label="Open link"><svg id="link-icon" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg></a>
+  </div>
+</form>
+<div class="row" id="bare-wrap">
+  <svg id="bare-svg" width="40" height="30"><rect id="bare-rect" width="40" height="30"/></svg>
+</div>
+<button id="plain-btn" type="button">Plain</button>
+<script>
+  window.log = [];
+  const note = (who) => (e) => log.push(`${who}:${e.type}:${e.target.id}:${Math.round(e.clientX)},${Math.round(e.clientY)}`);
+  document.getElementById("add-user-btn").addEventListener("click", note("btn"));
+  document.getElementById("add-user-btn-icon").addEventListener("pointerdown", note("icon"));
+  document.getElementById("delete-btn").addEventListener("click", note("delete"));
+  document.getElementById("off-btn").addEventListener("click", note("off"));
+  document.getElementById("bare-svg").addEventListener("click", note("svg"));
+  document.getElementById("bare-wrap").addEventListener("click", note("wrap"));
+  document.getElementById("plain-btn").addEventListener("click", note("plain"));
+</script>
+</body></html>

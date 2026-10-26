@@ -188,15 +188,39 @@ export function pageAction(spec) {
     return { el: found[0] };
   }
 
+  // 0.17.1: a click target that isn't an HTMLElement (an <svg> icon, a <path>, MathML) has no .click(). Resolve it to
+  // the closest clickable HTML ancestor (button, a, [role=button], label, [onclick]); else the nearest HTML ancestor,
+  // with the full pointer/mouse/click sequence dispatched at the original element's center (so listeners on the SVG
+  // itself fire and the click bubbles to that ancestor); with no HTML ancestor at all, the sequence goes to the
+  // element alone. Gates, Jev, grants, the confirm window and the fingerprint all see the resolved element.
+  const isHtml = (n) => !!n && n.nodeType === 1 && n.namespaceURI === "http://www.w3.org/1999/xhtml" && typeof n.click === "function";
+  const CLICKABLE = "button, a, [role=button], label, [onclick]";
+  function clickTarget(node) {
+    if (!node || isHtml(node)) return { el: node, via: null };
+    let nearest = null;
+    for (let n = up(node); n; n = up(n)) {
+      if (!isHtml(n)) continue;
+      if (n.matches(CLICKABLE)) return { el: n, via: "clickable_ancestor" };
+      nearest = nearest || n;
+    }
+    return nearest ? { el: nearest, via: "nearest_html" } : { el: node, via: "dispatch" };
+  }
+  const brief = (n) => ({ tag: String(n.tagName || "").toLowerCase(), id: n.id || null,
+    role: n.getAttribute?.("role") || null, name: clean(n.getAttribute?.("aria-label") || "").slice(0, 80) || null });
+
   const r = resolve(spec.target);
   if (r.error) return r.error;
-  const el = r.el;
+  const original = r.el;
+  const ct = spec.op === "click" ? clickTarget(r.el) : { el: r.el, via: null };
+  const el = ct.el;
+  const resolved = ct.via ? { via: ct.via, from: brief(original) } : null;
   if (!el && spec.op !== "press") return fail("element_not_found", "No element.");
-  const element = el ? describe(el, r.ref) : null;
+  const element = el ? describe(el, ct.via ? null : r.ref) : null;
+  const rx = resolved ? { resolved } : {};
   const fp = element ? fingerprint(element) : "focused:none";
   if (el) {
-    if (hidden(el)) return fail("element_not_found", "The element isn't visible.", { element });
-    if (el.disabled) return fail("element_not_found", "The element is disabled.", { element });
+    if (hidden(el)) return fail("element_not_found", "The element isn't visible.", { element, ...rx });
+    if (el.disabled) return fail("element_not_found", "The element is disabled.", { element, ...rx });
   }
   if (spec.op === "select" && el && el.tagName !== "SELECT") return fail("bad_target", "select needs a <select> element.", { element });
   if ((spec.op === "fill" || spec.op === "type") && el && !(["INPUT", "TEXTAREA"].includes(el.tagName) || el.isContentEditable)) {
@@ -205,7 +229,7 @@ export function pageAction(spec) {
   if (spec.mode === "inspect") {
     // Pre-approval matching (read-only): is the element the one a grant's selector names, and what amounts are near it?
     const selectorHits = {};
-    for (const sel of spec.selectors || []) { try { selectorHits[sel] = el ? deepAll(sel).map(retarget).includes(el) : false; } catch { selectorHits[sel] = false; } }
+    for (const sel of spec.selectors || []) { try { selectorHits[sel] = el ? deepAll(sel).map(retarget).some((x) => x === el || (spec.op === "click" && clickTarget(x).el === el)) : false; } catch { selectorHits[sel] = false; } }
     const amountTexts = {};
     for (const sel of spec.amountSelectors || []) {
       try { amountTexts[sel] = deepAll(sel).slice(0, 5).map((n) => clean(deepText(n)).slice(0, 300)); } catch { amountTexts[sel] = []; }
@@ -221,9 +245,9 @@ export function pageAction(spec) {
       }
       amountTexts._auto = texts;
     }
-    return { ok: true, element, fingerprint: fp, selectorHits, amountTexts, url: location.href };
+    return { ok: true, element, fingerprint: fp, selectorHits, amountTexts, ...rx, url: location.href };
   }
-  if (spec.mode !== "do") return { ok: true, element, fingerprint: fp, url: location.href };
+  if (spec.mode !== "do") return { ok: true, element, fingerprint: fp, ...rx, url: location.href };
   if (spec.fingerprint && spec.fingerprint !== fp) {
     return fail("element_not_found", "The element changed while waiting for your OK; nothing was done.", { element });
   }
@@ -243,10 +267,20 @@ export function pageAction(spec) {
   const value = spec.value == null ? "" : String(spec.value);
   switch (spec.op) {
     case "click": {
+      if (!ct.via) {
+        el.focus?.();
+        for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(el, t, { button: 0 });
+        el.click();
+        return { ok: true, element, dispatched: true, url: location.href };
+      }
+      // Non-HTML target: the sequence starts at the element itself, at its center (as a real click on the icon would).
+      const box = original.getBoundingClientRect();
+      const at = { button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, view: window };
       el.focus?.();
-      for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(el, t, { button: 0 });
-      el.click();
-      return { ok: true, element, dispatched: true, url: location.href };
+      for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(original, t, { ...at, buttons: t.endsWith("down") ? 1 : 0 });
+      if (ct.via === "clickable_ancestor") el.click(); // the control's own activation (submit, navigate, toggle)
+      else fire(original, "click", { ...at, detail: 1 });
+      return { ok: true, element, dispatched: true, resolved, url: location.href };
     }
     case "fill": {
       el.focus?.();

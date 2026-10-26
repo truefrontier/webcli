@@ -355,3 +355,25 @@ test("wait: read share is enough; times out with timeout", async () => {
   await h2.share(1, "read");
   assert.equal((await h2.call("page.wait", { tab: 1, text: "submitted", timeoutMs: 300 }, { confirm: false })).result.found, true);
 });
+
+// 0.17.1: an SVG icon resolves (in the page) to its button; the worker gates and reports the resolved element.
+test("click an svg icon inside 'Delete account': gated on the resolved button; result names what it resolved", async () => {
+  const icon = { via: "clickable_ancestor", from: { tag: "svg", id: "delete-icon", role: null, name: null } };
+  const page = (tabId, spec, name) => {
+    if (name === "pageProbe") return { ok: true, found: false };
+    if (spec.mode !== "do") return { ok: true, element: els.del, fingerprint: "fp:del", resolved: icon };
+    return { ok: true, element: els.del, dispatched: true, resolved: icon };
+  };
+  const h = await loadBackground({ page });
+  await actTab(h, 1);
+  const id = h.start("page.click", { tab: 1, target: { selector: "svg#delete-icon" }, expect: EXPECT });
+  const cid = await h.confirmWindow();
+  const got = await h.message({ type: "confirmGet", id: cid }, `confirm.html?id=${cid}`, { id: 999 });
+  assert.deepEqual(got.info.reasons, ["submit_word:delete"]);
+  assert.equal(got.info.element.name, "Delete account");
+  await h.answer(cid, "allow");
+  const r = await h.reply(id, 5000);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.result.resolved, icon);
+  assert.equal(r.result.element.tag, "button");
+});
