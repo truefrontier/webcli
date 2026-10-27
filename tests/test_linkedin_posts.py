@@ -102,7 +102,7 @@ def test_feed_updates_parse_to_rows_with_counts_ads_left_out_and_null_when_not_s
     assert older == {"url": f"https://www.linkedin.com/feed/update/{A2}/", "urn": A2, "author_name": "Jane Doe",
                      "author_handle": "jane-doe", "author_headline": "Jane's headline at Example Co",
                      "posted_at": iso(T2), "text": "An older post about widgets.", "reactions": 12, "comments": 4,
-                     "reposts": 2, "kind": "post", "original_url": None}
+                     "reposts": 2, "kind": "post", "original_url": None, "image": None}
     assert (newer["reactions"], newer["comments"], newer["reposts"]) == (None, None, None)  # never a guessed 0
     assert repost["kind"] == "repost" and repost["original_url"] == f"https://www.linkedin.com/feed/update/{ORIG}/"
 
@@ -193,7 +193,7 @@ def test_a_search_card_becomes_a_row():
     assert row == {"url": None, "urn": None, "author_name": "Jane Doe", "author_handle": "jane-doe",
                    "author_headline": "Widget engineer at Example Co", "posted_at": iso(NOW - timedelta(hours=3)),
                    "text": "Widgets are great. https://example.com", "reactions": 7, "comments": None,
-                   "reposts": None, "kind": "post", "original_url": None}
+                   "reposts": None, "kind": "post", "original_url": None, "image": None}
     assert posts.card_row({**CARD, "actorName": ""}, now=NOW) is None
     shared = posts.card_row({**CARD, "ids": "x-shareId=7380000000000000005-y"}, now=NOW)
     assert shared["urn"] == "urn:li:share:7380000000000000005"
@@ -666,3 +666,24 @@ def test_card_time_lines(line, minutes):
     row = posts.card_row({**CARD, "actorLines": ["Jane Doe", "Builder", line]}, now=now)
     assert datetime.fromisoformat(row["posted_at"]) == now - timedelta(minutes=minutes)
     assert row["author_headline"] == "Builder"
+
+
+def test_update_image_from_content_vector_image_and_pointer():
+    """0.17.2: the post's own image: a VectorImage in content (widest artifact <= 1280), through a * pointer, or the
+    reshared update's; avatars and other hosts never count."""
+    root = "https://media.licdn.com/dms/image/v2/D4E22AQFake/"
+    vec = {"rootUrl": root, "artifacts": [{"width": 480, "fileIdentifyingUrlPathSegment": "s480/0/1?e=1&t=a"},
+                                          {"width": 1280, "fileIdentifyingUrlPathSegment": "s1280/0/1?e=1&t=b"},
+                                          {"width": 2048, "fileIdentifyingUrlPathSegment": "s2048/0/1?e=1&t=c"}]}
+    content = {"imageComponent": {"images": [{"attributes": [{"detailData": {"vectorImage": vec}}]}]}}
+    assert posts.image_url(content) == root + "s1280/0/1?e=1&t=b"
+    index = {"urn:li:fsd_image:1": {"entityUrn": "urn:li:fsd_image:1", "vectorImage": vec}}
+    assert posts.image_url({"articleComponent": {"*largeImage": "urn:li:fsd_image:1"}}, index) == \
+        root + "s1280/0/1?e=1&t=b"
+    assert posts.image_url({"x": "https://media.licdn.com/dms/image/v2/C/profile-displayphoto-shrink_200_200/0"}) is None
+    assert posts.image_url({"x": "https://evil.example/dms/image/a.jpg"}) is None
+    assert posts.image_url(None) is None
+    rows = posts.updates({"included": [
+        {**update(A1, "Jane Doe", "jane-doe", "Look")[0], "content": content}]})
+    assert rows[0]["image"] == root + "s1280/0/1?e=1&t=b"
+    assert posts.updates({"included": update(A2, "John Roe", "john-roe", "Text only")})[0]["image"] is None

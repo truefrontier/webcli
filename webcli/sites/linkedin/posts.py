@@ -2,7 +2,8 @@
 GraphQL `Update` and the REST `UpdateV2`) and the rendered SDUI post cards, as one row shape. No browser, no network.
 
 A row: url, urn, author_name, author_handle, author_headline, posted_at, text, reactions, comments, reposts, kind
-(post | repost | article), original_url (a repost's original post, else null).
+(post | repost | article), original_url (a repost's original post, else null), image (the post's own image or
+link-preview image on LinkedIn's media CDN, https://media.licdn.com/dms/image/..., else null; 0.17.2).
 
 Numbers are never invented (limsg's null rules): a count is an int only when LinkedIn's response (or the rendered
 card) shows it, else null. A count LinkedIn hides is null, not 0. posted_at comes from the post urn: LinkedIn's
@@ -20,7 +21,7 @@ from webcli.sites.linkedin.endpoints import FEED_UPDATE, ORIGIN
 from webcli.sites.linkedin.parse import linkedin_time_to_iso
 
 FIELDS = ["url", "urn", "author_name", "author_handle", "author_headline", "posted_at", "text", "reactions",
-          "comments", "reposts", "kind", "original_url"]
+          "comments", "reposts", "kind", "original_url", "image"]
 COMPACT = ("posted_at", "author_name", "kind", "reactions", "comments", "reposts", "url")
 COLUMNS = ["posted_at", "author_name", "kind", "reactions", "comments", "reposts", "text"]
 
@@ -262,6 +263,50 @@ def _header(update: dict) -> str:
     return _text(_get(update, "header", "text")) or ""
 
 
+IMAGE_HOST = "media.licdn.com"
+_MAX_IMAGE_W = 1280
+_AVATAR = re.compile(r"profile-displayphoto|profile-framedphoto|company-logo")
+
+
+def _vector_image(vec: dict) -> str | None:
+    """A VectorImage {rootUrl, artifacts: [{width, fileIdentifyingUrlPathSegment}]} as one URL: the widest artifact
+    up to 1280px (else the narrowest)."""
+    root, arts = vec.get("rootUrl"), [a for a in vec.get("artifacts") or [] if isinstance(a, dict)
+                                      and isinstance(a.get("fileIdentifyingUrlPathSegment"), str)]
+    if not isinstance(root, str) or not arts:
+        return None
+    fits = [a for a in arts if isinstance(a.get("width"), int) and a["width"] <= _MAX_IMAGE_W]
+    best = max(fits, key=lambda a: a["width"]) if fits else min(arts, key=lambda a: a.get("width") or 0)
+    return root + best["fileIdentifyingUrlPathSegment"]
+
+
+def image_url(content: Any, index: dict[str, dict] | None = None, _depth: int = 0) -> str | None:
+    """The first image in an update's `content` (image, article preview, document cover, video thumbnail): a
+    VectorImage or a plain media.licdn.com URL, following `*` pointers through `included`. Only LinkedIn's media CDN
+    counts (never an avatar: the actor is not part of `content`)."""
+    if _depth > 8:
+        return None
+    if isinstance(content, str):
+        ok = content.startswith("https://") and urlsplit(content).netloc == IMAGE_HOST and "/dms/image/" in content
+        return content if ok and not _AVATAR.search(content) else None
+    if isinstance(content, list):
+        return next((u for v in content if (u := image_url(v, index, _depth + 1))), None)
+    if not isinstance(content, dict):
+        return None
+    vec = content.get("vectorImage") if isinstance(content.get("vectorImage"), dict) else (
+        content if "rootUrl" in content and "artifacts" in content else None)
+    if vec and (found := _vector_image(vec)):
+        return found
+    for key, value in content.items():
+        if key.startswith("*") and index is not None and isinstance(value, str) and value in index:
+            value = index[value]
+        elif key in ("actor", "socialDetail", "commentary", "header"):
+            continue
+        if (found := image_url(value, index, _depth + 1)):
+            return found
+    return None
+
+
 def update_row(update: dict, index: dict[str, dict], by_urn: dict[str, dict]) -> dict[str, Any] | None:
     """One Update / UpdateV2 as a row, or None for what isn't a post (an ad, a promo, a carousel, no actor)."""
     entity = str(update.get("entityUrn") or "")
@@ -286,6 +331,8 @@ def update_row(update: dict, index: dict[str, dict], by_urn: dict[str, dict]) ->
         **_counts(update, index, by_urn),
         "kind": kind,
         "original_url": post_url(original) if original and original != urn else None,
+        "image": image_url(update.get("content"), index) or (image_url(reshared.get("content"), index)
+                                                              if reshared else None),
     }
 
 
@@ -404,6 +451,7 @@ def card_row(card: dict, *, now: datetime | None = None) -> dict[str, Any] | Non
         "reposts": card_count(card.get("reposts")),
         "kind": "repost" if "reposted this" in header else ("article" if article else "post"),
         "original_url": None,
+        "image": image_url(card.get("image")),
     }
 
 

@@ -48,7 +48,7 @@ def item(site: str, read: str, row: dict) -> dict | None:
                                           if row.get("author_handle") else None)},
                "published_at": utc_z(row.get("posted_at")),
                "metrics": {k: row.get(k) for k in ("reactions", "comments", "reposts")},
-               "links": [u for u in (row.get("original_url"),) if u], "media": [],
+               "links": [u for u in (row.get("original_url"),) if u], "media": _media(row.get("image")),
                "meta": {"kind": row.get("kind"), "headline": row.get("author_headline")}}
     else:
         native, url = row.get("id"), row.get("url") or row.get("perplexityUrl") or row.get("newsUrl")

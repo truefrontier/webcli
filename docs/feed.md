@@ -129,6 +129,9 @@ The file:
 
 `status` is `ok`, `partial` (one of a site's reads failed), `needs_login`, `error`, or `skipped`. `source` on items
 is `youtube`, `google_news`, `perplexity`, `linkedin`, or `x`. The same (source, native_id) appears once.
+`media` is the item's one image when its reader has it: YouTube's and Google News's thumbnail, Perplexity's card
+image, and (0.17.2) a LinkedIn post's own image or link-preview image on `media.licdn.com/dms/image/` (never an
+avatar or company logo). `[]` when there is none; a consumer (newsfeed) fetches and caches it on its own host.
 
 Config, `~/.webcli/feed.toml` (flags override it):
 
