@@ -585,6 +585,10 @@ POST_CARD_JS = r"""(feedType) => {""" + CARD_PARTS_JS + r"""
         : [...card.querySelectorAll('a[href*="/pulse/"]')].filter(a => !(commentary && commentary.contains(a))))
         .map(a => a.getAttribute('href') || ''),
       links: [...card.querySelectorAll('a')].map(a => (a.getAttribute('href') || '').split('?')[0]).filter(Boolean),
+      image: ([...card.querySelectorAll('img')].find(i => !(block && block.contains(i))
+        && /^https:\/\/media\.licdn\.com\/dms\/image\//.test(i.currentSrc || i.src || '')
+        && !/profile-displayphoto|company-logo|profile-framedphoto/.test(i.src || '')
+        && (i.naturalWidth || i.width || 0) >= 200) || {}).src || null,
       ids: (card.outerHTML.match(/urn(?::|%3A)li(?::|%3A)(?:activity|share|ugcPost)(?::|%3A)\d+|(?:shareId|ugcPostId|activityId)=\d+/g) || []).join(' '),
     });
   }

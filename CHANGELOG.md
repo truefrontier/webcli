@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.2 / llmcli 0.7.2 (2026-10-26)
+
+### Added
+
+- **LinkedIn rows carry `image`** (`linkedin feed`, `posts search|from|read`): the post's own image or its
+  link-preview / document / video image, on LinkedIn's media CDN (`https://media.licdn.com/dms/image/...`) only,
+  else null. From the Voyager update's `content` (a VectorImage: the widest artifact up to 1280px, `*` pointers
+  followed through `included`, a repost falls back to the original's), or, on the rendered card path, the first
+  `media.licdn.com/dms/image/` `<img>` at least 200px wide outside the author block. Avatars
+  (`profile-displayphoto`, `profile-framedphoto`) and company logos never count.
+- **`webcli feed pull`**: a LinkedIn item's `media` is that image (`[{"type": "image", "url": ...}]`), as YouTube,
+  Google News, and Perplexity items already had. newsfeed 0.2.0 fetches it on the M4 and serves it same-origin.
+- Version 0.17.2 for webcli and the chromecli package (and its pin); the extension is unchanged (stays 0.17.1, no
+  reload needed); llmcli / llmcli-bare 0.7.2 pinned to truefrontier-webcli==0.17.2.
+
 ## 0.17.1 / llmcli 0.7.1 (2026-10-26)
 
 ### Fixed

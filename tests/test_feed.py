@@ -191,3 +191,11 @@ def test_push_checks(tmp_path, monkeypatch):
     big.write_bytes(b"x" * (push.MAX_BYTES + 1))
     with pytest.raises(ValueError):
         push.push(big, "https://example.com/api/feed")
+
+
+def test_linkedin_image_becomes_media():
+    """0.17.2: a LinkedIn row's image (LinkedIn's media CDN only) is the item's media; no image, no media."""
+    img = "https://media.licdn.com/dms/image/v2/D4E22AQFake/feedshare-shrink_1280/0/1?e=1&v=beta&t=x"
+    li = normalize.item("linkedin", "feed", {**LI, "image": img})
+    assert li["media"] == [{"type": "image", "url": img}]
+    assert normalize.item("linkedin", "feed", LI)["media"] == []
