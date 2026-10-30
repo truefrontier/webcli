@@ -1,0 +1,148 @@
+# OPTIONAL. GitHub does not run this file from docs/.
+# Copy it to .github/workflows/pypi-publish.yml in a follow-up PR, after the
+# one-time PyPI and GitHub environment setup in RELEASING.md.
+# A v* tag pushed from a commit that contains that copy publishes to PyPI.
+# Leave this copy out of the commit used for the manual twine upload.
+#
+# Pins checked 2026-10-30. Pinned; leave them until a deliberate bump.
+# checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2,
+# download-artifact v8.0.2, pypa/gh-action-pypi-publish v1.14.3, build 1.6.1.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-webcli:
+    name: Build truefrontier-webcli
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install build
+        run: python -m pip install "build==1.6.1"
+      - name: Build sdist and wheel
+        run: python -m build
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: truefrontier-webcli-dist
+          path: dist/*
+
+  publish-webcli:
+    name: Publish truefrontier-webcli
+    needs: build-webcli
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/truefrontier-webcli/
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: truefrontier-webcli-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+
+  build-llmcli:
+    name: Build llmcli
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install build
+        run: python -m pip install "build==1.6.1"
+      - name: Build sdist and wheel
+        run: python -m build packaging/llmcli-bare
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: llmcli-dist
+          path: packaging/llmcli-bare/dist/*
+
+  publish-llmcli:
+    name: Publish llmcli
+    needs:
+      - publish-webcli
+      - build-llmcli
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/llmcli/
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: llmcli-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+
+  # Optional companion. Uncomment both jobs, and add a normal (not pending)
+  # trusted publisher on the existing truefrontier-llmcli project, to publish
+  # it from the same tag. It also pins truefrontier-webcli==0.17.2.
+  #
+  # build-truefrontier-llmcli:
+  #   name: Build truefrontier-llmcli
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     actions: write
+  #   steps:
+  #     - uses: actions/checkout@v7.0.1
+  #       with:
+  #         persist-credentials: false
+  #     - uses: actions/setup-python@v7.1.0
+  #       with:
+  #         python-version: "3.12"
+  #     - name: Install build
+  #       run: python -m pip install "build==1.6.1"
+  #     - name: Build sdist and wheel
+  #       run: python -m build packaging/llmcli
+  #     - uses: actions/upload-artifact@v7.0.2
+  #       with:
+  #         name: truefrontier-llmcli-dist
+  #         path: packaging/llmcli/dist/*
+  #
+  # publish-truefrontier-llmcli:
+  #   name: Publish truefrontier-llmcli
+  #   needs:
+  #     - publish-webcli
+  #     - build-truefrontier-llmcli
+  #   runs-on: ubuntu-latest
+  #   environment:
+  #     name: pypi
+  #     url: https://pypi.org/project/truefrontier-llmcli/
+  #   permissions:
+  #     contents: read
+  #     actions: read
+  #     id-token: write
+  #   steps:
+  #     - uses: actions/download-artifact@v8.0.2
+  #       with:
+  #         name: truefrontier-llmcli-dist
+  #         path: dist
+  #     - uses: pypa/gh-action-pypi-publish@v1.14.3
