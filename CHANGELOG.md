@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.18.1 / llmcli 0.8.1 (2026-10-30)
+
+A read-only patch to `webcli gsc` from its first real SEO run. It adds no writes.
+
+### Fixed
+
+- `gsc pages`: `asOf` was the UTC date of the report's last day, one day later than Search Console's "Last
+  update". It is now the Pacific date, and the same value is in the new `lastUpdated` field.
+
+### Added
+
+- `gsc pages` reports `stale` (plus `staleReasons` and a `warning`, also printed on stderr). It is stale when
+  `lastUpdated` is more than 3 days old or an example URL was crawled after it. The docs now say plainly that the
+  Pages report lags URL Inspection.
+- `gsc pages --sitemap all|SITEMAP_URL` uses Search Console's own "All submitted pages" / one-sitemap filter. An
+  unsubmitted sitemap exits 2 and lists the submitted ones. `--indexed` lists indexed example URLs. Each reason
+  gets `examplesAvailable` and `examplesTruncated`. The output also gains `total` and `filter`. `--examples` max
+  is now 1000, Search Console's own cap.
+- `gsc performance --json` is now an object: `{property, searchType, start, end, dimension, lastUpdated, totals
+  {clicks, impressions, ctr, position}, rows, rowsTruncated}`. The totals cover the whole range, as Search
+  Console's cards show them. Tables print the totals on stderr. Impressions with no rows (anonymized queries)
+  now exit 0 with `rows: []` and a `note`; exit 3 only when there are no impressions at all.
+- `gsc inspect` always has `notes`. They explain when the sitemap fields (Google's stored data, passed through)
+  look contradictory. `--check-live-sitemap` reads the property's submitted sitemaps from the site over plain
+  HTTPS, without the Google session, and adds `inLiveSitemap`, `liveSitemaps`, and `liveSitemapErrors`.
+
+### Changed
+
+- `gsc performance --json` used to print a bare list of rows; read `.rows` now.
+- Version 0.18.1 for webcli, chromecli (and its pin), and the extension manifest. llmcli / llmcli-bare 0.8.1 are
+  pinned to truefrontier-webcli==0.18.1.
+
 ## 0.18.0 / llmcli 0.8.0 (2026-10-30)
 
 ### Added
