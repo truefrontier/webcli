@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.18.0 / llmcli 0.8.0 (2026-10-30)
+
+### Added
+
+- **`webcli gsc`: Google Search Console**, through the signed-in `google:default` profile, with no OAuth client
+  or API key. It runs Search Console's own batchexecute RPCs from inside a hidden signed-in page, behind a
+  fail-closed guard that allows only each command's read RPCs. Commands:
+  - `properties`;
+  - `pages PROPERTY [--examples N]`: the Page indexing report, with each not-indexed reason and example URLs;
+  - `inspect URL [--property P]`: URL Inspection's indexed data, never a live test;
+  - `performance PROPERTY --start --end --dimension query|page|date [--limit N]`: clicks, impressions, ctr, and
+    position;
+  - `sitemaps PROPERTY`;
+  - `status`.
+
+  All take `--json`. See [docs/gsc-site.md](docs/gsc-site.md).
+- **Two gated writes**:
+  - `webcli gsc sitemaps submit PROPERTY SITEMAP_URL --yes` submits one sitemap, then reads the list back. It
+    exits 8 if the sitemap isn't listed afterwards.
+  - `webcli gsc inspect URL --request-indexing --yes` clicks Search Console's REQUEST INDEXING in the page, so
+    Google's in-page attestation never passes through webcli. Google's quota exits 6.
+
+  Without `--yes`, each prints the plan (`dryRun: true`), sends nothing, and exits 2. The guard allows each write
+  once, for exactly its target. Every write, refused or not, appends an audit line to `~/.webcli/logs/gsc.log`.
+- Version 0.18.0 for webcli, the chromecli package (and its pin), and the chromecli extension manifest. The
+  extension's code is unchanged; reload it to clear the version-mismatch hint, which has shown since 0.17.2 left
+  it at 0.17.1. llmcli / llmcli-bare 0.8.0 are pinned to truefrontier-webcli==0.18.0.
+
 ## 0.17.2 / llmcli 0.7.2 (2026-10-26)
 
 ### Added
