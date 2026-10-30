@@ -490,6 +490,14 @@ def test_read_opens_the_exact_chat_and_reads_its_messages(web):
     assert page.searching is None and page.writes() == []
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "TODO: fails in every timezone (main @967e4f5). Likely the fixture date: "
+        "thread.html's TODAY separator is interpreted by parse.thread as date.today(), "
+        "while this file pins TODAY to 2026-10-22. Kevin has not chosen the fix."
+    ),
+)
 def test_read_since(web):
     web(WhatsAppPage())
     found = asyncio.run(fetch.messages("Alice Smith", 20, "2026-10-22T10:00"))

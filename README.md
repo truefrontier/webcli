@@ -1,5 +1,7 @@
 # webcli / llmcli / chromecli
 
+[![CI](https://github.com/truefrontier/webcli/actions/workflows/ci.yml/badge.svg)](https://github.com/truefrontier/webcli/actions/workflows/ci.yml)
+
 Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
 
 - `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), `llmcli muse` (Meta's Muse at muse.ai, musecli parity), and `llmcli notebooklm` (ask one NotebookLM notebook, answers with citations; the same site as `webcli notebooklm`).
@@ -210,6 +212,8 @@ python3 -m venv .venv && .venv/bin/pip install -e . pytest
 .venv/bin/python -m pytest -q      # offline: no browser, no network, temp WEBCLI_HOME
 node --test extensions/chromecli/test   # the chromecli extension's pure modules and a mocked service worker
 ```
+
+GitHub Actions runs those two commands on every pull request and on pushes to `main` (`.github/workflows/ci.yml`): pytest on Python 3.12 and 3.13, and the extension tests on Node 26. The run does not use a signed-in Chrome profile, a site on the network, or a secret. Tests that need Playwright's headless Chromium, or ffmpeg, skip when the runner does not have them. Two tests stay `xfail` until Kevin chooses a fix: the extension manifest version versus the package version, and `test_read_since` (see the TODO on each marker).
 
 After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](https://github.com/truefrontier/webcli/blob/main/docs/post-login-verification.md).
 
