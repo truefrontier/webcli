@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "chromecli",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "Share Chrome tabs, one at a time, with the chromecli command: read, and act with your in-browser OK for risky steps; optional Jev (BYOK) element finder. Native host: com.truefrontier.chromecli.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCgfi6D9C7aFVAlWzZjImXpLMaX0xMbk/DuIVGqkkBzEiP325R8m8eK3lSAU6KOwanLdBwT8SRZASOFnS0Zd9BBBaOjR3XniZoWKgWPnpU9713YgfrZhEZaV79JFhHWydmGBBBaiPtTQ008vbVyO9VNRa4O/ZNosSUpIS4A99Gw58O/w3XdT0n4Fqf7ueauLZRqvrz9XNEhhAUdKAI3upVnczM1rcBtLtLMKlwSJxp1/g6oaoKrecFXNsS2p02WsFZm1GgzB5eq2xPAZio2m0T3QHqK40BdFONwNGNuud0t8zWP6K+aBEgiBOZhf9uUdDbRqggxn63tumw7FP7tQ2wIDAQAB",
   "minimum_chrome_version": "116",

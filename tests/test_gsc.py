@@ -144,8 +144,31 @@ SERIES = [[PROP, 30, []], [[[1785542400000, ["NaN", "NaN", 0], None, None, None,
 
 
 def test_index_counts_take_the_last_day_with_data():
-    assert parse.index_counts(SERIES) == {"indexed": 3, "notIndexed": 5, "asOf": "2026-10-23"}
-    assert parse.index_counts([None, [[]]]) == {"indexed": None, "notIndexed": None, "asOf": None}
+    # 1792713600000 is 2026-10-23T00:00Z: Search Console's "Last update" shows it as 10/22 (Pacific).
+    assert parse.index_counts(SERIES) == {"indexed": 3, "notIndexed": 5, "lastUpdated": "2026-10-22",
+                                          "asOf": "2026-10-22"}
+    assert parse.index_counts([None, [[]]]) == {"indexed": None, "notIndexed": None, "lastUpdated": None,
+                                                "asOf": None}
+
+
+@pytest.mark.parametrize(("today", "crawls", "stale", "why"), [
+    ("2026-10-25", [], False, []),
+    ("2026-10-25", ["2026-10-23T06:59:00Z"], False, []),  # 10-22 23:59 Pacific: not after the update
+    ("2026-10-26", [], True, ["last updated 2026-10-22, 4 days ago"]),
+    ("2026-10-24", ["2026-10-24T06:43:05Z", None, "2026-10-23T08:00:00Z"], True,
+     ["2 example URL(s) crawled after it, up to 2026-10-23"]),
+])
+def test_staleness(today, crawls, stale, why):
+    from datetime import date
+    assert parse.staleness("2026-10-22", crawls, date.fromisoformat(today)) == (stale, why)
+    assert parse.staleness(None, [], date.fromisoformat(today))[0] is True
+
+
+def test_index_filters():
+    from webcli.sites.gsc.endpoints import INDEX_FILTERS, index_filters
+    assert INDEX_FILTERS == [[12, *([None] * 10), 3], [9, ""]]
+    assert index_filters(2) == [[12, *([None] * 10), 2], [9, ""]]
+    assert index_filters(1, "https://example.com/sitemap.xml")[1] == [9, "https://example.com/sitemap.xml"]
 
 
 def reason(key, enum, anchor, pages):
@@ -217,6 +240,21 @@ def test_inspection_indexed():
     assert (out["crawlAllowed"], out["pageFetch"]) == (True, "Successful")
 
 
+def test_inspection_notes():
+    assert parse.inspection_notes(parse.inspection(INDEXED, "https://example.com/", PROP)) == []
+    no_sitemap = list(INDEXED)
+    no_sitemap[2], no_sitemap[3] = None, ["https://example.com/sitemap.xml", "https://example.com/blog/"]
+    info = parse.inspection(no_sitemap, "https://example.com/", PROP)
+    notes = parse.inspection_notes(info)
+    assert len(notes) == 2 and "inSitemap is false" in notes[0] and "Submitted and indexed" in notes[0]
+    assert "referringUrls includes https://example.com/sitemap.xml:" in notes[1]
+    assert all("passed through" in n for n in notes)
+    assert "caught up" in parse.inspection_notes({**info, "inLiveSitemap": True})[-1]
+    assert "don't list" in parse.inspection_notes({**parse.inspection(INDEXED, "https://example.com/", PROP),
+                                                   "inLiveSitemap": False})[-1]
+    assert parse.inspection_notes(parse.inspection(UNKNOWN, "https://example.com/new", PROP)) == []
+
+
 def test_inspection_alternate_and_unknown():
     alt = parse.inspection(ALTERNATE, "https://www.example.com/", PROP)
     assert alt["onGoogle"] is False and alt["coverageState"] == "Alternate page with proper canonical tag"
@@ -273,6 +311,24 @@ def test_performance_request_shape():
     from datetime import date
     req = parse.performance_request(PROP, 2, date(2026, 9, 1), date(2026, 10, 28))
     assert req[:2] == [PROP, 32] and req[5][0] == [2] and req[5][2] == [["20260901", "20261028"]]
+
+
+PERF_SERIES = [[PROP, 27], [[[1793102400000, [0, 30, 0, 7.1]], [1793188800000, [1, 20, 0.05, 8.0]]],
+                           [None, [1, 50, 0.02, 7.4012]], None, 1793363530000], None, None, None, None,
+               [None, None, [["CLICKS"], ["IMPRESSIONS"], ["CTR"], ["POSITION"]]]]
+
+
+def test_performance_totals():
+    assert parse.performance_totals(PERF_SERIES) == {
+        "totals": {"clicks": 1, "impressions": 50, "ctr": 0.02, "position": 7.4},
+        "lastUpdated": "2026-10-30T12:32:10Z"}
+    empty = [None, [[], [None, [0, 0, 0, 0]], None, None]]
+    assert parse.performance_totals(empty)["totals"] == {"clicks": 0, "impressions": 0, "ctr": 0.0, "position": None}
+    with pytest.raises(ValueError):
+        parse.performance_totals([None, None])
+    from datetime import date
+    req = parse.performance_series_request(PROP, date(2026, 10, 1), date(2026, 10, 28))
+    assert req[:2] == [PROP, 27] and req[5][2] == [["20261001", "20261028"]] and req[-1] == [None, 2]
 
 
 def test_rpc_payload_errors():
@@ -349,6 +405,72 @@ def test_pages_fetches_examples_only_for_reasons_with_pages(page):
     assert [c[1][1] for c in p.calls if c[0] == "nDAfwb"] == [35, 33, 33]
 
 
+@pytest.fixture
+def today(monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(parse, "report_today", lambda: date(2026, 10, 30))
+
+
+def test_pages_reports_stale_and_truncated_examples(page, today):
+    p = page({"BWF8he": PROPERTIES, "OLiH4d": SERIES, "nDAfwb": ["SEQ", REASONS, URLS, URLS, URLS]})
+    out = asyncio.run(fetch.pages(PROP, 5, None, True))
+    assert out["filter"] == {"pages": "all-known", "sitemap": None} and out["total"] == 8
+    assert out["lastUpdated"] == out["asOf"] == "2026-10-22"
+    assert out["stale"] is True and len(out["staleReasons"]) == 2 and "lag URL Inspection" in out["warning"]
+    r = out["reasons"][0]
+    assert (len(r["examples"]), r["examplesAvailable"], r["examplesTruncated"]) == (2, 2, True)  # 2 of 3
+    assert out["reasons"][2]["examplesTruncated"] is False  # 0 pages
+    assert (len(out["indexedExamples"]), out["indexedExamplesTruncated"]) == (2, True)  # 2 of 5
+    indexed_call = [c[1] for c in p.calls if c[0] == "nDAfwb"][-1]
+    assert indexed_call[2][0] == [4] and indexed_call[-1] == [None, None, [13, "valid"]]
+
+
+def test_pages_sitemap_filters(page, today):
+    p = page({"BWF8he": PROPERTIES, "OLiH4d": SERIES, "nDAfwb": ["SEQ", REASONS, URLS], "vyvePb": SITEMAPS})
+    out = asyncio.run(fetch.pages(PROP, 0, "all"))
+    assert out["filter"] == {"pages": "all-submitted", "sitemap": None}
+    assert [c for c in p.calls if c[0] == "OLiH4d"][-1][1][2][0][-1] == 2
+    sm = "https://example.com/sitemap.xml"
+    out = asyncio.run(fetch.pages(PROP, 0, sm))
+    assert out["filter"] == {"pages": "sitemap", "sitemap": sm}
+    series = [c for c in p.calls if c[0] == "OLiH4d"][-1][1]
+    assert series[2] == [[12, *([None] * 10), 1], [9, sm]]
+    assert [c for c in p.calls if c[0] == "nDAfwb"][-1][1][2][:2] == series[2]
+    with pytest.raises(UsageError) as exc:
+        asyncio.run(fetch.pages(PROP, 0, "https://example.com/other.xml"))
+    assert sm in str(exc.value)
+
+
+def test_performance_returns_totals_and_rows(page):
+    q = [None, [[perf_row(["q1"], 1, 8, 1.0), perf_row(["q2"], 0, 4, 6), perf_row(["q3"], 0, 1, 2)]]]
+    p = page({"BWF8he": PROPERTIES, "OLiH4d": PERF_SERIES, "nDAfwb": q})
+    out = asyncio.run(fetch.performance(PROP, "2026-10-01", "2026-10-28", "query", 2))
+    assert {k: out[k] for k in ("property", "start", "end", "dimension", "searchType")} == {
+        "property": PROP, "start": "2026-10-01", "end": "2026-10-28", "dimension": "query", "searchType": "web"}
+    assert out["totals"]["impressions"] == 50 and len(out["rows"]) == 2 and out["rowsTruncated"] is True
+    assert [c[1][1] for c in p.calls if c[0] == "OLiH4d"] == [27]
+
+
+def test_inspect_checks_the_live_sitemap(page, monkeypatch):
+    seen = []
+
+    def check(url, sitemaps, prop):
+        seen.append((url, sitemaps, prop))
+        return {"inLiveSitemap": True, "liveSitemaps": sitemaps, "liveSitemapsRead": 1, "liveSitemapUrls": 3,
+                "liveSitemapErrors": []}
+    monkeypatch.setattr(fetch.livesitemap, "check", check)
+    no_sitemap = list(INDEXED)
+    no_sitemap[2] = None
+    page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]], "MrNfbc": ["JOB", 2, [], 2], "HZPzjb": no_sitemap,
+          "vyvePb": SITEMAPS})
+    out = asyncio.run(fetch.inspect("https://example.com/", None, True))
+    assert seen == [("https://example.com/", ["https://example.com/sitemap.xml"], PROP)]
+    assert out["inSitemap"] is False and out["inLiveSitemap"] is True
+    assert len(out["notes"]) == 2 and "caught up" in out["notes"][1]
+    plain = asyncio.run(fetch.inspect("https://example.com/"))
+    assert "inLiveSitemap" not in plain and len(plain["notes"]) == 1 and len(seen) == 1
+
+
 def test_inspect_polls_until_done_and_never_live_tests(page):
     p = page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]],
               "MrNfbc": ["SEQ", ["JOB", 1, [], 2], ["JOB", 2, [], 2]], "HZPzjb": INDEXED})
@@ -421,20 +543,54 @@ def test_read_commands(calls):
     answers["properties"] = parse.properties(PROPERTIES)
     out = run("properties", "--json")
     assert out.exit_code == 0 and json.loads(out.stdout)[0]["property"] == PROP
-    answers["performance"] = [{"query": "q", "clicks": 1, "impressions": 2, "ctr": 0.5, "position": 3}]
+    totals = {"clicks": 1, "impressions": 2, "ctr": 0.5, "position": 3}
+    answers["performance"] = {"property": PROP, "searchType": "web", "start": "2026-09-01", "end": "2026-10-28",
+                              "dimension": "query", "lastUpdated": None, "totals": totals,
+                              "rows": [{"query": "q", **totals}], "rowsTruncated": False}
     out = run("performance", "example.com", "--start", "2026-09-01", "--end", "2026-10-28", "--dimension", "query",
               "--limit", "5", "--json")
     assert out.exit_code == 0 and seen[-1][:2] == ("performance", (PROP, "2026-09-01", "2026-10-28", "query", 5))
+    got = json.loads(out.stdout)
+    assert (got["property"], got["start"], got["end"], got["dimension"]) == (PROP, "2026-09-01", "2026-10-28",
+                                                                             "query")
+    assert got["totals"] == totals and got["rows"][0]["query"] == "q"
+    out = run("performance", PROP, "--json", "--select", "query,clicks")
+    assert json.loads(out.stdout)["rows"] == [{"query": "q", "clicks": 1}]
+    out = run("performance", PROP, "--format", "table")
+    assert out.exit_code == 0 and "totals" in out.stderr and "2 impressions" in out.stderr
+    answers["performance"] = {**answers["performance"], "rows": []}
+    out = run("performance", PROP, "--json")
+    assert out.exit_code == 0 and "anonymized" in json.loads(out.stdout)["note"]
+    answers["performance"] = {**answers["performance"], "totals": {**totals, "clicks": 0, "impressions": 0}}
+    assert run("performance", PROP, "--json").exit_code == 3
     assert run("performance", PROP, "--start", "2026-10-28", "--end", "2026-09-01").exit_code == 2
     assert run("performance", PROP, "--start", "10/28/2026").exit_code == 2
     answers["sitemaps"] = parse.sitemaps(SITEMAPS)
     assert run("sitemaps", PROP, "--json").exit_code == 0 and seen[-1][:2] == ("sitemaps", (PROP,))
     answers["inspect"] = parse.inspection(INDEXED, "https://example.com/", PROP)
     out = run("inspect", "https://example.com/", "--json")
-    assert out.exit_code == 0 and seen[-1][:2] == ("inspect", ("https://example.com/", None))
-    answers["pages"] = {"property": PROP, "indexed": 1, "notIndexed": 0, "asOf": None, "reasons": []}
+    assert out.exit_code == 0 and seen[-1][:2] == ("inspect", ("https://example.com/", None, False))
+    run("inspect", "https://example.com/", "--check-live-sitemap", "--json")
+    assert seen[-1][:2] == ("inspect", ("https://example.com/", None, True))
+    assert run("inspect", "https://example.com/", "--check-live-sitemap", "--request-indexing").exit_code == 2
+    answers["inspect"] = {**answers["inspect"], "notes": ["a note"]}
+    out = run("inspect", "https://example.com/", "--format", "table")
+    assert out.exit_code == 0 and "note: a note" in out.stderr
+    report = {"property": PROP, "filter": {"pages": "all-known", "sitemap": None}, "indexed": 1, "notIndexed": 0,
+              "total": 1, "lastUpdated": "2026-10-22", "asOf": "2026-10-22", "stale": False, "staleReasons": [],
+              "warning": None, "examplesLimit": 0, "reasons": []}
+    answers["pages"] = report
     assert run("pages", "example.com", "--examples", "0", "--json").exit_code == 0
-    assert seen[-1][:2] == ("pages", (PROP, 0))
+    assert seen[-1][:2] == ("pages", (PROP, 0, None, False))
+    assert run("pages", PROP, "--sitemap", "all", "--indexed", "--json").exit_code == 0
+    assert seen[-1][:2] == ("pages", (PROP, 5, "all", True))
+    n = len(seen)
+    assert run("pages", PROP, "--sitemap", "https://example.net/sitemap.xml").exit_code == 2 and len(seen) == n
+    answers["pages"] = {**report, "stale": True, "warning": "stale!"}
+    out = run("pages", PROP, "--format", "table")
+    assert out.exit_code == 0 and "warning: stale!" in out.stderr and "stale!" not in out.stdout
+    out = run("pages", PROP, "--json")
+    assert json.loads(out.stdout)["stale"] is True and "warning: stale!" in out.stderr
 
 
 def test_sitemaps_submit_refuses_without_yes(calls):
@@ -500,3 +656,49 @@ def test_a_failed_write_is_audited(calls, monkeypatch):
     out = run("sitemaps", "submit", PROP, "https://example.com/sitemap.xml", "--yes")
     assert out.exit_code == 5
     assert "outcome=failed" in audit_lines(home)[-1] and "exit=5" in audit_lines(home)[-1]
+
+
+# --check-live-sitemap, over a fake fetcher
+
+def _urlset(*urls):
+    locs = "".join(f"<url><loc>{u}</loc></url>" for u in urls)
+    return f'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{locs}</urlset>'.encode()
+
+
+def _index(*maps):
+    locs = "".join(f"<sitemap><loc>{u}</loc></sitemap>" for u in maps)
+    return (f'<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{locs}'
+            "</sitemapindex>").encode()
+
+
+def test_live_sitemap_follows_indexes_and_gzip():
+    import gzip
+
+    from webcli.sites.gsc import livesitemap
+    files = {"https://example.com/sitemap.xml": _index("https://example.com/a.xml.gz", "https://example.net/x.xml",
+                                                       "https://example.com/missing.xml"),
+             "https://example.com/a.xml.gz": gzip.compress(_urlset("https://example.com/", "https://example.com/b"))}
+    got = []
+
+    def get(url, prop):
+        got.append(url)
+        if url not in files:
+            raise OSError("HTTP Error 404: Not Found")
+        return files[url]
+    out = livesitemap.check("https://example.com/b", ["https://example.com/sitemap.xml"], PROP, get)
+    assert out["inLiveSitemap"] is True and out["liveSitemaps"] == ["https://example.com/a.xml.gz"]
+    assert out["liveSitemapsRead"] == 2 and out["liveSitemapUrls"] == 2
+    assert "https://example.net/x.xml" not in got  # off the property: never fetched
+    assert {e["sitemap"] for e in out["liveSitemapErrors"]} == {"https://example.net/x.xml",
+                                                                "https://example.com/missing.xml"}
+    out = livesitemap.check("https://example.com/c", ["https://example.com/sitemap.xml"], PROP, get)
+    assert out["inLiveSitemap"] is False and out["liveSitemaps"] == []
+    out = livesitemap.check("https://example.com/c", ["https://example.net/sitemap.xml"], PROP, get)
+    assert out["inLiveSitemap"] is None and out["liveSitemapsRead"] == 0
+
+
+def test_live_sitemap_rejects_non_sitemaps():
+    from webcli.sites.gsc import livesitemap
+    with pytest.raises(ValueError):
+        livesitemap.parse_sitemap(b"<html><body>hi</body></html>")
+    assert livesitemap.parse_sitemap(_urlset("https://example.com/")) == (["https://example.com/"], [])

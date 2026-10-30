@@ -24,6 +24,7 @@ from webcli.core.output import (
     log,
     resolve_format,
     rows_table,
+    select_fields,
 )
 from webcli.sites import data
 from webcli.sites.gsc import ADAPTER as SITE
@@ -41,15 +42,27 @@ NOTES = [
     "command needs; the page's own load-time writes are aborted. Unofficial: an RPC change exits 5.",
     f"PROPERTY: {PROPERTY_HELP} `properties` lists them (type domain | url-prefix, permission owner | full | "
     "restricted).",
-    f"`pages PROPERTY [--examples N]`: the Page indexing report: indexed and notIndexed (the last day with data, "
-    f"asOf), and each not-indexed reason (reason, source Website | Google systems, pages) with up to N example "
-    f"URLs and their last crawl (default {DEFAULT_EXAMPLES}, max {MAX_EXAMPLES}, 0 skips them).",
+    f"`pages PROPERTY [--examples N] [--sitemap all|SITEMAP_URL] [--indexed]`: the Page indexing report: indexed, "
+    f"notIndexed, total, lastUpdated (the report's own \"Last update\" date, Pacific; asOf is the same), stale "
+    f"(+ staleReasons, warning), and each not-indexed reason (reason, source Website | Google systems, pages) with "
+    f"up to N example URLs and their last crawl (default {DEFAULT_EXAMPLES}, max {MAX_EXAMPLES}, 0 skips them), "
+    f"examplesAvailable, examplesTruncated. --sitemap all: only pages in submitted sitemaps; --sitemap URL: one "
+    f"submitted sitemap (Search Console's own filter). --indexed: also indexedExamples (+ Available, Truncated).",
+    "The Pages report lags URL Inspection by days: it is recomputed every few days, while inspect reads Google's "
+    "latest data for one URL. stale is true when lastUpdated is more than 3 days old or an example URL was crawled "
+    "after it; trust inspect for single URLs. Search Console lists at most 1000 example URLs per reason (and per "
+    "indexed list) and gives no full list beyond that: examplesTruncated says so.",
     "`inspect URL [--property P]`: URL Inspection's indexed data (never a live test): onGoogle, verdict, "
     "coverageState, lastCrawl, crawledAs, crawlAllowed, pageFetch, userCanonical, googleCanonical, inSitemap, "
-    "sitemaps, referringUrls. Without --property, the property that covers the URL (the longest URL-prefix one, "
+    "sitemaps, referringUrls (all Google's stored data, passed through), and notes where those look contradictory. "
+    "--check-live-sitemap: also read the property's submitted sitemaps live from the site (plain HTTPS, no Google "
+    "session; sitemap indexes followed, 50 files max) -> inLiveSitemap, liveSitemaps, liveSitemapErrors. "
+    "Without --property, the property that covers the URL (the longest URL-prefix one, "
     "else the Domain one).",
     "`performance PROPERTY --start YYYY-MM-DD --end YYYY-MM-DD --dimension query|page|date [--limit N]`: web "
-    "search clicks, impressions, ctr (clicks / impressions, 0..1), and average position. Default range: the 28 days "
+    "search clicks, impressions, ctr (clicks / impressions, 0..1), and average position. --json: {property, "
+    "searchType, start, end, dimension, lastUpdated, totals {clicks, impressions, ctr, position} (the whole range, "
+    "as the Performance page's cards; anonymized queries included), rows, rowsTruncated}. Default range: the 28 days "
     f"ending yesterday; --limit default {DEFAULT_LIMIT}, max {MAX_LIMIT}; query and page rows by clicks then impressions "
     "(the top N), date rows oldest first (the latest N days). Search Console's own data lags about two days and "
     "leaves out anonymized queries.",
@@ -142,22 +155,44 @@ def properties_cmd(fmt, compact, select, quiet, as_csv) -> None:
 @group.command("pages")
 @click.argument("prop", metavar="PROPERTY")
 @click.option("--examples", default=DEFAULT_EXAMPLES, show_default=True, type=click.IntRange(0, MAX_EXAMPLES),
-              help="Example URLs per not-indexed reason (0: none).")
+              help="Example URLs per reason (0: none). Search Console lists at most 1000.")
+@click.option("--sitemap", default=None, metavar="all|SITEMAP_URL",
+              help="Only pages in the submitted sitemaps (all) or in one submitted sitemap (its URL).")
+@click.option("--indexed", is_flag=True, help="Also list indexed example URLs (indexedExamples).")
 @json_flag
 @agent_output_options(rows=False)
-def pages_cmd(prop, examples, fmt, quiet) -> None:
-    """The Page indexing report: indexed / not indexed counts and each not-indexed reason with example URLs."""
-    report = data.call(SITE, "pages", _property(prop), examples)
+def pages_cmd(prop, examples, sitemap, indexed, fmt, quiet) -> None:
+    """The Page indexing report: indexed / not indexed counts, the report's last update (stale if old; it lags URL
+    Inspection), and each not-indexed reason with example URLs."""
+    prop = _property(prop)
+    if sitemap and sitemap != "all":
+        try:
+            sitemap = parse.check_sitemap_url(sitemap, prop)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--sitemap") from None
+    report = data.call(SITE, "pages", prop, examples, sitemap, indexed)
     if resolve_format(fmt) == "json":
         emit_json(report)
+        if report.get("stale") and not quiet:
+            click.echo(f"warning: {report['warning']}", err=True)
         raise SystemExit(EXIT_OK)
-    title = (f"{report['property']}: {report['indexed']} indexed, {report['notIndexed']} not indexed"
-             + (f" (as of {report['asOf']})" if report.get("asOf") else ""))
+    scope = {"all-submitted": " in submitted sitemaps", "sitemap": f" in {report['filter']['sitemap']}"}.get(
+        report["filter"]["pages"], "")
+    title = (f"{report['property']}{scope}: {report['indexed']} indexed, {report['notIndexed']} not indexed"
+             + (f" (last update {report['lastUpdated']})" if report.get("lastUpdated") else ""))
     rows = [{"reason": r["reason"], "source": r["source"] or "", "pages": r["pages"]} for r in report["reasons"]]
     rows_table(title, rows, ["reason", "source", "pages"])
     for r in report["reasons"]:
         for ex in r.get("examples") or []:
             click.echo(f"  {r['reason']}: {ex['url']}  (last crawled {ex['lastCrawled'] or 'n/a'})")
+        if r.get("examples") and r.get("examplesTruncated"):
+            click.echo(f"  {r['reason']}: {len(r['examples'])} of {r['pages']} shown")
+    for ex in report.get("indexedExamples") or []:
+        click.echo(f"  Indexed: {ex['url']}  (last crawled {ex['lastCrawled'] or 'n/a'})")
+    if report.get("indexedExamples") and report.get("indexedExamplesTruncated"):
+        click.echo(f"  Indexed: {len(report['indexedExamples'])} of {report['indexed']} shown")
+    if report.get("stale"):
+        click.echo(f"warning: {report['warning']}", err=True)
     raise SystemExit(EXIT_OK)
 
 
@@ -165,17 +200,21 @@ def pages_cmd(prop, examples, fmt, quiet) -> None:
 @click.argument("url")
 @click.option("--property", "prop", default=None, help=f"The property: {PROPERTY_HELP} Default: the one that "
                                                         "covers URL.")
+@click.option("--check-live-sitemap", is_flag=True,
+              help="Also read the property's submitted sitemaps live from the site (inLiveSitemap).")
 @click.option("--request-indexing", is_flag=True, help="WRITE: ask Google to recrawl URL (needs --yes).")
 @click.option("--yes", "--confirm", "confirm", is_flag=True, help="Do the --request-indexing write.")
 @json_flag
 @agent_output_options(rows=False)
-def inspect_cmd(url, prop, request_indexing, confirm, fmt, quiet) -> None:
+def inspect_cmd(url, prop, check_live_sitemap, request_indexing, confirm, fmt, quiet) -> None:
     """URL Inspection (indexed data): coverage, last crawl, canonicals, sitemaps. --request-indexing --yes asks
     Google to index URL (without --yes: prints the plan, exit 2)."""
     url = _url(url)
     prop = _property(prop) if prop else None
     if confirm and not request_indexing:
         raise click.UsageError("--yes goes with --request-indexing; inspect alone is read-only.")
+    if request_indexing and check_live_sitemap:
+        raise click.UsageError("--check-live-sitemap goes with a plain inspect, not --request-indexing.")
     if request_indexing:
         plan = {"url": url, "property": prop}
         would = (f"run URL Inspection's REQUEST INDEXING for {url} in {prop or 'the property that covers it'}: a "
@@ -185,12 +224,17 @@ def inspect_cmd(url, prop, request_indexing, confirm, fmt, quiet) -> None:
         result = _write("request_indexing", "request_indexing", url, prop, plan=plan)
         data.emit_record("Indexing requested", result, fmt)
         raise SystemExit(EXIT_OK)
-    info = data.call(SITE, "inspect", url, prop)
+    info = data.call(SITE, "inspect", url, prop, check_live_sitemap)
     if resolve_format(fmt) == "json":
         emit_json(info)
     else:
-        data.emit_record(f"URL Inspection: {url}", {k: (", ".join(v) if isinstance(v, list) else v)
-                                                    for k, v in info.items()}, fmt)
+        def flat(v):
+            if isinstance(v, list):
+                return ", ".join(x if isinstance(x, str) else f"{x.get('sitemap')}: {x.get('error')}" for x in v)
+            return v
+        data.emit_record(f"URL Inspection: {url}", {k: flat(v) for k, v in info.items() if k != "notes"}, fmt)
+        for note in info.get("notes") or []:
+            click.echo(f"note: {note}", err=True)
     raise SystemExit(EXIT_OK)
 
 
@@ -211,12 +255,30 @@ def performance_cmd(prop, start, end, dimension, limit, fmt, compact, select, qu
         raise click.UsageError(str(exc)) from None
     if first > last:
         raise click.UsageError("--start is after --end.")
-    rows = data.call(SITE, "performance", _property(prop), first.isoformat(), last.isoformat(), dimension, limit)
-    if not rows:
+    report = data.call(SITE, "performance", _property(prop), first.isoformat(), last.isoformat(), dimension, limit)
+    rows, totals = report["rows"], report["totals"]
+    if not rows and not totals["impressions"]:
         die(f"No {dimension} data in {first} .. {last}.", EXIT_NOT_FOUND)
+    if not rows:
+        report["note"] = (f"{totals['impressions']} impressions in range but no {dimension} rows: Search Console "
+                          "leaves anonymized queries out of its rows (the totals include them).")
     cols = [dimension, "clicks", "impressions", "ctr", "position"]
-    emit_rows(rows, title=f"{prop}: {dimension} ({first} .. {last})", fields=tuple(cols), compact_fields=tuple(cols),
-              columns=cols, noun="rows", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
+    out = "csv" if as_csv else resolve_format(fmt)
+    if out == "json":
+        if select or compact:
+            report["rows"] = select_fields(rows, select or ",".join(cols))
+        emit_json(report)
+        raise SystemExit(EXIT_OK)
+    emit_rows(rows, title=f"{report['property']}: {dimension} ({first} .. {last})", fields=tuple(cols),
+              compact_fields=tuple(cols), columns=cols, noun="rows", fmt=fmt, compact=compact, select=select,
+              quiet=quiet, as_csv=as_csv)
+    if not quiet:
+        pos = totals["position"]
+        click.echo(f"totals {first} .. {last}: {totals['clicks']} clicks, {totals['impressions']} impressions, "
+                   f"ctr {totals['ctr']}, position {pos if pos is not None else 'n/a'}"
+                   + (f" (data updated {report['lastUpdated']})" if report.get("lastUpdated") else ""), err=True)
+        if report.get("note"):
+            click.echo(f"note: {report['note']}", err=True)
     raise SystemExit(EXIT_OK)
 
 

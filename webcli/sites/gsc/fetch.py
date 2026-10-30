@@ -20,10 +20,11 @@ from webcli.core import browser
 from webcli.core.errors import AuthRequired, NotFound, RateLimited, UsageError
 from webcli.sites import google
 from webcli.sites.google import EMAIL_JS, SIGNED_OUT_HOSTS
-from webcli.sites.gsc import guard, parse
-from webcli.sites.gsc.endpoints import APP_HOST, APP_URL, BATCH_PATH, DEFAULT_EXAMPLES, DIMENSIONS, \
-    INDEX_FILTERS, INSPECT_MODE_INDEX, INSPECT_TIMEOUT_S, MAX_EXAMPLES, MAX_LIMIT, NOT_INDEXED, POLL_SECONDS, \
-    REQUEST_INDEXING_TIMEOUT_S, RPC, SOURCE_PATH, VIEW_INDEX_REASONS, VIEW_INDEX_SERIES, VIEW_REASON_URLS, WRITE_RPC
+from webcli.sites.gsc import guard, livesitemap, parse
+from webcli.sites.gsc.endpoints import APP_HOST, APP_URL, BATCH_PATH, DEFAULT_EXAMPLES, DIMENSIONS, INDEXED_KEY, \
+    INSPECT_MODE_INDEX, INSPECT_TIMEOUT_S, MAX_EXAMPLES, MAX_LIMIT, NOT_INDEXED, PAGE_SETS, PAGES_ALL_KNOWN, \
+    PAGES_SITEMAP, PAGES_SUBMITTED, POLL_SECONDS, REQUEST_INDEXING_TIMEOUT_S, RPC, SOURCE_PATH, VIEW_INDEX_REASONS, \
+    VIEW_INDEX_SERIES, VIEW_REASON_URLS, WRITE_RPC, index_filters
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -161,26 +162,72 @@ async def properties(*, headed: bool = False) -> list[dict]:
         return await _properties(page)
 
 
-async def pages(prop: str, examples: int = DEFAULT_EXAMPLES, *, headed: bool = False) -> dict:
-    """The Page indexing report: indexed / not indexed counts, and each not-indexed reason with up to `examples`
-    example URLs (Search Console's own order)."""
+async def _examples(page: "Page", prop: str, filters: list, key: str, examples: int) -> dict:
+    """Up to `examples` URLs for one reason key (or INDEXED_KEY) -> {examples, available}. `available` is how many
+    Search Console listed (it lists at most 1000)."""
+    head = [] if key == INDEXED_KEY else [key]
+    payload = [prop, VIEW_REASON_URLS, [[4, *head], *filters], None, None, None, "", [None, None, [13, key]]]
+    urls = parse.reason_urls(await rpc(page, RPC["report"], payload, prop=prop))
+    return {"examples": urls[:examples], "available": len(urls)}
+
+
+def _page_set(sitemap: str | None, listed: list[str]) -> tuple[int, str]:
+    if not sitemap:
+        return PAGES_ALL_KNOWN, ""
+    if sitemap == "all":
+        return PAGES_SUBMITTED, ""
+    if sitemap not in listed:
+        raise UsageError(f"{sitemap} isn't one of the property's submitted sitemaps"
+                         + (f" ({', '.join(listed)})." if listed else " (it has none)."),
+                         hint="run: webcli gsc sitemaps PROPERTY")
+    return PAGES_SITEMAP, sitemap
+
+
+async def pages(prop: str, examples: int = DEFAULT_EXAMPLES, sitemap: str | None = None, indexed: bool = False, *,
+                headed: bool = False) -> dict:
+    """The Page indexing report: indexed / not indexed counts, its last update and whether it is stale, and each
+    not-indexed reason with up to `examples` example URLs (Search Console's own order). sitemap: None (all known
+    pages), "all" (all submitted pages), or one submitted sitemap's URL, Search Console's own page-set filter.
+    indexed: also list indexed URLs (up to `examples`)."""
     prop = _prop(prop)
     examples = max(0, min(int(examples), MAX_EXAMPLES))
     async with browser.site_page(guard.READ) as page:
         await open_app(page, prop)
         await _known(page, prop)
-        counts = parse.index_counts(await rpc(page, RPC["series"], [prop, VIEW_INDEX_SERIES, INDEX_FILTERS],
-                                              prop=prop))
-        reasons = parse.reasons(await rpc(page, RPC["report"], [prop, VIEW_INDEX_REASONS,
-                                                                [*INDEX_FILTERS, NOT_INDEXED]], prop=prop))
+        listed = []
+        if sitemap and sitemap != "all":
+            listed = [r["sitemap"] for r in parse.sitemaps(await rpc(page, RPC["sitemaps"], [prop, prop], prop=prop))]
+        pages_set, sitemap_url = _page_set(sitemap, listed)
+        filters = index_filters(pages_set, sitemap_url)
+        counts = parse.index_counts(await rpc(page, RPC["series"], [prop, VIEW_INDEX_SERIES, filters], prop=prop))
+        reasons = parse.reasons(await rpc(page, RPC["report"], [prop, VIEW_INDEX_REASONS, [*filters, NOT_INDEXED]],
+                                          prop=prop))
+        crawls = []
         for reason in reasons:
-            reason["examples"] = []
+            reason["examples"], available = [], 0
             if examples and reason["pages"] and reason["key"]:
-                key = reason["key"]
-                payload = [prop, VIEW_REASON_URLS, [[4, key], *INDEX_FILTERS], None, None, None, "",
-                           [None, None, [13, key]]]
-                reason["examples"] = parse.reason_urls(await rpc(page, RPC["report"], payload, prop=prop))[:examples]
-        return {"property": prop, **counts, "reasons": reasons}
+                got = await _examples(page, prop, filters, reason["key"], examples)
+                reason["examples"], available = got["examples"], got["available"]
+            reason["examplesAvailable"] = available
+            reason["examplesTruncated"] = len(reason["examples"]) < reason["pages"]
+            crawls += [e["lastCrawled"] for e in reason["examples"]]
+        out: dict[str, Any] = {"property": prop,
+                               "filter": {"pages": PAGE_SETS[pages_set], "sitemap": sitemap_url or None}}
+        total = (counts["indexed"] + counts["notIndexed"]) if counts["indexed"] is not None else None
+        out.update(counts)
+        out["total"] = total
+        if indexed:
+            got = {"examples": [], "available": 0}
+            if examples and counts["indexed"]:
+                got = await _examples(page, prop, filters, INDEXED_KEY, examples)
+            out["indexedExamples"] = got["examples"]
+            out["indexedExamplesAvailable"] = got["available"]
+            out["indexedExamplesTruncated"] = len(got["examples"]) < (counts["indexed"] or 0)
+            crawls += [e["lastCrawled"] for e in got["examples"]]
+        stale, why = parse.staleness(counts["lastUpdated"], crawls, parse.report_today())
+        out.update({"stale": stale, "staleReasons": why, "warning": parse.stale_warning(prop, why) if stale else None,
+                    "examplesLimit": examples, "reasons": reasons})
+        return out
 
 
 async def sitemaps(prop: str, *, headed: bool = False) -> list[dict]:
@@ -192,8 +239,10 @@ async def sitemaps(prop: str, *, headed: bool = False) -> list[dict]:
 
 
 async def performance(prop: str, start: str, end: str, dimension: str = "query", limit: int = 25, *,
-                      headed: bool = False) -> list[dict]:
-    """Search results performance (web search) for one dimension over [start, end], both YYYY-MM-DD."""
+                      headed: bool = False) -> dict:
+    """Search results performance (web search) over [start, end], both YYYY-MM-DD: {property, searchType, start,
+    end, dimension, lastUpdated, totals (the whole range, Search Console's own), rows (one dimension, top `limit`),
+    rowsTruncated}."""
     prop = _prop(prop)
     if dimension not in DIMENSIONS:
         raise UsageError(f"--dimension must be one of {', '.join(DIMENSIONS)}.")
@@ -207,9 +256,18 @@ async def performance(prop: str, start: str, end: str, dimension: str = "query",
     async with browser.site_page(guard.READ) as page:
         await open_app(page, prop)
         await _known(page, prop)
+        try:
+            summary = parse.performance_totals(await rpc(page, RPC["series"],
+                                                         parse.performance_series_request(prop, first, last),
+                                                         prop=prop))
+        except ValueError:
+            raise RuntimeError(f"Search Console's Performance answer has no totals. {SNIFF_HINT}") from None
         payload = parse.performance_request(prop, DIMENSIONS[dimension], first, last)
         rows = parse.performance(await rpc(page, RPC["report"], payload, prop=prop), dimension)
-        return rows[-limit:] if dimension == "date" else rows[:limit]
+        shown = rows[-limit:] if dimension == "date" else rows[:limit]
+        return {"property": prop, "searchType": "web", "start": first.isoformat(), "end": last.isoformat(),
+                "dimension": dimension, "lastUpdated": summary["lastUpdated"], "totals": summary["totals"],
+                "rows": shown, "rowsTruncated": len(shown) < len(rows)}
 
 
 async def _resolve(page: "Page", url: str, prop: str | None) -> str:
@@ -230,8 +288,11 @@ async def _resolve(page: "Page", url: str, prop: str | None) -> str:
     return found
 
 
-async def inspect(url: str, prop: str | None = None, *, headed: bool = False) -> dict:
-    """URL Inspection's indexed data (never a live test): coverage, last crawl, canonicals, sitemaps."""
+async def inspect(url: str, prop: str | None = None, check_live_sitemap: bool = False, *,
+                  headed: bool = False) -> dict:
+    """URL Inspection's indexed data (never a live test): coverage, last crawl, canonicals, sitemaps, and notes
+    where its sitemap fields look contradictory. check_live_sitemap: also read the property's submitted sitemaps
+    live from the site (plain HTTPS, no Google session) and report inLiveSitemap."""
     async with browser.site_page(guard.READ) as page:
         await open_app(page)
         prop = await _resolve(page, url, prop)
@@ -241,7 +302,14 @@ async def inspect(url: str, prop: str | None = None, *, headed: bool = False) ->
             if time.monotonic() > deadline:
                 raise RuntimeError(f"URL Inspection didn't finish in {INSPECT_TIMEOUT_S}s; try again.")
             await asyncio.sleep(POLL_SECONDS)
-        return parse.inspection(await rpc(page, RPC["inspect_index"], [job, prop], prop=prop), url, prop)
+        info = parse.inspection(await rpc(page, RPC["inspect_index"], [job, prop], prop=prop), url, prop)
+        if check_live_sitemap:
+            submitted = [r["sitemap"] for r in parse.sitemaps(await rpc(page, RPC["sitemaps"], [prop, prop],
+                                                                        prop=prop))]
+            info["submittedSitemaps"] = submitted
+            info.update(await asyncio.to_thread(livesitemap.check, url, submitted, prop))
+        info["notes"] = parse.inspection_notes(info)
+        return info
 
 
 # Writes (each only after the CLI's --yes; each with its own one-shot guard budget)

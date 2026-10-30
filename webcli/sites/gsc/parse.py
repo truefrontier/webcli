@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from webcli.sites.gemini.parse import AUTH_CODES, NOT_FOUND_CODES, RpcError, at, envelopes, freq_entries
+from webcli.sites.gsc.endpoints import REPORT_TZ, STALE_DAYS
 
 __all__ = ["AUTH_CODES", "NOT_FOUND_CODES", "RpcError", "freq_entries", "rpc_payload"]
 
@@ -82,6 +84,18 @@ def iso_ms(ms: Any) -> str | None:
     if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0:
         return None
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def report_day(ms: Any) -> str | None:
+    """A Pages-report day (epoch ms, midnight UTC) -> its date in Search Console's reporting time zone, as the
+    report's own "Last update" shows it."""
+    if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=ZoneInfo(REPORT_TZ)).date().isoformat()
+
+
+def report_today() -> date:
+    return datetime.now(ZoneInfo(REPORT_TZ)).date()
 
 
 def humanize(text: str) -> str:
@@ -173,9 +187,32 @@ def index_counts(payload: Any) -> dict:
             continue
         ni, ok = at(values, col["INFORMATIONAL"]), at(values, col["OK"])
         if isinstance(ni, (int, float)) and isinstance(ok, (int, float)):
-            day = iso_ms(at(point, 0))
-            return {"indexed": int(ok), "notIndexed": int(ni), "asOf": day[:10] if day else None}
-    return {"indexed": None, "notIndexed": None, "asOf": None}
+            day = report_day(at(point, 0))
+            return {"indexed": int(ok), "notIndexed": int(ni), "lastUpdated": day, "asOf": day}
+    return {"indexed": None, "notIndexed": None, "lastUpdated": None, "asOf": None}
+
+
+def staleness(last_updated: str | None, crawls: list[str | None], today: date) -> tuple[bool, list[str]]:
+    """(stale, why) for the Pages report: its last update is more than STALE_DAYS days old, or an example URL was
+    crawled after it (so the report predates what Google already knows about that URL)."""
+    if not last_updated:
+        return True, ["Search Console's Pages report has no last-update date."]
+    updated = date.fromisoformat(last_updated)
+    why = []
+    age = (today - updated).days
+    if age > STALE_DAYS:
+        why.append(f"last updated {last_updated}, {age} days ago")
+    days = [report_day(datetime.strptime(c, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp() * 1000)
+            for c in crawls if c]
+    newer = sorted(d for d in days if d and d > last_updated)
+    if newer:
+        why.append(f"{len(newer)} example URL(s) crawled after it, up to {newer[-1]}")
+    return bool(why), why
+
+
+def stale_warning(prop: str, why: list[str]) -> str:
+    return (f"{prop}: the Pages report is stale ({'; '.join(why)}). Its counts lag URL Inspection by days; check "
+            "single URLs with `webcli gsc inspect URL`.")
 
 
 def _reason_enum(row: Any) -> tuple[str | None, str | None]:
@@ -289,6 +326,36 @@ def inspection(payload: Any, url: str, prop: str) -> dict:
     }
 
 
+PASSED_THROUGH = "This is Google's stored inspection data, passed through as is; it can lag or disagree with the " \
+                 "live sitemap."
+
+
+def is_sitemap_url(url: str) -> bool:
+    path = urlsplit(url).path.lower()
+    return "sitemap" in path or path.endswith((".xml", ".xml.gz"))
+
+
+def inspection_notes(info: dict) -> list[str]:
+    """Plain notes where URL Inspection's sitemap fields look contradictory (they are Google's, unchanged)."""
+    notes = []
+    indexed = info.get("coverageCode") == 1 or info.get("onGoogle")
+    if indexed and (not info.get("inSitemap") or not info.get("sitemaps")):
+        notes.append(f"inSitemap is false and sitemaps is empty, though coverage is '{info.get('coverageState')}'. "
+                     f"{PASSED_THROUGH}" + ("" if "inLiveSitemap" in info else " Check with --check-live-sitemap."))
+    sitemap_refs = [u for u in info.get("referringUrls") or [] if is_sitemap_url(u)]
+    if sitemap_refs:
+        notes.append(f"referringUrls includes {', '.join(sitemap_refs)}: Google lists a sitemap it found the URL "
+                     f"in as a referring page. {PASSED_THROUGH}")
+    live = info.get("inLiveSitemap")
+    if live is True and not info.get("inSitemap"):
+        notes.append("The live submitted sitemap lists this URL now; Google's stored data (inSitemap false) hasn't "
+                     "caught up.")
+    elif live is False and info.get("inSitemap"):
+        notes.append("Google's stored data puts this URL in a sitemap, but the live submitted sitemaps don't list "
+                     "it now.")
+    return notes
+
+
 # Performance
 
 def check_date(text: str, name: str) -> date:
@@ -305,6 +372,35 @@ def performance_request(prop: str, dim: int, start: date, end: date) -> list:
     return [prop, 32, None, None, None,
             [[dim], None, [[start.strftime("%Y%m%d"), end.strftime("%Y%m%d")]], [[6, ["WEB"]]],
              None, None, None, None, None, None, 1, None, None, 2, None, 1]]
+
+
+def performance_series_request(prop: str, start: date, end: date) -> list:
+    """OLiH4d's view-27 payload: the Performance chart (by day) for the range, web search; its answer carries the
+    range's totals and the data's last update."""
+    return [prop, 27, None, None, None,
+            [[1], None, [[start.strftime("%Y%m%d"), end.strftime("%Y%m%d")]], [[6, ["WEB"]]],
+             None, None, None, None, None, None, 1, None, None, 2, None, 1], None, None, [None, 2]]
+
+
+def performance_totals(payload: Any) -> dict:
+    """OLiH4d view 27 -> {totals: {clicks, impressions, ctr, position}, lastUpdated}: Search Console's own totals for
+    the whole range (anonymized queries included), as the Performance page's cards show them. Columns are named in
+    the answer (CLICKS, IMPRESSIONS, CTR, POSITION); the defaults are their order as seen."""
+    names = [at(c, 0) for c in (at(payload, 6, 2) or []) if isinstance(c, list)]
+    col = {n: i for i, n in enumerate(names) if isinstance(n, str)} or \
+        {"CLICKS": 0, "IMPRESSIONS": 1, "CTR": 2, "POSITION": 3}
+    values = at(payload, 1, 1, 1)
+    if not isinstance(values, list):
+        raise ValueError("no totals in the Performance answer")
+
+    def num(name):
+        v = at(values, col[name]) if name in col else None
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    clicks, impressions, position = int(num("CLICKS") or 0), int(num("IMPRESSIONS") or 0), num("POSITION")
+    return {"totals": {"clicks": clicks, "impressions": impressions,
+                       "ctr": round(clicks / impressions, 4) if impressions else 0.0,
+                       "position": round(position, 2) if impressions and position is not None else None},
+            "lastUpdated": iso_ms(at(payload, 1, 3))}
 
 
 def _key(key: Any, dimension: str) -> Any:

@@ -56,13 +56,30 @@ VIEW_PERFORMANCE = 32
 VIEW_INDEX_REASONS = 35
 VIEW_REASON_URLS = 33
 VIEW_INDEX_SERIES = 30
-INDEX_FILTERS = [[12, None, None, None, None, None, None, None, None, None, None, 3], [9, ""]]  # all known pages
+VIEW_PERFORMANCE_SERIES = 27  # OLiH4d: the Performance chart, with the range's totals and the data's last update
+# The Pages report's page set (its "All known pages" menu): filter 12 picks the set, filter 9 names a sitemap.
+PAGES_ALL_KNOWN, PAGES_SUBMITTED, PAGES_SITEMAP = 3, 2, 1
+PAGE_SETS = {PAGES_ALL_KNOWN: "all-known", PAGES_SUBMITTED: "all-submitted", PAGES_SITEMAP: "sitemap"}
+
+
+def index_filters(pages: int = PAGES_ALL_KNOWN, sitemap: str = "") -> list:
+    """The Pages report's filters: all known pages (3), all submitted pages (2), or one sitemap's pages (1, url)."""
+    return [[12, None, None, None, None, None, None, None, None, None, None, pages], [9, sitemap]]
+
+
+INDEX_FILTERS = index_filters()  # all known pages
 NOT_INDEXED = [26, None, None, None, None, None, None, None, None, None, 4]
+INDEXED_KEY = "valid"  # view 33's key for the indexed pages' list ("View data about indexed pages")
 
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 1000
 DEFAULT_EXAMPLES = 5
-MAX_EXAMPLES = 100
+MAX_EXAMPLES = 1000  # Search Console itself lists at most 1000 example URLs per reason
+STALE_DAYS = 3  # the Pages report is stale when its last update is older than this many days
+REPORT_TZ = "America/Los_Angeles"  # Search Console's reporting days (its "Last update" date)
+LIVE_SITEMAP_MAX_FILES = 50  # --check-live-sitemap: sitemap files followed (an index counts)
+LIVE_SITEMAP_MAX_BYTES = 20 * 1024 * 1024  # per file, after gzip
+LIVE_SITEMAP_TIMEOUT_S = 20
 POLL_SECONDS = 1.5
 INSPECT_TIMEOUT_S = 60
 REQUEST_INDEXING_TIMEOUT_S = 240  # the live test alone can take "a minute or two"
