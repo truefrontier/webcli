@@ -1,216 +1,97 @@
-# webcli / llmcli / chromecli
+# webcli
 
-Agent-native CLIs over your own signed-in Chrome sessions. Chrome always runs hidden (headless). Only a sign-in, or an explicit `--headed`, shows a window.
+webcli lets an AI agent use websites you're already signed in to, as you, from your own computer. The agent runs simple commands like `webcli amazon orders --since 30d` and gets back clean data (JSON) instead of clicking through web pages.
 
-- `llmcli`: chat AIs. `llmcli gemini` (gweb parity), `llmcli chatgpt` (cgpt parity), `llmcli muse` (Meta's Muse at muse.ai, musecli parity), and `llmcli notebooklm` (ask one NotebookLM notebook, answers with citations; the same site as `webcli notebooklm`).
-- `webcli`: data sites. `webcli aa` (Artificial Analysis LLM and TTS leaderboards, aanalysis parity), `webcli walkie` (Walkie.app meetings and dictations, walkie-cli parity), four read-only Google sites: `webcli keep` (Keep notes), `webcli photos` (Google Photos, with original-file downloads), `webcli youtube` (watch history, ytcli parity; plus read-only `subs`, `uploads`, and `home`, Shorts left out), and `webcli recorder` (Pixel Recorder recordings, transcripts, and audio; no MCP server), and two Google sites with guarded writes: `webcli contacts` (Google Contacts, gcontacts parity; `label add|remove` writes only with `--confirm`) and `webcli gmail` (Gmail filters; `filters create|delete` write only with `--confirm`), and `webcli notebooklm` (NotebookLM notebooks, sources, notes, and `ask` with citations; `create` makes a notebook and `source add` adds files (.md/.txt/.pdf), URLs, and text, only with `--confirm`; `generate` creates audio and video overviews, reports, quizzes, flashcards, mind maps, infographics, slide decks, and data tables only with `--confirm`, and `download` saves them; see [docs/notebooklm-site.md](docs/notebooklm-site.md)). Three social sites: `webcli linkedin` (messages, activity, your feed, post search, and Boost stats, limsg parity; the feed and posts commands are read-only; `messages send` and `post create` write only with `--confirm`, and only as the expected author), `webcli facebook` (your friends, fbc parity; read-only on Facebook), and `webcli loom` (your library and official transcripts, loom-cli parity; read-only). And `webcli messages` (your phone's texts through Google Messages for web, gmsg parity; finds older conversations by contact or number; `send` writes only with `--confirm`, and starts a new conversation only with `--new-ok` and exact `--expect-recipient`s) and `webcli whatsapp` (your WhatsApp chats through WhatsApp Web, unofficial; `send` writes only with `--confirm` and an exact `--expect-chat`). And `webcli amazon` (your Amazon orders, payment transactions, package tracking, and wish lists, with `match` to tie a card charge to its order; hard read-only; see [docs/amazon-site.md](docs/amazon-site.md)). And `webcli gsc` (Google Search Console: properties, page indexing, URL inspection, performance, and sitemaps; `sitemaps submit` and `inspect --request-indexing` write only with `--yes`; see [docs/gsc-site.md](docs/gsc-site.md)). And read-only feeds: `webcli perplexity` (Discover) and `webcli gnews` (Google News For you), with `webcli feed` pulling YouTube, Google News, Perplexity, and LinkedIn into one `newsfeed.items/1` file on a schedule, signed in first with a public fallback (see [docs/feed.md](docs/feed.md)). Plus `identity`, `doctor`, `sites`, and `serve`.
-- `chromecli`: the tabs you share from your real, signed-in Chrome, through the chromecli extension and a native messaging host: read them, and act in them (open, navigate, click, fill, ...) with your OK in the browser for anything risky; see [chromecli](#chromecli-tabs-you-share).
+You'd use it when you want an agent to watch, gather, or report on things that only live behind a login, and there's no official API (a way for programs to talk to the site) you can use.
 
-All three binaries come from one Python package and share one core and one data home, `~/.webcli/`.
+The same package also installs two related commands: `llmcli`, for chat AIs like Gemini and ChatGPT, and `chromecli`, for Chrome tabs you choose to share with an agent.
 
-## Install
+## How it works
 
-```sh
-pipx install truefrontier-webcli      # or: pip install truefrontier-webcli
-```
+1. **You sign in once.** `webcli identity login google:default` opens a normal Chrome window. You sign in the way you always do. webcli saves that sign-in (your *session*: the cookies that keep you logged in) in a Chrome profile folder on your computer, under `~/.webcli/`. webcli calls each saved sign-in an *identity*.
+2. **The session stays on your machine.** There's no webcli server and no webcli account. The profile folder is locked to your user, kept out of Time Machine backups, Spotlight, and sync tools, and the cookies stay protected by the macOS Keychain.
+3. **Agents run plain commands.** After sign-in, every command opens Chrome *hidden* (headless: no window, nothing on your screen), asks the site for the data the same way the site's own page does, and prints the result. When an agent runs it (output piped), the result is JSON. When you run it in a terminal, it's a readable table.
 
-This puts the `webcli`, `llmcli`, and `chromecli` commands (plus chromecli's `chromecli-host`) on your path. (`pip install truefrontier-llmcli` also works — it is a thin alias that depends on `truefrontier-webcli`.) The PyPI distribution is named `truefrontier-webcli`; the commands stay `webcli` and `llmcli`. With Homebrew: `brew install truefrontier/tap/webcli`. Both drive your installed **Google Chrome** (`channel="chrome"`), so install Chrome if you don't already have it; no separate `playwright install` step is needed.
+Each site has an *adapter*: a small piece of code that knows that one site's pages and requests. Adding a site means writing a new adapter. The existing ones live in [`webcli/sites/`](https://github.com/truefrontier/webcli/tree/main/webcli/sites).
 
-To develop from a checkout instead, see [Develop](#develop).
+webcli drives Chrome with Playwright, a browser-automation library. You don't need to know Playwright to use it.
 
-## Sign in (a person, once per identity)
+## Quick start
 
-Each identity is one Chrome profile. There are ten:
-
-| Identity | Used by | Profile |
-|---|---|---|
-| `google:default` | `llmcli gemini`, `llmcli notebooklm`, `webcli keep`, `webcli photos`, `webcli youtube`, `webcli recorder`, `webcli contacts`, `webcli gmail`, `webcli notebooklm`, `webcli gnews`, `webcli gsc` | `~/.webcli/identities/google-default/chrome-profile` |
-| `chatgpt:default` | `llmcli chatgpt` | `~/.webcli/identities/chatgpt-default/chrome-profile` |
-| `meta:default` | `llmcli muse` | `~/.webcli/identities/meta-default/chrome-profile` |
-| `facebook:default` | `webcli facebook` | `~/.webcli/identities/facebook-default/chrome-profile` |
-| `linkedin:default` | `webcli linkedin` | `~/.webcli/identities/linkedin-default/chrome-profile` |
-| `loom:default` | `webcli loom` | `~/.webcli/identities/loom-default/chrome-profile` |
-| `messages:default` | `webcli messages` | `~/.webcli/identities/messages-default/chrome-profile` |
-| `whatsapp:default` | `webcli whatsapp` | `~/.webcli/identities/whatsapp-default/chrome-profile` |
-| `amazon:default` | `webcli amazon` | `~/.webcli/identities/amazon-default/chrome-profile` |
-| `perplexity:default` | `webcli perplexity` (signed out: the public Discover feed) | `~/.webcli/identities/perplexity-default/chrome-profile` |
-
-Sign in opens a visible Chrome window, so run it yourself, never from an agent:
+webcli is built for macOS, and it needs Google Chrome.
 
 ```sh
-webcli identity login google:default     # same as: llmcli gemini login
-webcli identity login chatgpt:default    # same as: llmcli chatgpt login
-webcli identity login meta:default       # same as: llmcli muse login
-webcli identity login facebook:default   # Facebook (its own profile, not Muse's)
-webcli identity login linkedin:default   # LinkedIn (writes refuse unless signed in as your configured author)
-webcli identity login loom:default       # Loom
-webcli identity login messages:default   # Google Messages: scan the QR code with your phone
-webcli whatsapp login                    # WhatsApp Web (= webcli identity login whatsapp:default): scan its QR code
-webcli amazon login                      # Amazon (= webcli identity login amazon:default): password, maybe a one-time code
+pipx install truefrontier-webcli          # or: pip install truefrontier-webcli
+                                          # or: brew install truefrontier/tap/webcli
+
+webcli identity login google:default      # you do this, once: a Chrome window opens, sign in
+webcli keep search picnic                 # your Google Keep notes that mention "picnic"
+webcli doctor                             # health check: Chrome, sign-ins, folder security
+webcli agent-help --format json           # every command, flag, and exit code, for an agent to read
 ```
 
-Muse signs in with a Meta account (Facebook, Instagram, email, or phone). Signed out, muse.ai passes through auth.muse.ai, facebook.com, and instagram.com looking for a Meta session, then shows its own login form.
-
-Profiles start fresh. Nothing is copied from `~/.gemini-web-cli`, `~/.chatgpt-web-cli`, or `~/.muse-cli`.
-
-The Google data sites have no sign-in of their own. One `webcli identity login google:default` covers Gemini, Keep, Photos, YouTube, Recorder, Contacts, Gmail, and NotebookLM. YouTube keeps its own session: when it isn't signed in yet, `webcli youtube` follows YouTube's passive "Sign in" link once, which needs no page if the Google session exists. Nothing is copied from `~/.keep-cli`, `~/.photos-cli`, `~/.youtube-cli`, `~/.recorder-cli`, `~/.google-contacts-cli`, or `~/.gmail-cli`.
-
-`webcli facebook` has its own identity, `facebook:default`. It used to share Muse's `meta:default`, but Muse's sign-in leaves only Facebook's device cookies there, never its session (`c_user` and `xs`), so `webcli facebook status` stayed signed out. `webcli identity login facebook:default` finishes only once Facebook's own session is set, the account reads as signed in from `/me`, and a fresh hidden Chrome on the profile agrees. Nothing is copied from `~/.facebook-contacts-cli`, `~/.linkedin-messages-cli`, or `~/.loom-cli`; the friends cache starts fresh in `~/.webcli/sites/facebook/`.
-
-`webcli messages` has its own identity, `messages:default`, because Google Messages for web pairs with your phone, not with a Google account. `webcli identity login messages:default` opens Messages on its QR code page. On the phone, open Google Messages, then **Device pairing > QR code scanner**, and scan the code. Leave **Remember this computer** on. Login finishes once the conversation list shows and a fresh hidden Chrome on the profile is paired too. The pairing lives in that profile. Nothing is copied from `~/.google-messages-cli`, and there is no `gmsg` alias.
-
-`webcli whatsapp` has its own identity, `whatsapp:default`, linked to your phone as a WhatsApp Web device. `webcli whatsapp login` (same as `webcli identity login whatsapp:default`) opens WhatsApp Web on its QR code. On the phone, open WhatsApp, then **Settings > Linked devices > Link a device**, and scan the code. Login finishes once the chat list shows and a fresh hidden Chrome on the profile is linked too. The link lives in that profile and never leaves this computer; the phone lists it under Linked devices, where you can log it out. No agent scans the code or works around it.
-
-`webcli amazon` has its own identity, `amazon:default`. `webcli amazon login` opens Amazon's sign-in; enter your password and any one-time code Amazon asks for, and keep **Keep me signed in** checked. Login finishes once Your Orders shows and a fresh hidden Chrome on the profile agrees. If Amazon shows a captcha or bot check to a hidden run, `webcli amazon` exits 4 and says so; it never solves or skips one. A person runs `webcli amazon login` again.
-
-`aa` and `walkie` need no sign-in and never open Chrome:
-
-- `aa` calls the Artificial Analysis Free Data API over HTTPS. It needs a free API key in `ARTIFICIAL_ANALYSIS_API_KEY`, or saved with `webcli aa config set-key`. To reuse aanalysis's key: `webcli aa config set-key --key-file ~/.config/artificial-analysis/api_key`.
-- `walkie` reads Walkie.app's local SQLite, read-only, with no network. It finds the database itself, or takes `--db PATH` / `WALKIE_DB`.
-
-## Use
+Some ideas for a watchdog or project-manager agent, all read-only:
 
 ```sh
-llmcli gemini -p "What is 2+2?"                 # print mode, like claude -p
-llmcli chatgpt -p -m gpt-6 "Summarize this" --file notes.md
-llmcli gemini ask "Draw a fox" --image-out ~/Downloads/
-llmcli chatgpt chats list --format md
-llmcli muse -p --chat main "What's on my list today?"   # muse: no models, files, or images
-llmcli notebooklm -p -n "Research notes" "What do my sources say about X?"   # -n: notebook id, URL, or title
-llmcli notebooklm ask -n NOTEBOOK_ID "Summarize" --source SOURCE_ID --json   # answer + citations
-llmcli gemini agent-help --format json          # commands, flags, exit codes, env
-webcli aa digest smart-fast --limit 5           # Artificial Analysis: smart and fast LLMs
-webcli walkie meetings transcript standup --format md
-webcli keep search picnic --compact             # Google Keep notes (read-only)
-webcli photos download AF1Qip... -o ~/Downloads # the original photo or video file
-webcli youtube history --since 2026-10-01       # exact times from My Activity, else day precision
-webcli youtube uploads --since 48h --limit 50   # new from your subscriptions, no Shorts
-webcli gnews foryou --limit 30 --json           # Google News For you
-webcli perplexity discover --topic tech         # Perplexity Discover (public until `webcli perplexity login`)
-webcli feed pull                                # all your feeds -> ~/.webcli/feeds/YYYY-MM-DD-HHMM.json
-webcli recorder sync -o ~/Backups/recorder      # every transcript and audio file
-webcli contacts search ada --compact            # Google Contacts: My Contacts, then Other contacts
-webcli contacts label add Newsletter --from-label "Conference 2026"   # dry run: shows what would change
-webcli gmail filters create --from alerts@example.com --skip-inbox     # dry run: prints the plan
-webcli notebooklm notebooks --json              # NotebookLM: every notebook
-webcli notebooklm ask <notebook-id> "What are the key risks?"          # answer plus citations
-webcli notebooklm create "Q3 research" --file notes.md --url https://example.com/a --confirm   # id + URL
-webcli notebooklm source add <notebook-id> --file paper.pdf --urls-file links.txt --confirm --wait
-webcli notebooklm generate audio <notebook-id> --style debate          # dry run: prints the plan, exits 2
-webcli notebooklm generate report <notebook-id> --style study-guide --confirm --wait
-webcli notebooklm download <artifact-id> -o ~/Downloads/               # audio .m4a, video .mp4, report .md, ...
-webcli linkedin messages history Boardy --limit 5 # read-only; the guard blocks mark-as-read
-webcli linkedin feed --since 48h --limit 5   # read-only: your feed, newest first
-webcli linkedin posts search "AI agents" --since 2d --compact          # read-only: top posts matching a query (--sort latest)
-webcli linkedin posts from jane-doe --limit 3 # read-only: one profile's (or company/NAME page's) recent posts
-webcli linkedin posts read https://www.linkedin.com/feed/update/urn:li:activity:7380000000000000000/ --comments 10
-webcli linkedin post create --text-file post.txt --image card.png      # dry run: checks the author, posts nothing
-webcli facebook sync && webcli facebook search --city springfield      # read-only on Facebook; cache is local
-webcli loom transcript https://www.loom.com/share/<id>                 # Loom's official transcript, as text
-webcli messages read Alice --limit 20           # read-only: reading doesn't mark it read
-webcli messages send --to Alice --text "On my way"                     # dry run: shows who it would go to
-webcli messages search "(202) 555-0143"                                 # older conversations too, by contact or number
-webcli messages send --to 2025550143 --to "Alex Doe" --text "Hi" --new-ok   # dry run: a new group, who and what
-webcli amazon match 33.90 --date 2026-10-21 --json                     # which order a card charge was (read-only)
-webcli amazon transactions --since 30d --json   # charges and refunds: date, amount, card brand + last 4, order ids
-webcli amazon orders --since 30d --details      # orders with items, totals, and payment (last 4 only)
-webcli amazon track 111-2223334-5556667         # carrier, tracking number, delivery status
-webcli amazon wishlist "Books to read" --json
-webcli whatsapp chats --unread                  # chat list: name, last message, time, unread count
-webcli whatsapp read "Family Group" --limit 30  # opening a chat may send read receipts
-webcli whatsapp send "Alice Smith" --text "On my way" --expect-chat "Alice Smith"   # dry run
-webcli doctor                                   # hardening, Chrome, identities, daemons
+webcli amazon orders --since 30d --details    # recent orders, items, totals
+webcli gsc pages example.com --json           # Search Console: indexed and not-indexed pages, and why
+webcli linkedin feed --since 48h --limit 5    # the newest posts in your LinkedIn feed
+webcli feed pull                              # several feeds pulled into one file
 ```
 
-Output is JSON when piped and human on a terminal. `LLMCLI_FORMAT` / `WEBCLI_FORMAT` (`json|table|text|md`) change the default.
+An agent can run these on a schedule, compare today's results with yesterday's, and tell you when something changes.
 
-The tmuxlet chat-backend contract works as before: `llmcli <site> -p --prompt-file P --output-file A` writes the answer text to `A`, and errors go to stderr as JSON when the format env is `json`.
+Only a person should run sign-ins. They open a visible window, and some ask for a password, a code, or a QR scan from your phone. No agent does that part.
 
-## Exit codes (every site, both binaries)
+## Supported sites
 
-| Code | Meaning |
-|---|---|
-| 0 | ok |
-| 2 | usage error |
-| 3 | not found |
-| 4 | sign-in needed, or Cloudflare needs a visible check (`hidden_browser_blocked`) |
-| 5 | site or network error |
-| 6 | rate limited: JSON `{"error":"rate_limited","code":6,"message",...,"resets_at"}` (or `model_fallback` with `--strict-model`) |
-| 7 | config error (config.toml, identity, site) |
-| 8 | sent but not verified: a confirmed write went out, but the site didn't show it afterwards (`messages send`, `whatsapp send`; JSON `{"error":"sent_unverified","code":8,...}`). Check it; don't send it again |
-| 128+N | killed by signal N |
+**`webcli`** (data sites):
 
-## Writes
+- `aa`: Artificial Analysis leaderboards for AI models (needs their free API key; no Chrome).
+- `walkie`: Walkie.app meeting transcripts and dictations, read from the app's local database (no Chrome, no network).
+- `keep`: your Google Keep notes. Read-only.
+- `photos`: your Google Photos, including downloads of the original files. Read-only.
+- `youtube`: your watch history, subscriptions, uploads, and home feed. Read-only, except `playlist create`.
+- `recorder`: your Pixel Recorder recordings, transcripts, and audio. Read-only.
+- `contacts`: your Google Contacts. Read-only, except adding or removing a label.
+- `gmail`: your Gmail filters. List them, or create or delete one.
+- `notebooklm`: your NotebookLM notebooks, sources, and notes. Ask questions with citations, create notebooks, add sources, generate overviews and reports, and download them.
+- `gsc`: Google Search Console: your sites, page indexing, URL inspection, performance, and sitemaps. Read-only, except submitting a sitemap and requesting indexing.
+- `gnews`: your Google News "For you" feed. Read-only.
+- `perplexity`: Perplexity Discover's news. Read-only.
+- `linkedin`: your messages, activity, feed, post search, and Boost stats. Can send one DM or publish one post.
+- `facebook`: your friends list. Read-only on Facebook.
+- `loom`: your Loom library and official transcripts. Read-only.
+- `messages`: your phone's texts, through Google Messages for web. Can send a text.
+- `whatsapp`: your WhatsApp chats, through WhatsApp Web (unofficial). Can send a text to an existing chat.
+- `amazon`: your orders, card charges and refunds, package tracking, and wish lists. Read-only.
+- `feed`: pulls YouTube, Google News, Perplexity, and LinkedIn into one file, on a schedule if you like.
 
-Only six data-site verbs change anything on a site, and only with `--confirm` (alias `--yes`):
+**`llmcli`** (chat AIs): `gemini`, `chatgpt`, `muse` (Meta's Muse), and `notebooklm`. Send a prompt, get the answer back. These send your prompt to that company's AI service, so they aren't local AI.
 
-- `webcli contacts label add|remove LABEL` adds the selected contacts to one of your labels or removes them from it.
-- `webcli gmail filters create|delete` creates one filter or deletes one filter.
-- `webcli linkedin messages send THREAD --text T` sends one DM to one existing thread (`--send` works too).
-- `webcli linkedin post create --text T --image P` publishes one post: text plus one image.
-- `webcli messages send --to QUERY --text T` sends one text to one existing conversation. With `--new-ok` (`--to` repeated for a group), it may start a new conversation with exactly those recipients; `--confirm` then needs `--expect-recipient` for each. A send needs Kevin's own OK for that exact message.
-- `webcli whatsapp send CHAT --text T --expect-chat NAME` sends one text to one existing WhatsApp chat, only when its name is exactly NAME. It never starts a new chat and sends no attachments.
+**`chromecli`**: reads, and with your OK acts in, the tabs you share from your everyday Chrome, through a small Chrome extension.
 
-Without `--confirm`, each one is a dry run: it prints what it would change and exits 0. For contacts and gmail, passing `--dry-run` and `--confirm` together exits 2; for linkedin, messages, and whatsapp, `--dry-run` wins and it stays a dry run. For a confirmed run, the request guard allows only that command's writes: one label, one direction, and only the selected contacts; one filter write, bound to that filter's id or criteria; one DM or one post, bound to its thread, sender, text, and image; or one Google Messages send. See [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md).
+## Safety
 
-`chromecli` (a separate command) also writes, only with `--confirm` and only in tabs you share or it opened: `open`, `focus`, `close`, `navigate`, `click`, `type`, `fill`, `select`, `press` (`eval` is disabled). Without `--confirm`, or with `--dry-run`, each prints a preview and sends nothing to Chrome. Risky ones wait for your *Allow once* in a chromecli window in Chrome. See [chromecli](#chromecli-tabs-you-share).
+- **Read-only by default.** Most commands only read. The few that change something (send a message, publish a post, create a filter, and so on) do nothing unless you add `--yes` (or its twin, `--confirm`). Without it, they show you what they *would* do and stop.
+- **A guard blocks everything else.** Each site has a list of the exact requests its commands may make. The guard blocks any request that isn't on the list. That's what keeps read commands reading. (One catch: opening a WhatsApp chat may send read receipts.)
+- **Sends check who they're going to.** A LinkedIn post or DM refuses unless the signed-in account is the author you set. A WhatsApp send needs the exact chat name. A text to a new conversation needs `--new-ok` and every recipient spelled out.
+- **Logs stay local and redacted.** Errors and activity go to `~/.webcli/logs/`, with private details stripped out. chromecli logs every action it takes, and `gsc` logs its writes.
+- **Your sign-ins don't leave the machine.** The only network traffic goes to the sites themselves. Two exceptions, both opt-in: `webcli feed push` sends your feed file to a URL you give it, and chromecli's optional Jev feature sends to api.typesafe.ai only if you give it a TypeSafe key.
 
-Google Messages encrypts each message end to end between the browser and your phone, so its guard can't read the conversation or the text. The guard can read each phone action's type. It passes listing calls and blocks everything else, mark-as-read and typing included. A confirmed send first checks, in the page, that the open conversation is the one it resolved and that the compose box holds exactly your text. Only then does the guard open one slot for a single `SEND_MESSAGE`, for 10 seconds after the click. Afterwards, `confirmed` says whether the conversation showed the text. See [docs/messages-site.md](https://github.com/truefrontier/webcli/blob/main/docs/messages-site.md).
+## Learn more
 
-WhatsApp Web's traffic is one end-to-end encrypted WebSocket, so `webcli whatsapp` reads the rendered page and its guard can only hold it to WhatsApp's own hosts (GET only, plus that socket). A confirmed send checks, in the page, that the chat it resolved, the open chat's header (before typing and again right before the click), and `--expect-chat` are exactly the same name, and that the compose box was empty and then holds exactly your text; afterwards `confirmed` says whether your message showed with a tick. WhatsApp's terms prohibit automated access, so it stays gentle: on-demand commands only, no polling, a pause after every scroll, and a block or challenge page stops the command. A send needs Kevin's own OK for that exact message. See [docs/whatsapp-site.md](https://github.com/truefrontier/webcli/blob/main/docs/whatsapp-site.md).
+- **Full reference** (every identity, sign-in details, every example, exit codes, writes, privacy details, chromecli, and developing webcli): [docs/reference.md](https://github.com/truefrontier/webcli/blob/main/docs/reference.md)
+- **Per-site docs:**
+  - Google sites (Keep, Photos, YouTube, Recorder, Contacts, Gmail): [docs/google-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md)
+  - LinkedIn, Facebook, Loom: [docs/social-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md)
+  - NotebookLM: [docs/notebooklm-site.md](https://github.com/truefrontier/webcli/blob/main/docs/notebooklm-site.md)
+  - Search Console: [docs/gsc-site.md](https://github.com/truefrontier/webcli/blob/main/docs/gsc-site.md)
+  - Amazon: [docs/amazon-site.md](https://github.com/truefrontier/webcli/blob/main/docs/amazon-site.md)
+  - Google Messages: [docs/messages-site.md](https://github.com/truefrontier/webcli/blob/main/docs/messages-site.md)
+  - WhatsApp: [docs/whatsapp-site.md](https://github.com/truefrontier/webcli/blob/main/docs/whatsapp-site.md)
+  - Feeds (Perplexity, Google News, YouTube, `webcli feed`): [docs/feed.md](https://github.com/truefrontier/webcli/blob/main/docs/feed.md)
+  - chromecli: [docs/chromecli.md](https://github.com/truefrontier/webcli/blob/main/docs/chromecli.md)
+- **What's new:** [CHANGELOG.md](https://github.com/truefrontier/webcli/blob/main/CHANGELOG.md)
 
-The LinkedIn writes also check who is signed in. LinkedIn's send and post calls name no author, so they go out as whichever account the profile is signed in to. Both refuse, exit 4, and write nothing unless the signed-in handle matches the expected author. No author ships as a default: set yours with `--expect-author`, `WEBCLI_LINKEDIN_EXPECT_AUTHOR`, or `expect_author` under `[sites.linkedin]` in `config.toml`. Until one is configured, every LinkedIn write refuses. A dry run with the wrong account still prints its preview, warns, and exits 4. See [docs/social-data-sites.md](https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md).
-
-## How it stays hidden and private
-
-- Every command runs Chrome headless. `ignore_default_args` drops `--enable-automation` and `--use-mock-keychain`, so cookies stay under the real macOS Keychain key.
-- One headless Chrome per identity runs in a daemon (`llmcli serve --identity ID`, socket `~/.webcli/run/<identity>.sock`, 0600). Commands start it on demand. `WEBCLI_DAEMON=0` runs Chrome in-process instead.
-- A fail-closed request guard aborts anything a site's endpoint table doesn't list. Prompts go out only from `ask` / `-p`. WebSockets are closed, except Muse's chat stream to `wss://*.metaaivm.com`, which connects only from the running command's tab. That socket is encrypted, so the guard can't filter inside it; Muse's read commands type and click nothing that writes. Google Messages' relay calls are encrypted inside too, but their action type isn't, so that guard sorts them by type.
-- Every log line and printed error goes through the redaction module.
-- `~/.webcli` is 0700, excluded from Time Machine, and marked for Spotlight (`.metadata_never_index`) and sync tools (`.nosync`) when first created. `webcli doctor` re-checks it, and `webcli doctor --fix` re-applies it.
-
-## chromecli (tabs you share)
-
-`chromecli` reads and acts in the Chrome tabs you share with agents, in your everyday Chrome, through an MV3 extension ("chromecli", in `extensions/chromecli/` of this repo; Load unpacked) and a native messaging host (`chromecli-host`, host name `com.truefrontier.chromecli`). No CDP, no TCP port, no launchd: Chrome starts the host when the extension connects, and the host serves `~/.webcli/run/chromecli.sock` (0600).
-
-```sh
-chromecli install-host --confirm         # writes Chrome's NativeMessagingHosts/com.truefrontier.chromecli.json
-chromecli status                         # connected, extension version + ID, paused, shares, policy
-chromecli list                           # tabs you shared (popup: Off / Read / Act)
-chromecli read 123 --as md --elements
-chromecli screenshot --active -o ~/Downloads/t.png
-chromecli scroll 123 --to bottom               # Read is enough; scrolls the page's main scroller (or --container CSS)
-chromecli screenshot 123 --full-page           # page-01.png, page-02.png ... of the whole (image-only) document
-chromecli history --limit 20
-chromecli agent-help --format json
-
-# tab actions (preview unless --confirm)
-chromecli open https://docs.example.com --confirm        # background tab; auto-shared per act_allow / read_allow
-chromecli focus 123 --confirm | close 123 --confirm
-chromecli navigate 123 https://app.example.com/x --expect-origin https://app.example.com --confirm
-
-# page actions (Share-act + --tab + --expect-origin/--expect-url; preview unless --confirm)
-chromecli click  --tab 123 --text 'Next' --role link --expect-origin https://app.example.com --confirm
-chromecli fill   --tab 123 --selector '#email' --value-file ~/v.txt --expect-origin https://app.example.com --confirm
-chromecli select --tab 123 --selector '#country' --value US --expect-origin https://app.example.com --confirm
-chromecli press Enter --tab 123 --ref e7 --expect-origin https://app.example.com --confirm
-chromecli wait   --tab 123 --text 'Saved' --timeout 15
-chromecli find   --tab 123 'the email field'                # Jev if you saved a TypeSafe key, else heuristics
-chromecli grant add --op click --origin https://shop.example.com --target-text 'Place order' --max-amount 49.99 \
-  --quote "yes, place it if it's under \$50" --user-approved --confirm   # only your words; Jev checks the scope
-chromecli click  --tab 123 --find 'the save button' --expect-origin https://app.example.com --confirm
-```
-
-Only tabs you share in the toolbar popup are visible; a share ends when the tab goes to another origin or Chrome restarts. *Pause agents* (popup, or Cmd+Shift+Period) makes everything but `status` exit 4. Banks, sign-in pages, password managers, and checkout/cart paths are denied by default (`[chromecli]` in `config.toml`); config changes that widen access wait for you to Accept them in the popup. **Writes:** every action prints a `{"dryRun": true, ...}` preview and sends nothing unless `--confirm` (and `--dry-run` wins). Risky ones (submit-like clicks such as Place order / Send / Delete, Enter in a form field, typing into password / payment / one-time-code fields, opening, or navigating to another origin, outside `read_allow`/`act_allow`) also open a chromecli window in Chrome where you click *Allow once* or *Deny* (60s; Deny is the default). Deny / timeout / Pause exit 4; a page not at `--expect-*` exits 5 `url_mismatch`; an action that went out but failed its read-back or `--verify-*` check exits 8 `sent_unverified`. `eval` is disabled (exit 7): Chrome's MV3 isolated-world CSP forbids running code strings. Typed values are logged only as `<N chars sha256:8>`. **Jev (optional, bring your own key):** paste a TypeSafe API key in the extension's options (popup → Jev → Options) and `find` / `--find` rank elements with Jev, and clicks are classified: in tabs you Share-act yourself, a click skips Jev's prompt when Jev is ≥ 70% sure it's safe (the act-tab safe floor in options), and same-origin moves don't ask; in tabs an agent opened, anything Jev isn't ≥ 0.9 sure is safe asks you. Jev only adds prompts, never removes one. The key stays in the extension (only its service worker sends it, to api.typesafe.ai); without a key, heuristics are used. **Pre-approvals (0.10.1):** an agent may record a "yes" you gave it in chat (`chromecli grant add ... --quote "<your exact words>" --user-approved`) so that one action skips the browser confirm (default 1 use, 30 minutes, at most 24h; optional `--max-amount` cap read from the page). There's no popup toggle: the CLI trusts `--user-approved` (the agent's statement that those are your words), and Jev (your TypeSafe key, required) only checks that your words authorize exactly that grant, refusing overreach or unclear ones (exit 9) and tightening a cap, use count or time you stated. You get a Chrome notification when one is used, the popup lists and revokes them, and Pause or restarting Chrome revokes them all. Password / payment / one-time-code fields and denied origins always ask. **Scroll and full-page screenshots (0.10.2):** `scroll` and `screenshot --full-page` work on Read tabs (no prompt): they find the element that actually scrolls (e.g. an e-sign viewer's inner pane) and `--full-page` captures it viewport by viewport into `page-NN.png` files, then puts the scroll position back. Tabs a click opens from a tab you Share-act'd are shared too (act on the same origin, read elsewhere), and open shadow DOM (e.g. Shopify admin web components) is readable and clickable. Exit 5 `bridge_down` means Chrome or the extension isn't connected. Full reference: [docs/chromecli.md](https://github.com/truefrontier/webcli/blob/main/docs/chromecli.md).
-
-## Develop
-
-```sh
-python3 -m venv .venv && .venv/bin/pip install -e . pytest
-.venv/bin/python -m pytest -q      # offline: no browser, no network, temp WEBCLI_HOME
-node --test extensions/chromecli/test   # the chromecli extension's pure modules and a mocked service worker
-```
-
-After sign-in, check the hidden-browser promise live with [docs/post-login-verification.md](https://github.com/truefrontier/webcli/blob/main/docs/post-login-verification.md).
-
-See [`BUILD_SPEC.md`](https://github.com/truefrontier/webcli/blob/main/BUILD_SPEC.md) (Phase 1) and `docs/consolidation-design.md` for the plan.
+MIT license.
