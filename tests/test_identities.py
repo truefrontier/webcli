@@ -140,7 +140,7 @@ def test_doctor_reports_home_chrome_and_identities_without_a_browser():
                                                                       "whatsapp:default": False}
     assert report["chrome"]["ignoredDefaultArgs"] == ["--enable-automation", "--use-mock-keychain"]
     assert report["sites"] == {"llmcli": ["chatgpt", "gemini", "muse"],
-                               "webcli": ["aa", "amazon", "contacts", "facebook", "gmail", "gnews", "keep", "linkedin", "loom",
+                               "webcli": ["aa", "amazon", "contacts", "facebook", "gmail", "gnews", "gsc", "keep", "linkedin", "loom",
                                           "messages", "notebooklm", "perplexity", "photos", "recorder", "walkie",
                                           "whatsapp", "youtube"]}
 
@@ -149,7 +149,7 @@ def test_sites_lists_every_llm_site_and_the_data_sites():
     result = CliRunner().invoke(webcli_app.build(), ["sites"])
     data = json.loads(result.stdout)
     assert [s["name"] for s in data["llmcli"]] == ["chatgpt", "gemini", "muse"]
-    assert [s["name"] for s in data["webcli"]] == ["aa", "amazon", "contacts", "facebook", "gmail", "gnews", "keep",
+    assert [s["name"] for s in data["webcli"]] == ["aa", "amazon", "contacts", "facebook", "gmail", "gnews", "gsc", "keep",
                                                    "linkedin", "loom", "messages", "notebooklm", "perplexity", "photos",
                                                    "recorder", "walkie", "whatsapp", "youtube"]
     own = {"amazon": "amazon", "facebook": "facebook", "linkedin": "linkedin", "loom": "loom", "messages": "messages",
