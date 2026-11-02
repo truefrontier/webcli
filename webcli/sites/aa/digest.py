@@ -17,7 +17,7 @@ OPEN_WEIGHT_CREATORS = {
     "meta", "alibaba", "deepseek", "mistral ai", "mistral", "google", "microsoft", "tsinghua", "01.ai", "databricks",
     "stability ai", "eleutherai", "together", "z ai", "kimi",
 }
-PROPRIETARY_NAMES = ("gpt-4", "gpt-5", "gpt-6", "claude", "gemini-pro", "palm")
+PROPRIETARY_NAMES = ("gpt-4", "gpt-5", "gpt-6", "claude", "gemini", "palm")
 CODING_NAMES = ("code", "coder", "codestral", "deepseek")
 PICK_CATEGORIES = ("local", "cheap-api", "frontier", "coding-agent")
 
