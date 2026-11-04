@@ -53,8 +53,8 @@ AUTH_CHECK = "/api/auth/check"
 # header), else a Next.js server-action id ("next-action:<id>"), else "doc_id:<id>", else None.
 # See parse.post_op.
 
-# GETs with side effects. BUNDLE: the app signs out with GET /api/logout?sessionBindingId=...
-SIDE_EFFECT_GETS = (("muse.ai", "/api/logout"),)
+# GETs with side effects, on any app host. BUNDLE: the app signs out with GET /api/logout?sessionBindingId=...
+SIDE_EFFECT_GETS = tuple((host, "/api/logout") for host in sorted(APP_HOSTS))
 
 # BUNDLE: session upkeep, no user data. Allowed for every guarded command.
 SESSION_POSTS = {("muse.ai", AUTH_CHECK, None)}
