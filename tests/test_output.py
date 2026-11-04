@@ -108,6 +108,17 @@ def test_md_and_csv_formats_and_the_format_env():
     assert run("gemini", "ask", "q", env={"LLMCLI_FORMAT": "text"}).stdout.startswith("Four.")
 
 
+@pytest.mark.parametrize("show", [
+    lambda title: output.kv_table(title, {"title": "x :smile: [part 1]"}),
+    lambda title: output.rows_table(title, [{"title": "x :smile: [part 1]"}], ["title"]),
+], ids=["kv_table", "rows_table"])
+def test_table_titles_and_cells_print_as_written(capsys, show):
+    for title in ("Demo [/b]", "Onboarding [part 1]", ":smile: time"):  # "[/b]" used to raise MarkupError
+        show(title)
+        out = capsys.readouterr().out
+        assert title in out and "x :smile: [part 1]" in out and "😄" not in out
+
+
 def test_resolve_format_order(monkeypatch):
     monkeypatch.setattr(output, "FORMAT_ENV", "LLMCLI_FORMAT")
     monkeypatch.setenv("LLMCLI_FORMAT", "table")
