@@ -149,7 +149,8 @@ def history_cmd(limit, since, source, fmt, compact, select, quiet, as_csv) -> No
     elif out == "md":
         emit_md(shown)
     else:
-        rows_table("YouTube watch history", [{c: _cell(r, c) for c in COLUMNS} for r in rows], COLUMNS)
+        columns = list(COMPACT) if compact else COLUMNS  # --select stays JSON/CSV/md, as its help says
+        rows_table("YouTube watch history", [{c: _cell(r, c) for c in columns} for r in rows], columns)
     note_showing(len(rows), quiet=quiet, noun="watches")
     raise SystemExit(EXIT_OK)
 
@@ -173,6 +174,8 @@ def _emit_rows(title: str, rows: list[dict], fields, compact_fields, columns, ce
         emit_json(shown)
     elif out == "md":
         emit_md(shown)
+    elif compact:  # the compact fields as they are: `cell` only knows the table's own columns
+        rows_table(title, rows, list(compact_fields))
     else:
         rows_table(title, [{c: cell(r, c) for c in columns} for r in rows], columns)
     note_showing(len(rows), quiet=quiet, noun=noun)

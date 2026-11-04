@@ -185,10 +185,11 @@ async def youtube_history(page: "Page", *, limit: int | None, cutoff: datetime |
 
 
 async def myactivity_history(page: "Page", *, limit: int | None, cutoff: datetime | None,
-                             notes: list[str]) -> list[dict]:
+                             notes: list[str]) -> list[dict] | None:
     """Best-effort exact timestamps from My Activity: the page's own responses, else its rendered DOM.
 
-    limit=None: no row cap; scrolls until the cutoff, the end of the list, or MAX_SCROLLS. Raises
+    limit=None: no row cap; scrolls until the cutoff, the end of the list, or MAX_SCROLLS. None when no watch entry
+    parsed at all, [] when entries parsed but none is inside the cutoff (auto falls back only on None). Raises
     VerificationRequired when the "verify it's you" gate hides every entry.
     """
     bodies: list[str] = []
@@ -231,7 +232,7 @@ async def myactivity_history(page: "Page", *, limit: int | None, cutoff: datetim
         if rows and myactivity.verification_required(await page.inner_text("body")):
             notes.append("My Activity shows only part of your history until Google's \"verify it's you\" check "
                          "passes (a person's job).")
-        return rows[:limit]
+        return rows[:limit] or None
     finally:
         page.remove_listener("response", on_response)
 
@@ -247,7 +248,8 @@ async def history(source: str = "auto", limit: int | None = None, since: str | N
         if source == "youtube":
             return {"rows": await youtube_history(page, limit=limit, cutoff=cutoff), "notes": notes}
         if source == "myactivity":
-            return {"rows": await myactivity_history(page, limit=limit, cutoff=cutoff, notes=notes), "notes": notes}
+            return {"rows": await myactivity_history(page, limit=limit, cutoff=cutoff, notes=notes) or [],
+                    "notes": notes}
         try:
             rows = await myactivity_history(page, limit=limit, cutoff=cutoff, notes=notes)
             reason = "no watch entries could be parsed"
@@ -255,8 +257,8 @@ async def history(source: str = "auto", limit: int | None = None, since: str | N
             notes.append(f"{exc}. Using YouTube history (day precision).")
             return {"rows": await youtube_history(page, limit=limit, cutoff=cutoff), "notes": notes}
         except Exception as exc:  # best-effort source: any failure falls back
-            rows, reason = [], (str(exc) or type(exc).__name__).splitlines()[0]
-        if rows:
+            rows, reason = None, (str(exc) or type(exc).__name__).splitlines()[0]
+        if rows is not None:  # [] = My Activity worked and nothing is inside --since
             return {"rows": rows, "notes": notes}
         notes.append(f"My Activity unavailable ({reason}); using YouTube history (day precision).")
         return {"rows": await youtube_history(page, limit=limit, cutoff=cutoff), "notes": notes}

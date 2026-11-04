@@ -142,6 +142,8 @@ def emit_csv(rows: Sequence[dict], fields: Sequence[str] | None = None) -> None:
     if not rows:
         return
     fields = list(fields or rows[0].keys())
+    if hasattr(sys.stdout, "reconfigure"):  # CSV is data: UTF-8 even on an ASCII or latin-1 locale
+        sys.stdout.reconfigure(encoding="utf-8")
     writer = csv.DictWriter(sys.stdout, fieldnames=fields, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for row in rows:
@@ -211,8 +213,8 @@ def emit_rows(rows, *, title, fields, compact_fields, columns, noun, fmt, compac
         emit_json(data)
     elif out == "md":
         emit_md(data)
-    else:
-        rows_table(title, rows, columns)
+    else:  # --compact narrows the table too; --select stays JSON/CSV/md, as its help says
+        rows_table(title, rows, list(compact_fields) if compact else columns)
     note_showing(len(rows), quiet=quiet, noun=noun)
 
 

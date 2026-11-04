@@ -564,3 +564,13 @@ def test_export_writes_a_private_vcard(calls, tmp_path):
 def test_csv_export_cells_cannot_run_as_formulas():
     row = export.csv_row({**CONTACT, "name": "=HYPERLINK(1)", "phones": [{"value": "+1 202-555-0100"}]})
     assert row["name"] == "'=HYPERLINK(1)" and row["phones"] == "+1 202-555-0100"
+
+
+@pytest.mark.parametrize("unpack", [parse.contacts_page, parse.other_page])
+def test_a_list_page_of_the_wrong_shape_is_a_site_error(monkeypatch, unpack):
+    async def rpc(page, rpcid, payload):
+        return {"not": "a list"}  # Google changed the answer's shape
+
+    monkeypatch.setattr(fetch, "rpc", rpc)
+    with pytest.raises(fetch.SiteError, match="unexpected shape"):
+        asyncio.run(fetch.paginate(None, RPC["contacts"], [], lambda token: [token], unpack, limit=None))

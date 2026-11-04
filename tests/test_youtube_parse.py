@@ -195,3 +195,14 @@ def test_video_id_takes_ids_and_links(text, video):
 def test_video_id_refuses_anything_else(text):
     with pytest.raises(ValueError):
         parse.video_id(text)
+
+
+def test_feb_29_without_a_year_in_a_year_with_no_feb_29():
+    assert parse_day_header("Feb 29", date(2025, 1, 10)) == date(2024, 2, 29)  # last year's
+    assert parse_day_header("Feb 29", date(2024, 3, 1)) == date(2024, 2, 29)
+    assert parse_day_header("Feb 29", date(2026, 3, 1)) is None  # none in the last 12 months
+
+
+@pytest.mark.parametrize("header", ["Decades 12", "Mayday 3", "Junk 5", "3 Decades", "Octopus 1, 2025"])
+def test_words_that_only_start_like_a_month_are_not_day_headers(header):
+    assert parse_day_header(header, TODAY) is None
