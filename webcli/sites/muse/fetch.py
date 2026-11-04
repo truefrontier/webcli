@@ -288,10 +288,8 @@ async def wait_for_answer(page: "Page", before: dict, timeout: float) -> list[di
         if not busy and loop.time() - changed_at >= STABLE_SECONDS:
             raw = await page.evaluate(TURN_JS, [SELECTORS, before["replies"]])
             return [m for m in map(parse.message, raw) if m]
-    chat = parse.thread_id(page.url)
     seen = f"{len(last_text[1])} chars so far" if last_text else "no reply seen"
-    later = f" Read it later: llmcli muse chats show {chat}" if chat else ""
-    raise TimeoutError(f"No finished answer after {timeout:g}s ({seen}).{later} {why()}")
+    raise TimeoutError(f"No finished answer after {timeout:g}s ({seen}). {why()}")  # ask adds where to read it
 
 
 async def ask(prompt: str, *, chat_id: str | None = None, timeout: float = 300, headed: bool = False) -> dict:
@@ -304,11 +302,22 @@ async def ask(prompt: str, *, chat_id: str | None = None, timeout: float = 300, 
     async with open_page(headless=not headed, send=True) as page:
         await open_app(page, thread_url(chat_id) if chat_id else NEW_THREAD)
         before = await steady(page)
+        # Checked after steady(), right before typing: muse.ai may leave a chat it can't load while the history renders.
+        if chat_id and not parse.on_chat(page.url, chat_id):
+            raise NotFound(f"No chat {chat_id}: muse.ai went to {urlsplit(page.url).path} instead. Nothing was sent.",
+                           hint="Check the id with: llmcli muse chats list")
         composer = page.locator(SELECTORS["composer"]).filter(visible=True).first
         await composer.fill(prompt)
-        await composer.press("Enter")
-        replies = await wait_for_answer(page, before, timeout)
-        await _wait_url(page, lambda url: urlsplit(url).path != ROUTES["new_thread"])
+        try:
+            await composer.press("Enter")
+            replies = await wait_for_answer(page, before, timeout)
+            await _wait_url(page, lambda url: urlsplit(url).path != ROUTES["new_thread"])
+        except Exception as exc:  # the prompt is (or may be) out: the error must not invite a resend
+            chat = parse.thread_id(page.url) or chat_id
+            where = (f"Read the answer with: llmcli muse chats show {chat}" if chat
+                     else "Find the new chat with: llmcli muse chats list")
+            said = (str(exc) or type(exc).__name__).rstrip(".")
+            raise RuntimeError(f"{said}. The prompt was sent: don't resend it. {where}") from exc
         opened = parse.thread_id(page.url) or chat_id
     return {"chatId": opened, "chatUrl": thread_url(opened) if opened else None, "prompt": prompt,
             "answer": "\n\n".join(r["text"] for r in replies),
