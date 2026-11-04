@@ -153,11 +153,8 @@ def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, can
     _need_session()
     fmt = images.wanted_format(image_out) if image_out else None
     result = _call("ask", prompt, chat_id=chat_id, model=model, image_format=fmt, **kwargs)
-    last = llm.last_chat_file(SITE)
-    if result["chatId"]:
-        _write(last, result["chatId"] + "\n", result["chatId"])
-    else:
-        last.unlink(missing_ok=True)  # so -c can't fall back to an older chat
+    chat = result["chatId"]
+    _write(llm.last_chat_file(SITE), f"{chat}\n" if chat else None, chat)  # None clears it: -c can't use an older chat
     _save_images(result, image_out, prompt)
     _save_canvas(result, canvas_out)
     if image_out is None and result["imageCount"]:
