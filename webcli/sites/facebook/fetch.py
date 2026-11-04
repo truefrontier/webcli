@@ -206,8 +206,9 @@ async def sync(limit: int | None = None, *, headed: bool = False) -> dict:
     """Your Friends tab, scrolled until `limit` friends or the list stops growing.
 
     Parses after every scroll and merges by profile key, so friends Facebook drops from the DOM as the list grows are
-    kept. {friends, scrolls, complete, blocked}. complete is False when the limit or MAX_SCROLLS stopped it, or when
-    the guard blocked a pagination query (the list may only look finished).
+    kept. {friends, scrolls, complete, blocked}. complete is False when the limit or MAX_SCROLLS stopped it, when the
+    guard blocked a pagination query (the list may only look finished), or when the page's main region was gone at the
+    last read.
     """
     async with browser.site_page(read_policy(SYNC_QUERIES)) as page:
         await open_fb(page, FRIENDS_URL)
@@ -230,8 +231,9 @@ async def sync(limit: int | None = None, *, headed: bool = False) -> dict:
                 break
             stall = 0 if fresh else stall + 1
             if stall >= STALL_SCROLLS:
-                # Stopped growing. That's the end of the list only if no scroll query was blocked.
-                complete = not any("PaginationQuery" in line for line in guard.state.blocked)
+                # Stopped growing. That's the end of the list only if the list was still on the page and no scroll
+                # query was blocked.
+                complete = html is not None and not any("PaginationQuery" in line for line in guard.state.blocked)
                 break
             if scrolls >= MAX_SCROLLS:
                 break
@@ -277,8 +279,10 @@ async def about(who: dict, *, headed: bool = False) -> dict:
 
 async def about_many(people: list[dict], *, headed: bool = False) -> list[dict]:
     """About records for several people in one page, with a pause between people: [{person, record}] or
-    [{person, error}] per person, in order. A missing or unreadable profile is an error entry and the rest go on;
-    signed out mid-run (AuthRequired) stops everything."""
+    [{person, error}] per person, in order. A missing or unreadable profile, or one that timed out, is an error entry
+    and the rest go on; signed out mid-run (AuthRequired) or a closed Chrome stops everything."""
+    from playwright.async_api import Error as PlaywrightError  # its TimeoutError is not a RuntimeError
+
     out = []
     async with browser.site_page(read_policy(ABOUT_QUERIES)) as page:
         for n, who in enumerate(people):
@@ -288,6 +292,8 @@ async def about_many(people: list[dict], *, headed: bool = False) -> list[dict]:
                 out.append({"person": who, "record": await _about(page, person(who))})
             except AuthRequired:
                 raise  # signed out mid-run: stop, don't keep loading pages (it subclasses RuntimeError)
-            except (NotFound, RuntimeError) as exc:
+            except (NotFound, RuntimeError, PlaywrightError) as exc:
+                if page.is_closed():
+                    raise
                 out.append({"person": who, "error": str(exc)})
     return out
