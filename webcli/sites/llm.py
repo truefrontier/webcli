@@ -7,6 +7,7 @@ servedModel, servedModelDisplay, fallback, images, citations, canvas.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -84,10 +85,13 @@ def site_group(site: Site, help_text: str) -> click.Group:
 
 def prompt_arg(ctx: click.Context | None, param: click.Parameter | None, value: str) -> str:
     """`-` reads stdin. Never waits on a terminal: that would be a TTY prompt."""
-    if value == "-":
-        if sys.stdin.isatty():
-            raise click.BadParameter("`-` reads the prompt from stdin, but stdin is a terminal. Pipe it in.")
-        value = sys.stdin.read()
+    if value == "-" and sys.stdin.isatty():
+        raise click.BadParameter("`-` reads the prompt from stdin, but stdin is a terminal. Pipe it in.")
+    try:
+        value = sys.stdin.read() if value == "-" else value
+        value.encode("utf-8")  # bad bytes in argv arrive as lone surrogates, which would reach the site garbled
+    except UnicodeError:
+        raise click.BadParameter("The prompt isn't UTF-8 text.") from None
     value = value.strip()
     if not value:
         raise click.BadParameter("The prompt is empty.")
@@ -112,8 +116,13 @@ def print_prompt(words: tuple[str, ...], prompt_file: Path | None) -> str:
 
 
 def check_output_file(output_file: Path | None) -> None:
-    if output_file and str(output_file) != "-" and not output_file.parent.is_dir():
+    """Before the prompt is sent: once it is, a failed write can only say "don't resend"."""
+    if not output_file or str(output_file) == "-":
+        return
+    if not output_file.parent.is_dir():
         die(f"--output-file: no such directory: {output_file.parent}", EXIT_USAGE)
+    if not os.access(output_file.parent, os.W_OK | os.X_OK):  # write_atomic writes a temp file beside it
+        die(f"--output-file: directory not writable: {output_file.parent}", EXIT_USAGE)
 
 
 def emit_answer(output_file: Path | None, text: str, write: Callable[[Path, str], None]) -> None:
@@ -124,12 +133,16 @@ def emit_answer(output_file: Path | None, text: str, write: Callable[[Path, str]
         click.echo(text, nl=False)
 
 
-def writer(site_label: str, show_cmd: str, home_url: str) -> Callable[[Path, str, str | None], None]:
-    """write_atomic once the site has answered. On failure, exit 5 saying where the answer is, so nobody resends."""
+def writer(site_label: str, show_cmd: str, home_url: str) -> Callable[[Path, str | None, str | None], None]:
+    """write_atomic (text None: remove the file) once the site has answered. On failure, exit 5 saying where the
+    answer is, so nobody resends."""
 
-    def write(path: Path, text: str, chat_id: str | None) -> None:
+    def write(path: Path, text: str | None, chat_id: str | None) -> None:
         try:
-            write_atomic(path, text)
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                write_atomic(path, text)
         except OSError as exc:
             where = f"Read it with: {show_cmd} {chat_id}" if chat_id else f"Read it at {home_url}."
             die(f"{site_label} answered, but writing {path} failed: {exc}", EXIT_API,
