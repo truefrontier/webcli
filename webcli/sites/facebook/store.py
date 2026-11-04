@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -146,10 +147,29 @@ def people() -> list[dict]:
 
 # --- Search and flat rows (pure: they work on people() output) -----------------------------------
 
-def _fold(text: str | None) -> str:
-    import unicodedata
+# Apostrophes dropped and dashes made "-", so "obrien", "O'Brien", and "O’Brien" all find each other.
+_PUNCT = str.maketrans({**dict.fromkeys("'‘’ʼ"), **dict.fromkeys("‐‑‒–—―−", "-")})
 
-    return unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+
+def _fold(text: str | None) -> str:
+    """Accents dropped, case folded; other letters kept ("Иван" stays searchable, "Straße" is "strasse")."""
+    bare = "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c))
+    return unicodedata.normalize("NFC", bare).casefold().translate(_PUNCT)  # NFC rejoins Hangul syllables
+
+
+# Bookkeeping in the About and enrichment records: not facts about the person, so --keyword skips them.
+_NOT_SEARCHED = {"source", "confidence", "webSearch", "sections", "fetchedAt", "enrichedAt", "profileUrl"}
+
+
+def _strings(value) -> list[str]:
+    """Every string value in a JSON record, minus bookkeeping fields. Keys, nulls, and booleans aren't text."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for k, v in value.items() if k not in _NOT_SEARCHED for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
 
 
 def _value(field: dict | None) -> str | None:
@@ -196,7 +216,6 @@ def matches(person: dict, *, name: str | None = None, city: str | None = None, e
     row = flat(person)
     places = [about.get("currentCity"), about.get("hometown"), person.get("subtitle"), row["city"]]
     jobs = [w.get("employer") for w in about.get("work") or []] + [person.get("subtitle"), row["employer"]]
-    blob = " ".join(map(str, [person.get("name"), person.get("subtitle"),
-                              json.dumps(about, ensure_ascii=False), json.dumps(enrich, ensure_ascii=False)]))
+    blob = " ".join(_strings([person.get("name"), person.get("subtitle"), about, enrich]))
     tests = ((name, [person.get("name")]), (city, places), (employer, jobs), (keyword, [blob]))
     return all(_fold(want) in " | ".join(_fold(h) for h in haystacks if h) for want, haystacks in tests if want)

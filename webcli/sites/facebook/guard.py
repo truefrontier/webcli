@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def fb_host(host: str) -> bool:
-    host = host.lower()
+    host = host.lower().rstrip(".")  # "www.facebook.com." is the same host
     return any(host == s or host.endswith("." + s) for s in FB_SUFFIXES)
 
 
@@ -83,7 +83,7 @@ def request_allowed(method: str, url: str, headers: dict[str, str] | None = None
             return False
         if path in GRAPHQL_PATHS or _under(path, "/webgraphql"):
             return False
-        return not any(host == h and _under(path, prefix) for h, prefix in SIDE_EFFECT_GETS)
+        return not any(_under(path, prefix) for prefix in SIDE_EFFECT_GETS)  # every host here is Facebook's
     if method != "POST" or host != APP_HOST or path not in ("/api/graphql/", "/api/graphql"):
         return False
     try:
