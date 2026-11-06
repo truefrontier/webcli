@@ -331,7 +331,7 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
         folder.rename(aside)
         try:
             stage.rename(folder)
-        except OSError:
+        except BaseException:  # Ctrl-C too: never leave the tool only under a dot name
             aside.rename(folder)
             raise
         shutil.rmtree(aside, ignore_errors=True)
@@ -345,7 +345,7 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
 
 @group.command("update")
 @click.argument("name", required=False)
-@click.option("--all", "all_", is_flag=True, help="Update every installed tool.")
+@click.option("--all", "all_", is_flag=True, help="Update every installed tool; reports each one's status, exit 0.")
 @click.option("--yes", "-y", "yes", is_flag=True,
               help="Don't ask, even when an update wants new hosts, writes, or identity.")
 def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
@@ -357,8 +357,13 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
     index = index_client.fetch(cached_ok=False)
     results = [_update(index, n, yes) for n in names]
     sites.reload()
-    if not all_ and results[0]["status"] == "declined":
+    status = results[0]["status"]
+    if not all_ and status == "declined":
         die(f"{name} was not updated.", EXIT_USAGE, hint="Pass --yes to update without asking.")
+    if not all_ and status == "revoked":
+        die(f"{name} is revoked: {results[0]['reason']}", EXIT_USAGE, hint=f"`webcli tools remove {name}`.")
+    if not all_ and status == "not in library":
+        die(f"The webcli-tools library no longer lists {name}; nothing to update.", EXIT_NOT_FOUND)
     emit_json(results if all_ else results[0])
     raise SystemExit(EXIT_OK)
 

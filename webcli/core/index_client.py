@@ -108,14 +108,14 @@ def _get(target: str, limit: int) -> bytes:
 
 
 def _revoked_ok(items: object) -> bool:
-    """Names, or {"name", "versions": ["0.1.0", ...]}: what core/revoked.py reads, held a little stricter (version
-    strings only), since a version that can never match would quietly un-revoke."""
+    """Names, or {"name", "versions": ["0.1.0", ...]}: what core/revoked.py reads, held stricter (real tool names and
+    versions only), since an entry that can never match would quietly un-revoke."""
     def ok(item: object) -> bool:
         if isinstance(item, str):
-            return True
+            return bool(_NAME.fullmatch(item))
         versions = item.get("versions", []) if isinstance(item, dict) else None
-        return isinstance(item, dict) and isinstance(item.get("name"), str) and isinstance(versions, list) \
-            and all(isinstance(v, str) for v in versions)
+        return isinstance(item, dict) and isinstance(item.get("name"), str) and bool(_NAME.fullmatch(item["name"])) \
+            and isinstance(versions, list) and all(isinstance(v, str) and _VERSION.fullmatch(v) for v in versions)
 
     return isinstance(items, list) and all(ok(i) for i in items)
 

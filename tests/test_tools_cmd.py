@@ -240,6 +240,8 @@ def test_offline_search_uses_the_cache_and_update_refuses(library, tools, monkey
 @pytest.mark.parametrize("index", [
     {"tools": []},  # no revoked list: a cut-off index must not clear revocations
     {"tools": [], "revoked": [{"name": "toyhttp", "versions": [1]}]},
+    {"tools": [], "revoked": [{"name": "toyhttp", "versions": ["not-a-version"]}]},
+    {"tools": [], "revoked": ["Toy-HTTP"]},
     {"tools": [{"name": "toyhttp", "version": "0.1.0", "commit": "main", "sha256": "0" * 64}], "revoked": []},
     {"tools": [{"name": "toy-http", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64}], "revoked": []},
     {"tools": [{"name": "toyhttp", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64,
@@ -305,6 +307,38 @@ def test_update_needs_a_name_or_all(library):
     assert run("tools", "update").exit_code == 2
     assert run("tools", "update", "toyhttp", "--all").exit_code == 2
     assert run("tools", "update", "toyhttp").exit_code == 3
+
+
+def test_a_named_update_that_cant_happen_exits_nonzero_but_all_reports_it(library, tools):
+    library.publish()
+    ok("tools", "install", "toyhttp", "--yes")
+    library.revoked.append("toyhttp")
+    library.save()
+    result = run("tools", "update", "toyhttp")
+    assert result.exit_code == 2 and "toyhttp is revoked" in result.stderr
+    assert ok("tools", "update", "--all")[0]["status"] == "revoked"
+    library.revoked.clear()
+    library.tools.clear()
+    library.save()
+    assert run("tools", "update", "toyhttp").exit_code == 3
+    assert ok("tools", "update", "--all") == [{"name": "toyhttp", "status": "not in library"}]
+
+
+def test_an_interrupted_update_swap_puts_the_old_version_back(library, tools, monkeypatch):
+    library.publish()
+    ok("tools", "install", "toyhttp", "--yes")
+    library.publish(version="0.2.0")
+    real = Path.rename
+
+    def interrupted(self, target):
+        if self.name.startswith(".stage-"):
+            raise KeyboardInterrupt
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+    assert run("tools", "update", "toyhttp").exit_code != 0
+    monkeypatch.setattr(Path, "rename", real)
+    assert ok("tools", "list")[0]["version"] == "0.1.0" and leftovers(tools) == []
 
 
 # Remove, grants.
