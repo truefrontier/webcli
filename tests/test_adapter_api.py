@@ -223,8 +223,7 @@ def test_mismatches_compare_the_adapter_with_its_manifest():
 
 # The placeholder commands.
 
-@pytest.mark.parametrize("command", [["new"], ["dev"], ["test"], ["lint"], ["tools"], ["submit"],
-                                     ["tools", "install"]])
+@pytest.mark.parametrize("command", [["tools"], ["submit"], ["tools", "install"]])
 def test_every_new_command_has_help(command):
     result = run(*command, "--help")
     assert result.exit_code == 0
@@ -232,9 +231,7 @@ def test_every_new_command_has_help(command):
 
 
 @pytest.mark.parametrize(("args", "path", "phase"), [
-    (["new", "toyhttp", "--url", "https://httpbin.org"], "new", "B"), (["new"], "new", "B"),
-    (["dev", "toyhttp", "--", "get"], "dev", "B"), (["test", "toyhttp"], "test", "B"),
-    (["lint", "toyhttp"], "lint", "B"), (["tools", "list"], "tools list", "C"),
+    (["tools", "list"], "tools list", "C"),
     (["tools", "install", "toyhttp", "--yes"], "tools install", "C"),
     (["tools", "grant", "toyhttp", "google:default"], "tools grant", "C"),
     (["submit", "toyhttp", "--confirm"], "submit", "D"),
@@ -259,7 +256,7 @@ def test_reserved_names_are_exactly_the_core_commands():
 def test_agent_help_lists_the_new_commands():
     ref = json.loads(run("agent-help", "--format", "json").stdout)
     usage = {c["name"]: c["usage"] for c in ref["commands"]}
-    assert usage["new"] == "webcli new NAME [--url URL] [--identity ID] [--capture]"
+    assert usage["new"] == "webcli new [--url URL] [--identity ID] [--capture] NAME"
     assert usage["tools install"] == "webcli tools install NAME [--yes]"
     assert usage["tools list"] == "webcli tools list"
     assert {"dev", "test", "lint", "submit", "tools search", "tools enable"} <= set(usage)

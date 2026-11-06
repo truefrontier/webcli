@@ -1,0 +1,27 @@
+"""What fetch.PAGE_JS reads off a page -> webcli {{name}}'s rows. Pure: no browser, no network, so
+tests/test_tool.py can check it against the recorded pages in tests/fixtures/."""
+
+from __future__ import annotations
+
+
+def status_info(snapshot: dict) -> dict:
+    """{signedIn, url, title}. signedIn: the page shows no password field. A guess that fits many sites; replace
+    it with something only a signed-in page shows (your name, an avatar, an account menu)."""
+    return {"signedIn": not snapshot.get("loginForm"), "url": snapshot.get("url"), "title": snapshot.get("title")}
+
+
+def rows(snapshot: dict, limit: int) -> list[dict]:
+    """The page's headings, then its links, each {kind, text, url} (url None for a heading), first `limit`,
+    without repeats."""
+    out, seen = [], set()
+    items = [("heading", text, None) for text in snapshot.get("headings") or []]
+    items += [("link", link.get("text"), link.get("href")) for link in snapshot.get("links") or []
+              if isinstance(link, dict)]
+    for kind, text, url in items:
+        text = " ".join(str(text or "").split())
+        if text and (kind, text, url) not in seen:
+            seen.add((kind, text, url))
+            out.append({"kind": kind, "text": text, "url": url})
+        if len(out) >= limit:
+            break
+    return out

@@ -151,8 +151,9 @@ def test_launch_options_are_the_only_place_headless_is_decided():
         text = path.read_text()
         for marker in ("headless=False", 'mode="visible")', 'mode="visible",'):
             for chunk in text.split(marker)[:-1]:  # a literal visible request: only ever inside a login function
-                function = chunk.rsplit("\ndef ", 1)[-1].rsplit("\nasync def ", 1)[-1]
-                assert function.startswith("login("), (path, marker, function.split("\n", 1)[0])
+                function = chunk.rsplit("\ndef ", 1)[-1].rsplit("\nasync def ", 1)[-1]  # (or guided capture's
+                allowed = ("login(", "watch(") if path.name == "capture.py" else ("login(",)  # window: a person)
+                assert function.startswith(allowed), (path, marker, function.split("\n", 1)[0])
         if path.name != "browser.py":
             assert "launch_persistent_context(" not in text, path  # nobody launches Chrome but core.browser
 
