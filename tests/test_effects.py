@@ -21,6 +21,8 @@ from webcli.chromecli import cli as chromecli_cli
 from webcli.core import index_client, output, revoked
 
 KEYS = {"writes", "writeFlags", "sendsToPeople", "humanOnly", "opensWindow", "changesLocalSetup"}
+WORST = {"writes": "always", "writeFlags": [], "sendsToPeople": True, "humanOnly": True, "opensWindow": True,
+         "changesLocalSetup": True, "undeclared": True}  # what an undeclared command reports, spelled out
 LIVE_INDEX = Path(__file__).parent / "fixtures" / "library" / "index-2026-11-06.json"  # the library's, that day
 
 
@@ -286,9 +288,7 @@ def test_a_command_nobody_declared_claims_the_worst_not_never():
         pass
 
     got = _reference_of(group)
-    worst = {k: v for k, v in output.UNDECLARED.items()}
-    assert got["brand-new"] == got["no-such-option"] == got["valued-option"] == worst
-    assert worst["writes"] == "always" and worst["undeclared"] is True and worst["humanOnly"] is True
+    assert got["brand-new"] == got["no-such-option"] == got["valued-option"] == WORST == output.UNDECLARED
     assert got["env-confirm"]["writes"] == got["default-map"]["writes"] == "always"
     assert got["env-confirm"]["writeFlags"] == []
     assert got["fine"] == {"writes": "with_flag", "writeFlags": ["--confirm", "--yes", "-y"], "sendsToPeople": True,
@@ -425,9 +425,13 @@ def test_a_community_tools_effects_come_from_its_manifest(tools):
     assert got["toyhttp get"] == read  # the manifest says read; the tool's own with_flag claim is dropped
     assert got["toyhttp label add"] == {**read, "writes": "with_flag", "writeFlags": ["--confirm", "--yes"],
                                         "sendsToPeople": True}  # core's gate, not the tool's "never"
-    assert got["toyhttp sneak"] == output.UNDECLARED  # not in the manifest: the worst case, whatever it claims
+    assert got["toyhttp sneak"] == WORST  # not in the manifest: the worst case, whatever it claims
     assert got["toyhttp agent-help"] == read
-    assert run("webcli", "toyhttp", "label", "add").stdout.startswith('{"dryRun":true')  # and the gate holds
+    dry = run("webcli", "toyhttp", "label", "add")  # and the gate holds: the tool's code never ran
+    assert (dry.exit_code, json.loads(dry.stdout)) == (0, {
+        "dryRun": True, "tool": "toyhttp", "command": "label add",
+        "hint": "Nothing was written. Re-run with --confirm to write."})
+    assert "WROTE" not in dry.output
 
 
 def test_a_tool_whose_group_reads_env_vars_writes_always(tools, monkeypatch):
@@ -439,14 +443,22 @@ def test_a_tool_whose_group_reads_env_vars_writes_always(tools, monkeypatch):
 
 def test_a_tool_whose_own_confirm_isnt_a_flag_is_undeclared(tools):
     toy(tools, confirm_option='@click.option("--confirm", "confirm", default=None)')
-    assert toy_effects()["toyhttp label add"] == output.UNDECLARED
+    assert toy_effects()["toyhttp label add"] == WORST
+
+
+def test_one_command_under_a_read_path_and_a_write_path_is_undeclared(tools):
+    toy(tools, sends=False)
+    cli = tools / "toyhttp" / "webcli_tool_toyhttp" / "cli.py"
+    cli.write_text(cli.read_text() + "\ngroup.add_command(add, 'get')\n")  # `label add`'s command, also as `get`
+    got = toy_effects()
+    assert got["toyhttp label add"] == WORST  # neither "never" (get) nor "with_flag" (label add) holds for both
 
 
 def test_a_broken_tools_placeholder_command_is_undeclared(tools):
     toy(tools)
     (tools / "toyhttp" / "webcli_tool_toyhttp" / "cli.py").write_text("raise RuntimeError('broken')\n")
     effects = {c["name"]: c["effects"] for c in reference("webcli")["commands"]}
-    assert effects["toyhttp"] == output.UNDECLARED
+    assert effects["toyhttp"] == WORST
 
 
 # `webcli sites`: where each site came from, what vouches for it, and the tools core skipped.
@@ -485,6 +497,12 @@ def test_an_installed_tool_is_verified_only_while_its_files_match_the_librarys_v
 
     ok("webcli", "tools", "grant", "toyhttp", "google:default")  # grants are core's, from grants.toml
     assert site_row(ok("webcli", "sites", "--format", "json"), "toyhttp")["grants"] == ["google:default"]
+
+    record = tools / "toyhttp" / ".installed.json"
+    pinned_record = record.read_text()
+    record.write_text(pinned_record.replace('"version": "0.1.0"', '"version": "9.9.9"'))
+    assert site_row(ok("webcli", "sites", "--format", "json"), "toyhttp")["verified"] is False
+    record.write_text(pinned_record)
 
     with (tools / "toyhttp" / "webcli_tool_toyhttp" / "cli.py").open("a") as handle:
         handle.write("\n# edited after install\n")

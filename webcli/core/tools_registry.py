@@ -135,8 +135,8 @@ def _verified(candidate: Candidate, version: str | None, record: dict) -> bool:
         return False
     index = index_client.cached()
     entry = index.tools.get(candidate.name) if index else None
-    if entry is None or not entry.verified or (entry.version, entry.commit, entry.sha256) != \
-            (version, record.get("commit"), record.get("sha256")):
+    if entry is None or not entry.verified or (entry.version, entry.version, entry.commit, entry.sha256) != \
+            (version, record.get("version"), record.get("commit"), record.get("sha256")):
         return False
     try:
         return index_client.tree_sha256(candidate.folder, added=(INSTALLED, DISABLED)) == entry.sha256
@@ -218,6 +218,7 @@ def _declare_effects(group: click.Group, site: Site) -> None:
     agent-help reads. Any other command the manifest doesn't name is UNDECLARED, the worst case. A tool whose groups
     can turn --confirm on without it being typed (an env var prefix, a default_map) writes "always"."""
     implicit = any(output.implicit(g) for g in (group, *_subgroups(group)))
+    decided: dict[int, output.Effects | None] = {}
     for path, _aliases, command in output.leaves(group, hidden=True):
         verb = " ".join(path)
         if verb in site.writes and getattr(command, "_webcli_gated", False):
@@ -230,6 +231,9 @@ def _declare_effects(group: click.Group, site: Site) -> None:
             declared = output.Effects()
         else:
             declared = None
+        if id(command) in decided and decided[id(command)] != declared:
+            declared = None  # one command under two paths that disagree: neither answer holds for both
+        decided[id(command)] = declared
         output.set_effects(command, declared)
 
 
