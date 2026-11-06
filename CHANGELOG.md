@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.0.0rc1 / llmcli 0.9.0rc1 (2026-11-06)
+
+Release candidate for webcli 1.0: a tool library, `webcli new`, and trust controls for community tools.
+This is a **pre-release**. Plain `pip install truefrontier-webcli` still gets the latest stable (0.18.x).
+Install the RC with `pip install --pre truefrontier-webcli==1.0.0rc1` (or `pipx install --pip-args=--pre truefrontier-webcli`).
+
+### Added
+
+- **Adapter API v1** (`webcli.adapter`, `ADAPTER_API = 1`): the one module community tools import from.
+  `Site` gains optional `adapter_api`, `hosts`, `version`, `writes`, and `sends_to_people`.
+- **`webcli-tool.toml` manifest schema** (`webcli.core.manifest_schema`, docs): hosts, commands, writes,
+  identity. CI and `webcli lint` use the same checker.
+- **`webcli new` / `dev` / `test` / `lint`**: scaffold a local read-only tool, run it, offline-test it, and
+  lint it. Optional guided capture records reads only by default.
+- **`webcli tools`**: `search`, `info`, `install`, `list`, `update`, `remove`, `grant`, `revoke-grant`,
+  `disable`, `enable`. Installs from `truefrontier/webcli-tools` at a pinned commit with a sha256 check.
+  Trust confirmation unless `--yes`. Community tools get their own identity by default; reuse of an
+  existing identity needs `webcli tools grant`.
+- **`webcli submit`**: open a PR adding your tool to the library (dry-run without `--confirm`).
+- **Library repo** [`truefrontier/webcli-tools`](https://github.com/truefrontier/webcli-tools): TEMPLATE,
+  `httpbin` seed tool, index.json, CI, ToS/responsibility notes.
+- **Trust in core**: no shadowing of built-ins; broken plugins skipped with a warning; revoked list;
+  core host envelope for community tools; grants file under `~/.webcli/tools/`.
+
+### Changed
+
+- **BREAKING (registry):** an installed community tool can no longer replace a built-in name. A broken
+  community plugin no longer raises `ConfigError` and take down every command; it is skipped.
+- **BREAKING (daemon):** a community tool may not ride another provider's identity (for example
+  `google:default`) without an explicit grant.
+- Version 1.0.0rc1 for webcli and the chromecli companion pin. llmcli / llmcli-bare 0.9.0rc1 pin to
+  truefrontier-webcli==1.0.0rc1. The chromecli **extension** manifest stays 0.18.3 (Chrome wants a
+  numeric version; no behavior change in this RC).
+
+### Also on main with this RC
+
+- **0.18.2**: `gsc inspect --request-indexing` judged only by Google's own answer; inspect rechecks
+  unknown URLs against live sitemaps.
+- **0.18.3**: request-indexing allows Search Console's reCAPTCHA; manual link on every failure.
+
+### Known gaps / RC defaults (Kevin to confirm)
+
+- Community tools are Python packages (not recipes-only).
+- Capture aborts non-reads by default.
+- Library is webcli data sites only (no llmcli chat sites).
+- Tools install from git pins, not per-tool PyPI.
+- Homebrew stable formula is **not** pointed at this RC.
+- webcli-enterprise / webcli-guard still hard-codes write commands; needs a follow-up to read
+  adapter/manifest flags and add `allow_tiers`.
+
 ## 0.18.3 (2026-11-06)
 
 A fix to `webcli gsc inspect --request-indexing`: Search Console's own reCAPTCHA check now runs. It adds no writes.
