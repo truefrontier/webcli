@@ -291,3 +291,11 @@ def test_agent_help_lists_commands_exit_codes_and_env():
     flags = {f for c in ref["commands"] if c["name"] == "-p" for o in c["options"] for f in o["flags"]}
     assert {"-m", "--model", "--strict-model", "--image-out", "--file", "--chat", "-c", "--prompt-file",
             "--output-file", "--output-format", "--timeout"} <= flags
+
+
+def test_a_last_chat_that_cannot_be_cleared_is_a_clean_error(monkeypatch):
+    stub(monkeypatch, "ask", {**ANSWER, "chatId": None, "chatUrl": None})  # a new chat that never showed its id
+    last_chat().mkdir(parents=True)  # unlink can't remove it
+    result = run("-p", "hi")
+    assert (result.exit_code, result.stdout) == (5, "")
+    assert json.loads(result.stderr)["hint"] == "Don't resend the prompt. Read it at chatgpt.com."

@@ -238,7 +238,7 @@ def test_ask_waits_while_the_answer_streams(page):
     # The text holds still for longer than STABLE_SECONDS, but the body still says it's streaming.
     page(after=[snap(replies=1, lastText="Thinking it over", streaming=True)],
          url_after_send=f"https://muse.ai/thread/{UUID}")
-    with pytest.raises(TimeoutError) as caught:
+    with pytest.raises(RuntimeError) as caught:  # after the send: see test_a_failure_after_sending_says_not_to_resend
         run(fetch.ask("Slow one", timeout=0.2))
     assert "No finished answer after 0.2s (16 chars so far)" in str(caught.value)
     assert f"llmcli muse chats show {UUID}" in str(caught.value)
@@ -300,8 +300,58 @@ def test_ask_accepts_an_answer_that_repeats_the_prompt(page):
 
 def test_ask_needs_a_new_reply(page):
     page(after=[snap(replies=2, lastText="old answer")], snapshots=[snap(replies=2, lastText="old answer")])
-    with pytest.raises(TimeoutError, match="no reply seen"):
+    with pytest.raises(RuntimeError, match="no reply seen"):
         run(fetch.ask("Next?", chat_id=UUID, timeout=0.1))
+
+
+def test_ask_never_sends_into_a_chat_muse_ai_did_not_open(page):
+    # A deleted or mistyped id: muse.ai shows the main chat (or a new one) instead of /thread/<id>.
+    for landed in ("https://muse.ai/", "https://muse.ai/thread/new", f"https://muse.ai/thread/{UUID2}"):
+        fake = page(lands_on=landed, after=[snap(replies=1, lastText="Done.")])
+        with pytest.raises(NotFound, match="Nothing was sent") as caught:
+            run(fetch.ask("Email Bob the plan", chat_id=UUID, timeout=5))
+        assert caught.value.hint == "Check the id with: llmcli muse chats list"
+        assert fake.actions == [("goto", f"https://muse.ai/thread/{UUID}")]  # nothing typed, Enter never pressed
+
+
+def test_ask_rechecks_the_chat_after_the_page_settles(page, monkeypatch):
+    fake = page(after=[snap(replies=1, lastText="Done.")])
+    settled = fetch.steady
+
+    async def leaves_while_the_history_loads(p):
+        p.url = "https://muse.ai/"  # muse.ai gave up on the chat a moment after its composer showed
+        return await settled(p)
+
+    monkeypatch.setattr(fetch, "steady", leaves_while_the_history_loads)
+    with pytest.raises(NotFound, match="went to / instead. Nothing was sent."):
+        run(fetch.ask("Email Bob the plan", chat_id=UUID, timeout=5))
+    assert ("press", "Enter") not in fake.actions
+
+
+def test_a_failure_after_sending_says_not_to_resend(page, monkeypatch):
+    page(after=[snap(replies=1, lastText="Thinking", streaming=True)], url_after_send=f"https://muse.ai/thread/{UUID}")
+    with pytest.raises(RuntimeError, match=f"The prompt was sent: don't resend it. Read the answer with: "
+                                           f"llmcli muse chats show {UUID}$"):
+        run(fetch.ask("Slow one", timeout=0.1))
+    page(after=[snap(replies=1, lastText="Thinking", streaming=True)])  # a new chat that never got its id
+    with pytest.raises(RuntimeError, match="don't resend it. Find the new chat with: llmcli muse chats list$"):
+        run(fetch.ask("Slow one", timeout=0.1))
+
+    async def crash(*_args):
+        raise Exception("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(fetch, "wait_for_answer", crash)
+    page(url_after_send=f"https://muse.ai/thread/{UUID}")
+    with pytest.raises(RuntimeError, match="^Target page, context or browser has been closed. The prompt was sent: "
+                                           "don't resend it."):
+        run(fetch.ask("Plan Lisbon", timeout=5))
+
+
+def test_a_failure_before_sending_is_not_marked_sent(page):
+    page(snapshots=[snap(composer=False)])
+    with pytest.raises(RuntimeError) as caught:
+        run(fetch.ask("Plan Lisbon", timeout=5))
+    assert "composer never appeared" in str(caught.value) and "was sent" not in str(caught.value)
 
 
 def test_chats_clicks_each_side_chat_for_its_id_and_comes_back(page):

@@ -283,3 +283,17 @@ def test_page_at_revokes_the_lease_before_closing_sockets_even_if_cancelled():
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main())
     assert guard.state.policy is None and guard.state.lease is None and Page.closed
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.muse.ai/api/logout?sessionBindingId=abc",  # the other app host
+    "https://muse.ai./api/logout",  # a trailing-dot host
+    "https://muse.ai//api/logout",  # a doubled slash
+    "https://muse.ai/api/%6Cogout",  # a percent-encoded letter
+    "https://www.muse.ai.//api//%6cogout",
+])
+def test_sign_out_is_blocked_on_every_spelling_of_the_app(url):
+    # Playwright guards only a redirect chain's first URL: a spelling let through here could be redirected to
+    # /api/logout and sign out unguarded.
+    assert request_allowed("GET", url) is False
+    assert request_allowed("HEAD", url) is False

@@ -355,3 +355,42 @@ def test_the_umbrella_lists_muse():
     ref = json.loads(CliRunner().invoke(llmcli.build(), ["agent-help", "--format", "json"]).stdout)
     assert any(c["name"].startswith("muse ") for c in ref["commands"])
     assert any("muse" in n and "meta:default" in n for n in ref["notes"])
+
+
+@pytest.mark.parametrize(("args", "stdin"), [
+    (("ask", "\udcff bad byte"), None),  # argv: Python passes a bad byte through as a lone surrogate
+    (("ask", "-"), b"\xff bad byte"),
+    (("-p", "\udcff", "bad", "byte"), None),
+    (("-p",), b"\xff bad byte"),
+    (("-p", "--prompt-file", "-"), b"\xff bad byte"),
+])
+def test_a_prompt_must_be_utf8(monkeypatch, args, stdin):
+    calls = stub(monkeypatch, "ask", ANSWER)
+    result = run(*args, input=stdin)
+    assert result.exit_code == 2
+    assert "The prompt isn't UTF-8 text." in json.loads(result.stderr)["error"]
+    assert calls == []  # nothing sent
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
+def test_print_mode_checks_the_output_dir_is_writable_before_sending(monkeypatch, tmp_path):
+    calls = stub(monkeypatch, "ask", ANSWER)
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    try:
+        result = run("-p", "--output-file", str(locked / "answer.txt"), "Plan Lisbon")
+    finally:
+        locked.chmod(0o700)
+    assert result.exit_code == 2
+    assert json.loads(result.stderr)["error"].startswith("--output-file: directory not writable: ")  # path redacted
+    assert calls == []  # found out before sending, not after Muse answered
+
+
+def test_a_last_chat_that_cannot_be_cleared_is_a_clean_error(monkeypatch):
+    stub(monkeypatch, "ask", {**ANSWER, "chatId": None, "chatUrl": None})  # a new chat that never showed its id
+    last_chat().mkdir(parents=True)  # unlink can't remove it
+    result = run("-p", "Plan Lisbon")
+    assert (result.exit_code, result.stdout) == (5, "")
+    error = json.loads(result.stderr)
+    assert error["error"].startswith("Muse answered, but writing ")  # the path is redacted
+    assert error["hint"] == "Don't resend the prompt. Read it at muse.ai."

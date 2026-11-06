@@ -68,6 +68,9 @@ AGENT_NOTES = [
      "limit resets ...\", \"Too many requests\"...) exits 6: JSON error \"rate_limited\", code 6, message (Muse's "
      "text), resets_at (ISO 8601, America/Chicago, or null). JSON output still prints first."),
     "If Muse asks for approval, `ask` exits 5 and names the chat; a timeout exits 5 with the chat to read later.",
+    ("Any exit 5 after the prompt went out says \"The prompt was sent: don't resend it.\" and where to read the "
+     "answer: never retry that send. `ask --chat ID` exits 3 (\"Nothing was sent.\") when muse.ai doesn't open "
+     "that chat."),
     f"--timeout (default {TIMEOUT}s) bounds the wait for the answer.",
 ]
 
@@ -106,11 +109,8 @@ def _ask(prompt: str, chat_id: str | None, **kwargs) -> dict:
     """fetch.ask, then remember its chat for `-p -c`."""
     _need_session()
     result = _call("ask", prompt, chat_id=chat_id, **kwargs)
-    last = llm.last_chat_file(SITE)
-    if result["chatId"]:
-        _write(last, result["chatId"] + "\n", result["chatId"])
-    else:
-        last.unlink(missing_ok=True)  # so -c can't fall back to an older chat
+    chat = result["chatId"]
+    _write(llm.last_chat_file(SITE), f"{chat}\n" if chat else None, chat)  # None clears it: -c can't use an older chat
     return llm.uniform(result)
 
 

@@ -17,8 +17,9 @@ NAME_KEYS = ("name", "full_name", "display_name", "displayName", "username")
 # The only /api/auth/check fields fetch.AUTH_CHECK_JS lets out of the page (the body holds a token).
 AUTH_KEYS = (*SIGNED_OUT_FLAGS, *NAME_KEYS, "error")
 AUTH_NESTED = ("user", "viewer", "account")
-# Screen-reader labels muse.ai puts before message text (the user's reads "You:\n\n...").
-LABELS = {"user": re.compile(r"(?:You|User message):"), "assistant": re.compile(r"Assistant message:")}
+# Screen-reader labels muse.ai puts before message text (the user's reads "You:\n\n..."). "You:" counts only with a
+# line break (or nothing) after it, so a prompt that starts "You: are my agent" keeps its words.
+LABELS = {"user": re.compile(r"You:(?=[ \t]*(?:\n|$))|User message:"), "assistant": re.compile(r"Assistant message:")}
 
 
 def clean_chat_id(value: str) -> str:
@@ -88,7 +89,10 @@ def citations(links: list[dict]) -> list[dict]:
     out: dict[str, dict] = {}
     for link in links:
         url = str(link.get("href") or "")
-        parts = urlsplit(url)
+        try:
+            parts = urlsplit(url)
+        except ValueError:  # e.g. "http://[oops": a.href passes an unparseable href through as written
+            continue
         if parts.scheme not in ("http", "https") or parts.hostname in APP_HOSTS or url in out:
             continue
         out[url] = {"title": " ".join(str(link.get("text") or "").split()) or None, "url": url}
