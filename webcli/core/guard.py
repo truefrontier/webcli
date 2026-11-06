@@ -13,6 +13,8 @@ it closes (browser.page_at), so permissions belong to that page alone:
 WebSockets: closed, unless the policy names the ones its site needs (`sockets`: muse's VM gateway). Those connect
 only from the command's own page while its lease runs, and are closed when the command ends (close_sockets).
 A policy that raises counts as "no": a guard that raises would leave the request hanging.
+A policy may also name `quiet` requests (its site's telemetry): aborted like every other refusal, but left out of
+`blocked`, so error messages list only what matters.
 """
 
 from __future__ import annotations
@@ -37,6 +39,9 @@ class Policy:
     describe: Callable[["Request"], str]
     # The WebSocket URLs the site's page may open (muse's wss://*.metaaivm.com); None: none, every socket closes.
     sockets: Callable[[str], bool] | None = None
+    # Refused requests to abort without listing them in `blocked` (a site's telemetry, noise in error messages).
+    # Asked only after allowed() said no, so it never lets anything out; None: list every refused request.
+    quiet: Callable[["Request"], bool] | None = None
 
 
 @dataclass
@@ -89,6 +94,11 @@ def check(request: "Request", *, own_page: bool) -> bool:
             return True
     except Exception:
         pass  # fail closed
+    try:
+        if policy is not None and policy.quiet is not None and policy.quiet(request):
+            return False
+    except Exception:
+        pass  # a quiet() that raises: list the request as usual
     try:
         state.blocked.append(policy.describe(request) if policy else describe(request.method, request.url))
     except Exception:

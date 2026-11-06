@@ -14,11 +14,11 @@ Signed out, every command exits 4; a person runs `webcli identity login google:d
 | `webcli gsc status` | signed in or not, and how many properties it sees |
 | `webcli gsc properties` | your properties: `property`, `type` (domain / url-prefix), `permission` (owner / full / restricted), `displayName` |
 | `webcli gsc pages PROPERTY [--examples N] [--sitemap all\|SITEMAP_URL] [--indexed]` | the Page indexing report: `filter`, `indexed`, `notIndexed`, `total`, `lastUpdated` (`asOf` is the same), `stale`, `staleReasons`, `warning`, and each not-indexed reason (`reason`, `source`, `pages`, `examples` with `lastCrawled`, `examplesAvailable`, `examplesTruncated`); with `--indexed`, also `indexedExamples`, `indexedExamplesAvailable`, `indexedExamplesTruncated`. `--examples` default 5, max 1000, 0 skips them |
-| `webcli gsc inspect URL [--property P] [--check-live-sitemap]` | URL Inspection's indexed data: `onGoogle`, `verdict`, `coverageState`, `lastCrawl`, `crawledAs`, `crawlAllowed`, `pageFetch`, `userCanonical`, `googleCanonical`, `inSitemap`, `sitemaps`, `referringUrls`, `notes`; with `--check-live-sitemap`, also `submittedSitemaps`, `inLiveSitemap`, `liveSitemaps`, `liveSitemapsRead`, `liveSitemapUrls`, `liveSitemapErrors` |
+| `webcli gsc inspect URL [--property P] [--check-live-sitemap \| --no-live-sitemap]` | URL Inspection's indexed data: `onGoogle`, `verdict`, `coverageState`, `lastCrawl`, `crawledAs`, `crawlAllowed`, `pageFetch`, `userCanonical`, `googleCanonical`, `inSitemap`, `sitemaps`, `referringUrls`, `recheckedAfterUnknown`, `notes`; with `--check-live-sitemap` (or when inspect checks the live sitemap by itself, below), also `submittedSitemaps`, `inLiveSitemap`, `liveSitemaps`, `liveSitemapsRead`, `liveSitemapUrls`, `liveSitemapErrors` |
 | `webcli gsc performance PROPERTY [--start D] [--end D] [--dimension query\|page\|date] [--limit N]` | web search over the range: `--json` gives `{property, searchType, start, end, dimension, lastUpdated, totals: {clicks, impressions, ctr, position}, rows, rowsTruncated}`; rows hold `clicks`, `impressions`, `ctr` (0..1), `position` per query, page, or day. Default the 28 days ending yesterday, `--dimension query`, `--limit 25` (max 1000) |
 | `webcli gsc sitemaps PROPERTY` | submitted sitemaps: `status`, `submitted`, `lastRead`, `discoveredPages`, `errors`, `warnings` |
 | `webcli gsc sitemaps submit PROPERTY SITEMAP_URL --yes` | WRITE: submit one sitemap, then read the list back |
-| `webcli gsc inspect URL --request-indexing --yes` | WRITE: URL Inspection's REQUEST INDEXING |
+| `webcli gsc inspect URL --request-indexing --yes` | WRITE: URL Inspection's REQUEST INDEXING; exit 0 only when Google confirms it |
 
 Every command takes `--json`; the default on a terminal is a table. PROPERTY is `sc-domain:example.com`, a bare
 `example.com` (the Domain property), or a URL-prefix property such as `https://www.example.com/`. `inspect`
@@ -57,6 +57,20 @@ anonymous HTTPS GET, with no Google session and no cookies, and only fetches URL
 sitemap indexes (up to 50 files), reads gzip, and caps each file at 20 MB with a 20 s timeout. The result is
 `inLiveSitemap` (null when no sitemap could be read), `liveSitemaps` (the files that list the URL), and
 `liveSitemapErrors`.
+
+Google's answers can lag, and can flip between two calls a minute apart. On Nov 6, 2026, one inspect said a URL
+was "URL is unknown to Google" with `inSitemap: false`; two minutes later the same command said "Discovered -
+currently not indexed" with `inSitemap: true`. So when Google's answer is "URL is unknown to Google", or the URL is
+not on Google and in no sitemap, inspect reads the live sitemap by itself (one more Search Console call, then the
+same plain HTTPS fetch). If the live sitemap lists the URL, inspect asks Google once more and uses the second answer,
+unless that one went back to "unknown". `recheckedAfterUnknown` is true when it asked again, and a note says what
+each answer was:
+
+> Google's stored data said this URL is unknown, but it is in your live sitemap (https://example.com/sitemap.xml).
+> Google's answers can lag or flip between calls; webcli asked again and got: Discovered - currently not indexed.
+
+If Google still says "unknown", the note says to run inspect again later. `--no-live-sitemap` turns the automatic
+check off; `--check-live-sitemap` still always reads the live sitemap.
 
 ## Performance
 
@@ -100,15 +114,45 @@ Both are gated behind `--yes` (alias `--confirm`). Without it, a write contacts 
 - `inspect URL --request-indexing --yes` clicks REQUEST INDEXING in Search Console's own URL Inspection page.
   Google mints the request's attestation in the page, so webcli drives the page instead of making the call
   itself, and never sees the attestation. Google runs a live test first, which takes a minute or two. The guard
-  allows one indexing request per run, and blocks every other write the page tries. Google's daily quota exits 6.
+  allows one indexing request (`Fj3Owf`) per run, and blocks every other write the page tries.
+
+### Did Google take the indexing request?
+
+webcli trusts only Google's own answer. It reads two things:
+
+- the result dialog Search Console opens (the modal dialog only: other panels on the page print their own
+  "Something went wrong");
+- Google's HTTP answer to `Fj3Owf`: its status and batchexecute error code. webcli reads the body once to find
+  the error code, then drops it. It never stores or prints it.
+
+| What happened | Exit | Output |
+|---|---|---|
+| The dialog says "Indexing requested", and Fj3Owf's answer (when webcli saw it) is HTTP 200 with no error | 0 | `{"requested": true, "outcome": "confirmed", "confirmed": "dialog", "fj3owfStatus": 200, ...}` |
+| Google's daily quota ("Quota Exceeded", or error code 8) | 6 | error `rate_limited` |
+| Fj3Owf went out, but the dialog says "Something went wrong", Google answered with an error, or no result showed in 240 s | 8 | error `sent_unverified`; the record (`"requested": false`, `fj3owfStatus`, `fj3owfError`, `dialog`) on stdout |
+| Fj3Owf never went out (for example, the live test said "Indexing request rejected") | 5 | error: nothing was submitted |
+
+The message says plainly what happened, for example: "Search Console didn't confirm the indexing request: the
+request left the browser (Fj3Owf sent once); Google answered HTTP 200, error code 3; the dialog said "Oops!
+Something went wrong ...". Google may or may not have queued it; check URL Inspection in Search Console before
+retrying." On exit 8, don't send the request again until you have looked.
+
+If no modal dialog is open, the words "Indexing requested" elsewhere on the page count only when Fj3Owf's answer
+was HTTP 200 with no error (`"confirmed": "page"`).
+
+Before 0.18.2, "request sent: True" in an error meant only that the guard had let Fj3Owf out of the browser.
+webcli never read Google's answer, so it did not mean Google had queued the request.
 
 Every write, refused, attempted, done, or failed, appends one line to `~/.webcli/logs/gsc.log`:
 
 ```
 2026-10-30T11:02:11 write=sitemaps_submit outcome=refused identity=google:default property=sc-domain:example.com sitemap=https://example.com/sitemap.xml
+2026-11-06T10:02:40 write=request_indexing outcome=failed identity=google:default exit=8 fj3owf=200 fj3owfError=code-3 url=https://example.com/page
 ```
 
-The line holds the local time, write, outcome, property, and URL. It never holds a token or cookie.
+The line holds the local time, write, outcome, property, and URL. For request indexing it adds `fj3owf=` Google's
+HTTP status (`unsent` when Fj3Owf never went out, `unseen` when webcli didn't see the answer) and `fj3owfError=`
+when Google answered with an error. It never holds a token, cookie, or response body.
 
 ## How it stays read-only
 
@@ -121,8 +165,16 @@ lets through:
 
 The guard checks the `rpcids` label against the RPC in the body, so neither can name a different call. The
 inspection start goes through only in indexed-data mode; a live test is never a read. Search Console's own
-load-time writes (the recent-properties preference, logging, analytics) are aborted. A challenge exits 5 and
-webcli stops: an HTTP 403 or 429, Google's `/sorry/` "unusual traffic" page, or a captcha.
+load-time writes (the recent-properties preference) and reads it doesn't need (`oGVhvf` callouts, `gydQ5d` unread
+messages) are aborted. Telemetry (Google Tag Manager, Google Analytics, `play.google.com/log`, and Search Console's
+own `jserror`, `log`, and `browserinfo` beacons) is aborted too, but left out of error messages, where it was
+noise. A challenge exits 5 and webcli stops: an HTTP 403 or 429, Google's `/sorry/` "unusual traffic" page, or a
+captcha.
+
+The request-indexing policy also lets Search Console's page load as it does for a person: its own URL Inspection
+reads, the live test, and `oGVhvf` and `gydQ5d`. Those two go through only in calls of their own, each with a
+`[property]` payload. Search Console's own code marks both read-only. They fire when the page loads, before the
+click, so they aren't part of REQUEST INDEXING itself.
 
 | RPC | Command |
 |---|---|
@@ -133,3 +185,4 @@ webcli stops: an HTTP 403 or 429, Google's `/sorry/` "unusual traffic" page, or 
 | `RVtklb` (mode 2), `MrNfbc`, `HZPzjb` | inspect |
 | `CyYwI` | sitemaps submit (write, `--yes`) |
 | `Fj3Owf` | request indexing (write, `--yes`, sent by the page) |
+| `oGVhvf`, `gydQ5d` | request indexing only: the page's callouts and unread-messages count (reads, sent by the page) |

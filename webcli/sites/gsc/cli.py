@@ -11,9 +11,11 @@ from urllib.parse import urlsplit
 import click
 
 from webcli.core.output import (
+    EXIT_API,
     EXIT_AUTH,
     EXIT_NOT_FOUND,
     EXIT_OK,
+    EXIT_RATE_LIMITED,
     EXIT_SENT_UNVERIFIED,
     EXIT_USAGE,
     agent_output_options,
@@ -57,6 +59,9 @@ NOTES = [
     "sitemaps, referringUrls (all Google's stored data, passed through), and notes where those look contradictory. "
     "--check-live-sitemap: also read the property's submitted sitemaps live from the site (plain HTTPS, no Google "
     "session; sitemap indexes followed, 50 files max) -> inLiveSitemap, liveSitemaps, liveSitemapErrors. "
+    "When Google's answer may lag (\"URL is unknown to Google\", or not on Google and in no sitemap), inspect reads "
+    "the live sitemap anyway and, if it lists the URL, asks Google once more (recheckedAfterUnknown true; a note "
+    "says what each answer was); --no-live-sitemap turns that off. "
     "Without --property, the property that covers the URL (the longest URL-prefix one, "
     "else the Domain one).",
     "`performance PROPERTY --start YYYY-MM-DD --end YYYY-MM-DD --dimension query|page|date [--limit N]`: web "
@@ -75,11 +80,15 @@ WRITES = [
     "SUBMIT does (the guard allows exactly that call, once), then reads the list back ({submitted, listed, row}). "
     "Exit 8 when it went out but isn't listed afterwards.",
     "`inspect URL --request-indexing --yes`: URL Inspection's REQUEST INDEXING, clicked in Search Console's own "
-    "page (Google's live test runs first, a minute or two; the guard allows one indexing request). Exit 6 on "
-    "Google's daily quota.",
+    "page (Google's live test runs first, a minute or two; the guard allows one indexing request, Fj3Owf). Exit 0 "
+    "only when Google's own result dialog says \"Indexing requested\" and Fj3Owf's answer, when seen, is HTTP 200 "
+    "with no error ({requested: true, confirmed: \"dialog\", fj3owfStatus: 200, ...}). Exit 6 on Google's daily "
+    "quota. Exit 8 (error \"sent_unverified\") when Fj3Owf went out but Google didn't confirm it (a failure dialog, "
+    "an error answer, or no result in time): it may or may not be queued, so check URL Inspection in Search Console "
+    "before retrying. Exit 5 when Fj3Owf never went out (nothing was submitted), e.g. the live test rejected the URL.",
     "Without --yes both print what they would do ({dryRun: true, wouldDo, ...}), contact nothing, and exit 2. "
     "Every write, refused or done, appends one line to ~/.webcli/logs/gsc.log (time, write, outcome, property, "
-    "URL; never a token).",
+    "URL, and for request indexing fj3owf=<HTTP status|unsent|unseen>; never a token or a body).",
 ]
 
 group = data.site_group(SITE, "Google Search Console: properties, page indexing, URL inspection, performance, "
@@ -113,16 +122,51 @@ def _refuse(write: str, would: str, plan: dict) -> None:
     die(f"Not done without --yes. Would: {would}", EXIT_USAGE, hint="re-run with --yes")
 
 
-def _write(write: str, op: str, *args, plan: dict) -> dict:
-    fields = {k: v for k, v in plan.items() if isinstance(v, str)}
+def _write(write: str, op: str, *args, plan: dict, audit_done: bool = True) -> dict:
+    """The write, audited: attempt, then failed (exit N) or, with audit_done, done. audit_done=False: the caller
+    audits the result itself."""
+    fields = _fields(plan)
     audit(write, "attempt", **fields)
     try:
         result = data.call(SITE, op, *args, confirm=True)
     except SystemExit as exc:
         audit(write, "failed", exit=exc.code, **fields)
         raise
-    audit(write, "done", **fields)
+    if audit_done:
+        audit(write, "done", **fields)
     return result
+
+
+def _fields(plan: dict) -> dict:
+    return {k: v for k, v in plan.items() if isinstance(v, str)}
+
+
+RI_EXIT = {"confirmed": EXIT_OK, "quota": EXIT_RATE_LIMITED, "unconfirmed": EXIT_SENT_UNVERIFIED,
+           "not_sent": EXIT_API}
+
+
+def _request_indexing(url: str, prop: str | None, plan: dict, fmt) -> None:
+    """Run the write and exit by its outcome (fetch.request_indexing): 0 confirmed, 6 quota, 8 sent but not
+    confirmed, 5 never sent. The audit line carries fj3owf=<HTTP status|unsent|unseen> (never a body)."""
+    result = _write("request_indexing", "request_indexing", url, prop, plan=plan, audit_done=False)
+    code = RI_EXIT.get(result.get("outcome"), EXIT_API)
+    sent, status, error = result.get("fj3owfSent"), result.get("fj3owfStatus"), result.get("fj3owfError")
+    audit("request_indexing", "done" if code == EXIT_OK else "failed", exit=code or None,
+          fj3owf=status if status is not None else "unseen" if sent else "unsent",
+          fj3owfError=error.replace(" ", "-") if error else None, **_fields(plan))
+    message = result.get("message") or "Search Console's indexing request ended without a result."
+    if code == EXIT_OK:
+        data.emit_record("Indexing requested", result, fmt)
+        raise SystemExit(EXIT_OK)
+    if code == EXIT_RATE_LIMITED:
+        die(message, EXIT_RATE_LIMITED, error="rate_limited", resets_at=None,
+            hint="Google's daily indexing-request quota: try again tomorrow."
+                 + (" Fj3Owf went out once; check URL Inspection before retrying." if sent else ""))
+    if code == EXIT_SENT_UNVERIFIED:
+        data.emit_record("Indexing request not confirmed", result, fmt)
+        die(message, EXIT_SENT_UNVERIFIED, error="sent_unverified",
+            hint=f"check URL Inspection for {url} in Search Console before retrying; don't request it again yet")
+    die(message, EXIT_API)
 
 
 @group.command("status")
@@ -202,29 +246,32 @@ def pages_cmd(prop, examples, sitemap, indexed, fmt, quiet) -> None:
                                                         "covers URL.")
 @click.option("--check-live-sitemap", is_flag=True,
               help="Also read the property's submitted sitemaps live from the site (inLiveSitemap).")
+@click.option("--no-live-sitemap", is_flag=True,
+              help="Don't read the live sitemap or ask Google again when its answer may lag (unknown URL).")
 @click.option("--request-indexing", is_flag=True, help="WRITE: ask Google to recrawl URL (needs --yes).")
 @click.option("--yes", "--confirm", "confirm", is_flag=True, help="Do the --request-indexing write.")
 @json_flag
 @agent_output_options(rows=False)
-def inspect_cmd(url, prop, check_live_sitemap, request_indexing, confirm, fmt, quiet) -> None:
+def inspect_cmd(url, prop, check_live_sitemap, no_live_sitemap, request_indexing, confirm, fmt, quiet) -> None:
     """URL Inspection (indexed data): coverage, last crawl, canonicals, sitemaps. --request-indexing --yes asks
     Google to index URL (without --yes: prints the plan, exit 2)."""
     url = _url(url)
     prop = _property(prop) if prop else None
     if confirm and not request_indexing:
         raise click.UsageError("--yes goes with --request-indexing; inspect alone is read-only.")
-    if request_indexing and check_live_sitemap:
-        raise click.UsageError("--check-live-sitemap goes with a plain inspect, not --request-indexing.")
+    if request_indexing and (check_live_sitemap or no_live_sitemap):
+        raise click.UsageError("--check-live-sitemap and --no-live-sitemap go with a plain inspect, not "
+                               "--request-indexing.")
+    if check_live_sitemap and no_live_sitemap:
+        raise click.UsageError("--check-live-sitemap and --no-live-sitemap contradict each other.")
     if request_indexing:
         plan = {"url": url, "property": prop}
         would = (f"run URL Inspection's REQUEST INDEXING for {url} in {prop or 'the property that covers it'}: a "
                  "live test, then one indexing request to Google")
         if not confirm:
             _refuse("request_indexing", would, plan)
-        result = _write("request_indexing", "request_indexing", url, prop, plan=plan)
-        data.emit_record("Indexing requested", result, fmt)
-        raise SystemExit(EXIT_OK)
-    info = data.call(SITE, "inspect", url, prop, check_live_sitemap)
+        _request_indexing(url, prop, plan, fmt)
+    info = data.call(SITE, "inspect", url, prop, check_live_sitemap, not no_live_sitemap)
     if resolve_format(fmt) == "json":
         emit_json(info)
     else:

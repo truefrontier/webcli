@@ -347,13 +347,89 @@ def inspection_notes(info: dict) -> list[str]:
         notes.append(f"referringUrls includes {', '.join(sitemap_refs)}: Google lists a sitemap it found the URL "
                      f"in as a referring page. {PASSED_THROUGH}")
     live = info.get("inLiveSitemap")
-    if live is True and not info.get("inSitemap"):
+    if live is True and not info.get("inSitemap") and not info.get("recheckedAfterUnknown"):
         notes.append("The live submitted sitemap lists this URL now; Google's stored data (inSitemap false) hasn't "
                      "caught up.")
     elif live is False and info.get("inSitemap"):
         notes.append("Google's stored data puts this URL in a sitemap, but the live submitted sitemaps don't list "
                      "it now.")
     return notes
+
+
+UNKNOWN = COVERAGE[39]
+
+
+def needs_recheck(info: dict) -> bool:
+    """Whether Google's stored answer looks like it may lag: "URL is unknown to Google", or not on Google and in no
+    sitemap. inspect then reads the live sitemap and, if the URL is in it, asks Google once more."""
+    return info.get("coverageState") == UNKNOWN or (not info.get("onGoogle") and not info.get("inSitemap"))
+
+
+def pick_answer(first: dict, second: dict) -> dict:
+    """After a recheck: the second answer, unless it went back to "unknown" while the first one wasn't."""
+    return first if second.get("coverageState") == UNKNOWN and first.get("coverageState") != UNKNOWN else second
+
+
+def recheck_note(first: dict, second: dict | None, live: dict | None) -> str | None:
+    """The plain note for inspect's automatic recheck. first: Google's first answer; second: its answer when webcli
+    asked again (None: it didn't); live: livesitemap.check's fields (None: the live sitemap wasn't read)."""
+    unknown = first.get("coverageState") == UNKNOWN
+    if second is None:
+        if not unknown:
+            return None
+        if live is None:
+            return ("Google's stored data says this URL is unknown. Google's answers can lag or flip between calls; "
+                    "run again later, or use --check-live-sitemap.")
+        if live.get("inLiveSitemap") is False:
+            return "Google's stored data says this URL is unknown, and your live submitted sitemaps don't list it."
+        return ("Google's stored data says this URL is unknown, and webcli couldn't read your live sitemaps (see "
+                "liveSitemapErrors). Google's answers can lag or flip between calls; run again later.")
+    said = "this URL is unknown" if unknown else f"'{first.get('coverageState')}' with the URL in no sitemap"
+    where = f"in your live sitemap ({', '.join(live.get('liveSitemaps') or []) if live else 'sitemap'})"
+    got = second.get("coverageState")
+    if got == UNKNOWN and unknown:
+        return (f"Google's stored data says this URL is unknown, but it is {where}. Google's answers can lag or flip "
+                "between calls; webcli asked again and Google still says it is unknown. Run inspect again later.")
+    if got == UNKNOWN:
+        return (f"Google's stored data said {said}, but it is {where}. webcli asked again and Google said it is "
+                "unknown; that answer is set aside here. Run inspect again later.")
+    return (f"Google's stored data said {said}, but it is {where}. Google's answers can lag or flip between calls; "
+            f"webcli asked again and got: {got}" + ("" if second.get("inSitemap") else " (still in no sitemap)")
+            + ".")
+
+
+# REQUEST INDEXING (endpoints.py has Search Console's flow)
+
+def rpc_error(body: str, rpcid: str) -> str | None:
+    """What is wrong with rpcid's answer in a batchexecute body: None when it answered without an error, else
+    "code N", "no <rpcid> result", or "unreadable". Only this summary leaves; the body is never kept."""
+    try:
+        rpc_payload(body, rpcid)
+    except RpcError as exc:
+        if isinstance(exc.code, int):
+            return f"code {exc.code}"
+        return f"no {rpcid} result"
+    except ValueError:
+        return "unreadable"
+    return None
+
+
+def ri_outcome(shown: str | None, where: str | None, sent: int, status: int | None, error: str | None) -> str:
+    """confirmed | quota | unconfirmed | not_sent, from what Search Console showed after the click (shown: done,
+    quota, failed, rejected, or None by the timeout; where: "dialog" or "page"), whether Fj3Owf left the browser, and
+    Fj3Owf's HTTP status and answer error (status None: webcli didn't see an answer).
+
+    Confirmed needs Google's own "Indexing requested" in the result dialog and a clean Fj3Owf answer when one was
+    seen. Text found outside a dialog needs that clean answer too. Anything else after Fj3Owf went out is
+    unconfirmed: Google may or may not have queued it."""
+    if shown == "quota" or error == "code 8":
+        return "quota"
+    if not sent:
+        return "not_sent"
+    clean = status == 200 and error is None
+    if shown == "done" and (clean or (where == "dialog" and status is None)):
+        return "confirmed"
+    return "unconfirmed"
 
 
 # Performance

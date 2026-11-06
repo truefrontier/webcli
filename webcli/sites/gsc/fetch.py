@@ -11,10 +11,11 @@ it. A signed-out profile is exit 4: a person runs `webcli identity login google:
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 from webcli.core import browser
 from webcli.core.errors import AuthRequired, NotFound, RateLimited, UsageError
@@ -23,8 +24,8 @@ from webcli.sites.google import EMAIL_JS, SIGNED_OUT_HOSTS
 from webcli.sites.gsc import guard, livesitemap, parse
 from webcli.sites.gsc.endpoints import APP_HOST, APP_URL, BATCH_PATH, DEFAULT_EXAMPLES, DIMENSIONS, INDEXED_KEY, \
     INSPECT_MODE_INDEX, INSPECT_TIMEOUT_S, MAX_EXAMPLES, MAX_LIMIT, NOT_INDEXED, PAGE_SETS, PAGES_ALL_KNOWN, \
-    PAGES_SITEMAP, PAGES_SUBMITTED, POLL_SECONDS, REQUEST_INDEXING_TIMEOUT_S, RPC, SOURCE_PATH, VIEW_INDEX_REASONS, \
-    VIEW_INDEX_SERIES, VIEW_REASON_URLS, WRITE_RPC, index_filters
+    PAGES_SITEMAP, PAGES_SUBMITTED, POLL_SECONDS, REQUEST_INDEXING_TIMEOUT_S, RESULT_DIALOG, RPC, SOURCE_PATH, \
+    VIEW_INDEX_REASONS, VIEW_INDEX_SERIES, VIEW_REASON_URLS, WRITE_RPC, index_filters
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -59,11 +60,19 @@ async ({path, freq, rpcid, sourcePath, timeoutMs}) => {
 }
 """
 
-# What Search Console's REQUEST INDEXING dialog says when it's done.
+# What Search Console's REQUEST INDEXING result dialog says (endpoints.py has the flow). Read from the modal dialog
+# only: other panels print their own "Something went wrong".
 RI_DONE = re.compile(r"indexing requested", re.I)
 RI_QUOTA = re.compile(r"quota exceeded", re.I)
 RI_FAILED = re.compile(r"problem submitting your indexing request|something went wrong", re.I)
-RI_CANT = re.compile(r"url is not available to google|can'?t be indexed|indexing not allowed", re.I)
+RI_CANT = re.compile(r"indexing request rejected|url is not available to google|can'?t be indexed|"
+                     r"indexing not allowed", re.I)
+RI_SHOWN = {"done": RI_DONE, "quota": RI_QUOTA, "failed": RI_FAILED, "rejected": RI_CANT}
+# The text of the open modal dialogs ("" when none is open).
+DIALOG_JS = (f"() => [...document.querySelectorAll({json.dumps(RESULT_DIALOG)})]"
+             ".filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')"
+             ".map(e => e.innerText || '').join('\\n')")
+ANSWER_READ_S = 15
 
 
 class Blocked(RuntimeError):
@@ -288,27 +297,45 @@ async def _resolve(page: "Page", url: str, prop: str | None) -> str:
     return found
 
 
-async def inspect(url: str, prop: str | None = None, check_live_sitemap: bool = False, *,
+async def _inspection(page: "Page", url: str, prop: str) -> dict:
+    """One index-status inspection (RVtklb mode 2, polled, then HZPzjb) -> parse.inspection."""
+    job = parse.job_id(await rpc(page, RPC["inspect_start"], [url, None, 4, INSPECT_MODE_INDEX, prop], prop=prop))
+    deadline = time.monotonic() + INSPECT_TIMEOUT_S
+    while not parse.job_done(await rpc(page, RPC["inspect_poll"], [job, prop], prop=prop)):
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"URL Inspection didn't finish in {INSPECT_TIMEOUT_S}s; try again.")
+        await asyncio.sleep(POLL_SECONDS)
+    return parse.inspection(await rpc(page, RPC["inspect_index"], [job, prop], prop=prop), url, prop)
+
+
+async def inspect(url: str, prop: str | None = None, check_live_sitemap: bool = False, live_sitemap: bool = True, *,
                   headed: bool = False) -> dict:
     """URL Inspection's indexed data (never a live test): coverage, last crawl, canonicals, sitemaps, and notes
     where its sitemap fields look contradictory. check_live_sitemap: also read the property's submitted sitemaps
-    live from the site (plain HTTPS, no Google session) and report inLiveSitemap."""
+    live from the site (plain HTTPS, no Google session) and report inLiveSitemap.
+
+    When Google's answer may lag (parse.needs_recheck: "URL is unknown to Google", or not on Google and in no
+    sitemap), the live sitemap is read anyway, and if it lists the URL, Google is asked once more and the second
+    answer used unless it went back to unknown (recheckedAfterUnknown). live_sitemap=False (--no-live-sitemap): no
+    automatic read; a recheck then follows only when check_live_sitemap read the sitemap (the CLI refuses both)."""
     async with browser.site_page(guard.READ) as page:
         await open_app(page)
         prop = await _resolve(page, url, prop)
-        job = parse.job_id(await rpc(page, RPC["inspect_start"], [url, None, 4, INSPECT_MODE_INDEX, prop], prop=prop))
-        deadline = time.monotonic() + INSPECT_TIMEOUT_S
-        while not parse.job_done(await rpc(page, RPC["inspect_poll"], [job, prop], prop=prop)):
-            if time.monotonic() > deadline:
-                raise RuntimeError(f"URL Inspection didn't finish in {INSPECT_TIMEOUT_S}s; try again.")
-            await asyncio.sleep(POLL_SECONDS)
-        info = parse.inspection(await rpc(page, RPC["inspect_index"], [job, prop], prop=prop), url, prop)
-        if check_live_sitemap:
+        first = info = await _inspection(page, url, prop)
+        suspect = parse.needs_recheck(first)
+        live = None
+        if check_live_sitemap or (live_sitemap and suspect):
             submitted = [r["sitemap"] for r in parse.sitemaps(await rpc(page, RPC["sitemaps"], [prop, prop],
                                                                         prop=prop))]
-            info["submittedSitemaps"] = submitted
-            info.update(await asyncio.to_thread(livesitemap.check, url, submitted, prop))
-        info["notes"] = parse.inspection_notes(info)
+            live = {"submittedSitemaps": submitted,
+                    **await asyncio.to_thread(livesitemap.check, url, submitted, prop)}
+        second = None
+        if suspect and live and live.get("inLiveSitemap"):
+            second = await _inspection(page, url, prop)
+            info = parse.pick_answer(first, second)
+        info = {**info, **(live or {}), "recheckedAfterUnknown": second is not None}
+        note = parse.recheck_note(first, second, live) if suspect else None
+        info["notes"] = parse.inspection_notes(info) + ([note] if note else [])
         return info
 
 
@@ -352,14 +379,106 @@ async def _wait_text(page: "Page", patterns: list[re.Pattern], timeout_s: float,
     return None
 
 
+def ri_shown(dialog: str, page_text: str, base: dict) -> tuple[str, str, str] | None:
+    """What Search Console shows since the click: (kind, text, where), kind one of RI_SHOWN. The open modal dialog
+    decides; the whole page counts only for "indexing requested", and only while no modal dialog is open. base:
+    {"dialog": counts, "page": counts} from before the click, so a notice already showing doesn't count."""
+    if dialog.strip():
+        for kind, pattern in RI_SHOWN.items():
+            if len(pattern.findall(dialog)) > base["dialog"][kind]:
+                return kind, " ".join(dialog.split())[:240], "dialog"
+        return None
+    if len(RI_DONE.findall(page_text)) > base["page"]["done"]:
+        return "done", RI_DONE.search(page_text).group(0), "page"
+    return None
+
+
+def _counts(text: str) -> dict[str, int]:
+    return {kind: len(pattern.findall(text)) for kind, pattern in RI_SHOWN.items()}
+
+
+async def _texts(page: "Page") -> tuple[str, str]:
+    dialog = await page.evaluate(DIALOG_JS) or ""
+    return dialog, ("" if dialog.strip() else await page.evaluate(TEXT_JS) or "")
+
+
+async def _wait_shown(page: "Page", timeout_s: float, base: dict) -> tuple[str, str, str] | None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if shown := ri_shown(*await _texts(page), base):
+            return shown
+        await asyncio.sleep(1.0)
+    return None
+
+
+def _is_request(request) -> bool:
+    """The Fj3Owf call: a POST to batchexecute labelled rpcids=Fj3Owf (the guard lets it out only alone)."""
+    parts = urlsplit(request.url)
+    ids = [v for k, v in parse_qsl(parts.query) if k == "rpcids"]
+    return request.method == "POST" and parts.path == BATCH_PATH and ids == [WRITE_RPC["request_indexing"]]
+
+
+def _keep_answers(answers: list):
+    def on_response(response) -> None:
+        try:
+            if _is_request(response.request):
+                answers.append(response)
+        except Exception:
+            pass  # an answer webcli can't place counts as unseen
+
+    return on_response
+
+
+async def _answer(answers: list) -> tuple[int | None, str | None]:
+    """Fj3Owf's HTTP status and what was wrong with its answer (parse.rpc_error; None: nothing); (None, None) when
+    webcli saw no answer. The body is read once, checked, and dropped: never kept, logged, or printed."""
+    if not answers:
+        return None, None
+    response = answers[-1]
+    try:
+        body = await asyncio.wait_for(response.text(), ANSWER_READ_S)
+    except Exception:
+        return response.status, "unreadable"
+    return response.status, parse.rpc_error(body, WRITE_RPC["request_indexing"])
+
+
+def ri_message(outcome: str, shown: tuple[str, str, str] | None, sent: int, status: int | None,
+               error: str | None) -> str:
+    """The plain message for each outcome: whether Fj3Owf left the browser, what Google answered (status and error
+    code only), and what Search Console showed."""
+    if sent:
+        went = "the request left the browser (Fj3Owf sent once)"
+        answer = ("webcli didn't see Google's answer" if status is None else f"Google answered HTTP {status}"
+                  + ("" if error is None else f", error {error}" if error.startswith("code") else f" ({error})"))
+    else:
+        went, answer = "the request never left the browser (Fj3Owf not sent), so nothing was submitted", None
+    said = (f"no result showed in {REQUEST_INDEXING_TIMEOUT_S}s" if shown is None
+            else f'the dialog said "{shown[1]}"' if shown[2] == "dialog"
+            else f'the page said "{shown[1]}" (no result dialog open)')
+    detail = "; ".join(x for x in (went, answer, said) if x)
+    if outcome == "confirmed":
+        return f"Indexing requested: {detail}."
+    if outcome == "quota":
+        return f"Search Console: indexing request quota exceeded for today: {detail}."
+    if outcome == "unconfirmed":
+        return (f"Search Console didn't confirm the indexing request: {detail}. Google may or may not have queued "
+                "it; check URL Inspection in Search Console before retrying.")
+    return f"Search Console didn't take the indexing request: {detail}.{google.blocked()}"
+
+
 async def request_indexing(url: str, prop: str | None = None, *, confirm: bool = False,
                            headed: bool = False) -> dict:
     """URL Inspection's REQUEST INDEXING, clicked in Search Console's own page: it runs a live test, then sends one
-    indexing request (Fj3Owf, allowed once by the guard). {requested, url, property, message}."""
+    indexing request (Fj3Owf, allowed once by the guard). After the click it returns {requested, url, property,
+    outcome, confirmed, dialog, fj3owfSent, fj3owfStatus, fj3owfError, message}; outcome (parse.ri_outcome:
+    confirmed, quota, unconfirmed, not_sent) sets the exit code in cli.py. Before the click, errors raise."""
     if not confirm:
         raise UsageError("inspect --request-indexing writes only with --yes.")
-    budget = guard.Budget({WRITE_RPC["request_indexing"]: 1})
+    rid = WRITE_RPC["request_indexing"]
+    budget = guard.Budget({rid: 1})
+    answers: list = []
     async with browser.site_page(guard.request_indexing_policy(budget)) as page:
+        page.on("response", _keep_answers(answers))
         await open_app(page)
         prop = await _resolve(page, url, prop)
         await open_app(page, prop)
@@ -369,19 +488,15 @@ async def request_indexing(url: str, prop: str | None = None, *, confirm: bool =
         found = await _wait_text(page, [re.compile(r"^request indexing$", re.I | re.M)], INSPECT_TIMEOUT_S)
         if found is None:
             raise RuntimeError(f"URL Inspection showed no REQUEST INDEXING for {url}.{google.blocked()}")
-        outcomes = [RI_DONE, RI_QUOTA, RI_FAILED, RI_CANT]
-        baseline = _hits(await page.evaluate(TEXT_JS) or "", outcomes)
+        base = {"dialog": _counts(await page.evaluate(DIALOG_JS) or ""),
+                "page": _counts(await page.evaluate(TEXT_JS) or "")}
         await page.get_by_text(re.compile(r"^request indexing$", re.I)).first.click()
-        outcome = await _wait_text(page, outcomes, REQUEST_INDEXING_TIMEOUT_S, baseline)
-        sent = budget.sent.get(WRITE_RPC["request_indexing"], 0)
-        if outcome is None:
-            raise RuntimeError(f"Search Console didn't confirm the indexing request in {REQUEST_INDEXING_TIMEOUT_S}s "
-                               f"(request sent: {bool(sent)}). Check URL Inspection before trying again.")
-        index, message = outcome
-        if index == 1:
-            raise RateLimited("Search Console: indexing request quota exceeded for today.", sent=bool(sent))
-        if index in (2, 3) or not sent:
-            raise RuntimeError(f"Search Console didn't take the indexing request: {message} "
-                               f"(request sent: {bool(sent)}).{google.blocked()}")
-        return {"requested": True, "url": url, "property": prop, "message": "Indexing requested",
-                "requestsSent": sent}
+        shown = await _wait_shown(page, REQUEST_INDEXING_TIMEOUT_S, base)
+        sent = budget.close().get(rid, 0)  # no Fj3Owf from here on, so `sent` stays true
+        status, error = await _answer(answers) if sent else (None, None)
+        kind, where = (shown[0], shown[2]) if shown else (None, None)
+        outcome = parse.ri_outcome(kind, where, sent, status, error)
+        return {"requested": outcome == "confirmed", "url": url, "property": prop, "outcome": outcome,
+                "confirmed": shown[2] if outcome == "confirmed" else None, "dialog": shown[1] if shown else None,
+                "fj3owfSent": sent, "fj3owfStatus": status, "fj3owfError": error,
+                "message": ri_message(outcome, shown, sent, status, error)}

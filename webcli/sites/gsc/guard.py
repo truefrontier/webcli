@@ -8,10 +8,13 @@
   REQUEST_INDEXING (request_indexing_policy())
                 `inspect --request-indexing --yes`: Search Console's own URL Inspection page drives the flow, so its
                 own read batches (endpoints.INSPECT_PAGE_RPCIDS, RVtklb in mode 2 or 1: the live test REQUEST
-                INDEXING runs first) plus Fj3Owf once. Built fresh per command, so the budget is per command.
+                INDEXING runs first), its two load-time reads (endpoints.REQUEST_INDEXING_FLOW_RPCIDS, in calls of their
+                own, each with a [property] payload), plus Fj3Owf once, alone in its call. Built fresh per command,
+                so the budget is per command.
 
 Everything else (adding or removing properties and users, removals, validation, settings, the page's load-time
-writes such as SM7Bqb's recent-properties list) is in no policy and is aborted.
+writes such as SM7Bqb's recent-properties list) is in no policy and is aborted. Telemetry (endpoints.QUIET_*) is
+aborted too, but quietly: it isn't listed in error messages.
 
 Checking a batchexecute body means holding it, `at` token and (for Fj3Owf) the page's attestation included, in
 memory for this one check; it is never stored, logged, or printed. describe() names rpcids only.
@@ -27,8 +30,8 @@ from webcli.core.guard import Guard, Policy
 from webcli.core.redact import REDACTED, redact_url, tokenish
 from webcli.sites import google
 from webcli.sites.gsc.endpoints import BATCH_PATH, HOSTS, INSPECT_LIVE_MODE, INSPECT_MODE_INDEX, INSPECT_PAGE_RPCIDS, \
-    RPC, RPC_PREFIX, WRITE_RPC
-from webcli.sites.gsc.parse import freq_entries
+    QUIET_HOSTS, QUIET_PATHS, REQUEST_INDEXING_FLOW_RPCIDS, RPC, RPC_PREFIX, WRITE_RPC
+from webcli.sites.gsc.parse import freq_entries, normalize_property
 
 if TYPE_CHECKING:
     from playwright.async_api import Request
@@ -61,6 +64,24 @@ def inspect_mode(entry: list) -> int | None:
     """RVtklb's mode field ([url, null, 4, MODE, prop]): 2 indexed data, 1 a live test."""
     p = payload(entry)
     return p[3] if isinstance(p, list) and len(p) == 5 and isinstance(p[3], int) else None
+
+
+def property_payload(entry: list) -> bool:
+    """Whether an entry's payload is exactly [property], the property well-formed (oGVhvf, gydQ5d)."""
+    p = payload(entry)
+    if not (isinstance(p, list) and len(p) == 1 and isinstance(p[0], str)):
+        return False
+    try:
+        return normalize_property(p[0]) == p[0]
+    except ValueError:
+        return False
+
+
+def quiet(method: str, url: str) -> bool:
+    """Telemetry (endpoints.QUIET_*): aborted like any refused request, but not listed in error messages."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    return host in QUIET_HOSTS or parts.path in QUIET_PATHS.get(host, ())
 
 
 def _batch(method: str, url: str) -> bool | None:
@@ -112,7 +133,7 @@ def _policy(check) -> Policy:
     def allowed(request: "Request", state: Guard) -> bool:
         return bool(check(request.method, request.url, _body(request)))
 
-    return Policy("gsc", allowed, _describe_request)
+    return Policy("gsc", allowed, _describe_request, quiet=lambda request: quiet(request.method, request.url))
 
 
 class Budget:
@@ -128,6 +149,12 @@ class Budget:
         self.left[rpcid] -= 1
         self.sent[rpcid] = self.sent.get(rpcid, 0) + 1
         return True
+
+    def close(self) -> dict[str, int]:
+        """No more writes from now on; returns what went out. Read `sent` only after this, so a write the page makes
+        late can't go out after webcli has reported it as never sent."""
+        self.left.clear()
+        return dict(self.sent)
 
 
 def submit_check(prop: str, sitemap: str, budget: Budget):
@@ -148,7 +175,8 @@ def submit_check(prop: str, sitemap: str, budget: Budget):
 
 def request_indexing_check(budget: Budget):
     """Search Console's own inspection page: its read batches (INSPECT_PAGE_RPCIDS and READ), RVtklb in mode 2 or 1
-    (the live test), and Fj3Owf alone in its call, once."""
+    (the live test), its load-time reads oGVhvf and gydQ5d (only among themselves, each with a [property] payload),
+    and Fj3Owf alone in its call, once."""
     page_ids = INSPECT_PAGE_RPCIDS | READ_RPCIDS
 
     def check(method: str, url: str, body: str | None) -> bool:
@@ -163,6 +191,8 @@ def request_indexing_check(budget: Budget):
         ids = [e[0] for e in entries]
         if REQUEST in ids:
             return len(entries) == 1 and budget.spend(REQUEST)
+        if REQUEST_INDEXING_FLOW_RPCIDS & set(ids):
+            return set(ids) <= REQUEST_INDEXING_FLOW_RPCIDS and all(property_payload(e) for e in entries)
         for e in entries:
             if e[0] not in page_ids:
                 return False
