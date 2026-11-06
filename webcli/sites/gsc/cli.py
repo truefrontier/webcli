@@ -56,7 +56,8 @@ NOTES = [
     "indexed list) and gives no full list beyond that: examplesTruncated says so.",
     "`inspect URL [--property P]`: URL Inspection's indexed data (never a live test): onGoogle, verdict, "
     "coverageState, lastCrawl, crawledAs, crawlAllowed, pageFetch, userCanonical, googleCanonical, inSitemap, "
-    "sitemaps, referringUrls (all Google's stored data, passed through), and notes where those look contradictory. "
+    "sitemaps, referringUrls (all Google's stored data, passed through), notes where those look contradictory, and "
+    "inspectUrl (the same URL Inspection in Search Console, to open). "
     "--check-live-sitemap: also read the property's submitted sitemaps live from the site (plain HTTPS, no Google "
     "session; sitemap indexes followed, 50 files max) -> inLiveSitemap, liveSitemaps, liveSitemapErrors. "
     "When Google's answer may lag (\"URL is unknown to Google\", or not on Google and in no sitemap), inspect reads "
@@ -85,8 +86,13 @@ WRITES = [
     "with no error ({requested: true, confirmed: \"dialog\", fj3owfStatus: 200, ...}). Exit 6 on Google's daily "
     "quota. Exit 8 (error \"sent_unverified\") when Fj3Owf went out but Google didn't confirm it (a failure dialog, "
     "an error answer, or no result in time): it may or may not be queued, so check URL Inspection in Search Console "
-    "before retrying. Exit 5 when Fj3Owf never went out (nothing was submitted), e.g. the live test rejected the URL.",
-    "Without --yes both print what they would do ({dryRun: true, wouldDo, ...}), contact nothing, and exit 2. "
+    "before retrying. Exit 5 when Fj3Owf never went out (nothing was submitted), e.g. the live test rejected the URL. "
+    "Every outcome prints its record on stdout with manualUrl (URL Inspection for URL in Search Console: request it "
+    "there by hand). Error code 7 (PERMISSION_DENIED, exit 8): Google refused it, most likely because Search "
+    "Console's reCAPTCHA check rejected the headless browser; request it by hand. Attempts that reach Google likely "
+    "count against the daily quota.",
+    "Without --yes both print what they would do ({dryRun: true, wouldDo, ...}; request indexing adds manualUrl, "
+    "null without --property), contact nothing, and exit 2. "
     "Every write, refused or done, appends one line to ~/.webcli/logs/gsc.log (time, write, outcome, property, "
     "URL, and for request indexing fj3owf=<HTTP status|unsent|unseen>; never a token or a body).",
 ]
@@ -115,9 +121,10 @@ def _url(value: str) -> str:
     return value.strip()
 
 
-def _refuse(write: str, would: str, plan: dict) -> None:
+def _refuse(write: str, would: str, plan: dict, **shown) -> None:
+    """The dry run: audited (plan's strings), printed as {dryRun, write, wouldDo, **plan, **shown, hint}, exit 2."""
     audit(write, "refused", **{k: v for k, v in plan.items() if isinstance(v, str)})
-    emit_json({"dryRun": True, "write": write, "wouldDo": would, **plan,
+    emit_json({"dryRun": True, "write": write, "wouldDo": would, **plan, **shown,
                "hint": "Nothing was sent to Google. Re-run with --yes to do it."})
     die(f"Not done without --yes. Would: {would}", EXIT_USAGE, hint="re-run with --yes")
 
@@ -143,11 +150,14 @@ def _fields(plan: dict) -> dict:
 
 RI_EXIT = {"confirmed": EXIT_OK, "quota": EXIT_RATE_LIMITED, "unconfirmed": EXIT_SENT_UNVERIFIED,
            "not_sent": EXIT_API}
+RI_TITLE = {"confirmed": "Indexing requested", "quota": "Indexing request quota exceeded",
+            "unconfirmed": "Indexing request not confirmed", "not_sent": "Indexing request not sent"}
 
 
 def _request_indexing(url: str, prop: str | None, plan: dict, fmt) -> None:
     """Run the write and exit by its outcome (fetch.request_indexing): 0 confirmed, 6 quota, 8 sent but not
-    confirmed, 5 never sent. The audit line carries fj3owf=<HTTP status|unsent|unseen> (never a body)."""
+    confirmed, 5 never sent. Every outcome prints its record (with manualUrl) on stdout, the error on stderr. The
+    audit line carries fj3owf=<HTTP status|unsent|unseen> (never a body)."""
     result = _write("request_indexing", "request_indexing", url, prop, plan=plan, audit_done=False)
     code = RI_EXIT.get(result.get("outcome"), EXIT_API)
     sent, status, error = result.get("fj3owfSent"), result.get("fj3owfStatus"), result.get("fj3owfError")
@@ -155,17 +165,19 @@ def _request_indexing(url: str, prop: str | None, plan: dict, fmt) -> None:
           fj3owf=status if status is not None else "unseen" if sent else "unsent",
           fj3owfError=error.replace(" ", "-") if error else None, **_fields(plan))
     message = result.get("message") or "Search Console's indexing request ended without a result."
+    if result.get("outcome") in RI_TITLE:
+        data.emit_record(RI_TITLE[result["outcome"]], result, fmt)
     if code == EXIT_OK:
-        data.emit_record("Indexing requested", result, fmt)
         raise SystemExit(EXIT_OK)
     if code == EXIT_RATE_LIMITED:
         die(message, EXIT_RATE_LIMITED, error="rate_limited", resets_at=None,
             hint="Google's daily indexing-request quota: try again tomorrow."
                  + (" Fj3Owf went out once; check URL Inspection before retrying." if sent else ""))
     if code == EXIT_SENT_UNVERIFIED:
-        data.emit_record("Indexing request not confirmed", result, fmt)
         die(message, EXIT_SENT_UNVERIFIED, error="sent_unverified",
-            hint=f"check URL Inspection for {url} in Search Console before retrying; don't request it again yet")
+            hint="open manualUrl and click REQUEST INDEXING yourself; webcli would likely be refused again"
+                 if error == "code 7" else
+                 f"check URL Inspection for {url} in Search Console before retrying; don't request it again yet")
     die(message, EXIT_API)
 
 
@@ -269,7 +281,7 @@ def inspect_cmd(url, prop, check_live_sitemap, no_live_sitemap, request_indexing
         would = (f"run URL Inspection's REQUEST INDEXING for {url} in {prop or 'the property that covers it'}: a "
                  "live test, then one indexing request to Google")
         if not confirm:
-            _refuse("request_indexing", would, plan)
+            _refuse("request_indexing", would, plan, manualUrl=parse.manual_url(prop, url) if prop else None)
         _request_indexing(url, prop, plan, fmt)
     info = data.call(SITE, "inspect", url, prop, check_live_sitemap, not no_live_sitemap)
     if resolve_format(fmt) == "json":

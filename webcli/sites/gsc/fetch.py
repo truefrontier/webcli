@@ -317,7 +317,8 @@ async def inspect(url: str, prop: str | None = None, check_live_sitemap: bool = 
     When Google's answer may lag (parse.needs_recheck: "URL is unknown to Google", or not on Google and in no
     sitemap), the live sitemap is read anyway, and if it lists the URL, Google is asked once more and the second
     answer used unless it went back to unknown (recheckedAfterUnknown). live_sitemap=False (--no-live-sitemap): no
-    automatic read; a recheck then follows only when check_live_sitemap read the sitemap (the CLI refuses both)."""
+    automatic read; a recheck then follows only when check_live_sitemap read the sitemap (the CLI refuses both).
+    inspectUrl: the same URL Inspection in Search Console, for a person to open."""
     async with browser.site_page(guard.READ) as page:
         await open_app(page)
         prop = await _resolve(page, url, prop)
@@ -333,7 +334,8 @@ async def inspect(url: str, prop: str | None = None, check_live_sitemap: bool = 
         if suspect and live and live.get("inLiveSitemap"):
             second = await _inspection(page, url, prop)
             info = parse.pick_answer(first, second)
-        info = {**info, **(live or {}), "recheckedAfterUnknown": second is not None}
+        info = {**info, **(live or {}), "recheckedAfterUnknown": second is not None,
+                "inspectUrl": parse.manual_url(prop, url)}
         note = parse.recheck_note(first, second, live) if suspect else None
         info["notes"] = parse.inspection_notes(info) + ([note] if note else [])
         return info
@@ -443,9 +445,13 @@ async def _answer(answers: list) -> tuple[int | None, str | None]:
 
 
 def ri_message(outcome: str, shown: tuple[str, str, str] | None, sent: int, status: int | None,
-               error: str | None) -> str:
+               error: str | None, manual: str) -> str:
     """The plain message for each outcome: whether Fj3Owf left the browser, what Google answered (status and error
-    code only), and what Search Console showed."""
+    code only), and what Search Console showed. Every outcome but confirmed ends with `manual` (parse.manual_url),
+    where a person can request it by hand."""
+    if outcome == "unconfirmed" and error == "code 7":
+        return ("Google refused the indexing request (PERMISSION_DENIED, code 7). Search Console's reCAPTCHA check "
+                f"most likely rejected this automated browser. Request it by hand: {manual}")
     if sent:
         went = "the request left the browser (Fj3Owf sent once)"
         answer = ("webcli didn't see Google's answer" if status is None else f"Google answered HTTP {status}"
@@ -459,19 +465,21 @@ def ri_message(outcome: str, shown: tuple[str, str, str] | None, sent: int, stat
     if outcome == "confirmed":
         return f"Indexing requested: {detail}."
     if outcome == "quota":
-        return f"Search Console: indexing request quota exceeded for today: {detail}."
+        return (f"Search Console: indexing request quota exceeded for today: {detail}. Try again tomorrow, here or "
+                f"by hand: {manual}")
     if outcome == "unconfirmed":
         return (f"Search Console didn't confirm the indexing request: {detail}. Google may or may not have queued "
-                "it; check URL Inspection in Search Console before retrying.")
-    return f"Search Console didn't take the indexing request: {detail}.{google.blocked()}"
+                f"it; check URL Inspection in Search Console before retrying: {manual}")
+    return f"Search Console didn't take the indexing request: {detail}.{google.blocked()} Request it by hand: {manual}"
 
 
 async def request_indexing(url: str, prop: str | None = None, *, confirm: bool = False,
                            headed: bool = False) -> dict:
     """URL Inspection's REQUEST INDEXING, clicked in Search Console's own page: it runs a live test, then sends one
     indexing request (Fj3Owf, allowed once by the guard). After the click it returns {requested, url, property,
-    outcome, confirmed, dialog, fj3owfSent, fj3owfStatus, fj3owfError, message}; outcome (parse.ri_outcome:
-    confirmed, quota, unconfirmed, not_sent) sets the exit code in cli.py. Before the click, errors raise."""
+    outcome, confirmed, dialog, fj3owfSent, fj3owfStatus, fj3owfError, manualUrl, message}; outcome
+    (parse.ri_outcome: confirmed, quota, unconfirmed, not_sent) sets the exit code in cli.py. manualUrl is URL
+    Inspection for the URL (parse.manual_url), to request it by hand. Before the click, errors raise."""
     if not confirm:
         raise UsageError("inspect --request-indexing writes only with --yes.")
     rid = WRITE_RPC["request_indexing"]
@@ -496,7 +504,8 @@ async def request_indexing(url: str, prop: str | None = None, *, confirm: bool =
         status, error = await _answer(answers) if sent else (None, None)
         kind, where = (shown[0], shown[2]) if shown else (None, None)
         outcome = parse.ri_outcome(kind, where, sent, status, error)
+        manual = parse.manual_url(prop, url)
         return {"requested": outcome == "confirmed", "url": url, "property": prop, "outcome": outcome,
                 "confirmed": shown[2] if outcome == "confirmed" else None, "dialog": shown[1] if shown else None,
-                "fj3owfSent": sent, "fj3owfStatus": status, "fj3owfError": error,
-                "message": ri_message(outcome, shown, sent, status, error)}
+                "fj3owfSent": sent, "fj3owfStatus": status, "fj3owfError": error, "manualUrl": manual,
+                "message": ri_message(outcome, shown, sent, status, error, manual)}

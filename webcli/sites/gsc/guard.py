@@ -9,8 +9,9 @@
                 `inspect --request-indexing --yes`: Search Console's own URL Inspection page drives the flow, so its
                 own read batches (endpoints.INSPECT_PAGE_RPCIDS, RVtklb in mode 2 or 1: the live test REQUEST
                 INDEXING runs first), its two load-time reads (endpoints.REQUEST_INDEXING_FLOW_RPCIDS, in calls of their
-                own, each with a [property] payload), plus Fj3Owf once, alone in its call. Built fresh per command,
-                so the budget is per command.
+                own, each with a [property] payload), Search Console's reCAPTCHA v3 attestation
+                (endpoints.RECAPTCHA_POSTS on www.google.com), plus Fj3Owf once, alone in its call. Built fresh per
+                command, so the budget is per command.
 
 Everything else (adding or removing properties and users, removals, validation, settings, the page's load-time
 writes such as SM7Bqb's recent-properties list) is in no policy and is aborted. Telemetry (endpoints.QUIET_*) is
@@ -30,7 +31,8 @@ from webcli.core.guard import Guard, Policy
 from webcli.core.redact import REDACTED, redact_url, tokenish
 from webcli.sites import google
 from webcli.sites.gsc.endpoints import BATCH_PATH, HOSTS, INSPECT_LIVE_MODE, INSPECT_MODE_INDEX, INSPECT_PAGE_RPCIDS, \
-    QUIET_HOSTS, QUIET_PATHS, REQUEST_INDEXING_FLOW_RPCIDS, RPC, RPC_PREFIX, WRITE_RPC
+    QUIET_HOSTS, QUIET_PATHS, RECAPTCHA_HOST, RECAPTCHA_POSTS, REQUEST_INDEXING_FLOW_RPCIDS, RPC, RPC_PREFIX, \
+    WRITE_RPC
 from webcli.sites.gsc.parse import freq_entries, normalize_property
 
 if TYPE_CHECKING:
@@ -82,6 +84,14 @@ def quiet(method: str, url: str) -> bool:
     parts = urlsplit(url)
     host = parts.hostname or ""
     return host in QUIET_HOSTS or parts.path in QUIET_PATHS.get(host, ())
+
+
+def recaptcha_post(method: str, url: str) -> bool:
+    """A POST of Search Console's reCAPTCHA v3 attestation (endpoints.RECAPTCHA_POSTS): https, www.google.com, the
+    default port, exactly those paths, any query."""
+    parts = urlsplit(url)
+    return (method.upper() == "POST" and parts.scheme == "https" and parts.hostname == RECAPTCHA_HOST
+            and parts.port in (None, 443) and "@" not in parts.netloc and parts.path in RECAPTCHA_POSTS)
 
 
 def _batch(method: str, url: str) -> bool | None:
@@ -176,13 +186,13 @@ def submit_check(prop: str, sitemap: str, budget: Budget):
 def request_indexing_check(budget: Budget):
     """Search Console's own inspection page: its read batches (INSPECT_PAGE_RPCIDS and READ), RVtklb in mode 2 or 1
     (the live test), its load-time reads oGVhvf and gydQ5d (only among themselves, each with a [property] payload),
-    and Fj3Owf alone in its call, once."""
+    its reCAPTCHA v3 attestation (recaptcha_post), and Fj3Owf alone in its call, once."""
     page_ids = INSPECT_PAGE_RPCIDS | READ_RPCIDS
 
     def check(method: str, url: str, body: str | None) -> bool:
         batch = _batch(method, url)
         if batch is None:
-            return google.allowed(method.upper(), url, HOSTS)
+            return google.allowed(method.upper(), url, HOSTS) or recaptcha_post(method, url)
         if not batch:
             return False
         entries = entries_of(url, body)

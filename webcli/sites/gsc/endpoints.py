@@ -61,6 +61,17 @@ INSPECT_PAGE_RPCIDS = frozenset({"yol87d", "DETOSe", "HZPzjb", "C4lTm", "zUbeBb"
 #   gydQ5d  the unread Search Console messages count: the bell's badge ("Unread messages: N")
 REQUEST_INDEXING_FLOW_RPCIDS = frozenset({"oGVhvf", "gydQ5d"})
 
+# Search Console's own reCAPTCHA v3 attestation for REQUEST INDEXING, allowed only in the request-indexing policy
+# (READ and submit still abort them). Its REQUEST INDEXING module (read 2026-11-06) loads
+# www.google.com/recaptcha/api.js with Search Console's site key and calls grecaptcha.execute(key, {action:
+# "submit"}); the token goes into Fj3Owf. reCAPTCHA's own frame then POSTs these two paths on www.google.com (https,
+# default port; any query). With them aborted, execute still resolved, but with an unscored fallback token, and Google
+# refused Fj3Owf with code 7 (PERMISSION_DENIED). webcli never reads, handles, or stores the token: the page's JS
+# mints it and the page sends it. This is not a workaround: Google's check runs as it does for a person, and Google
+# decides. It may still refuse a headless browser (code 7); then request indexing by hand (manual_url).
+RECAPTCHA_HOST = "www.google.com"
+RECAPTCHA_POSTS = frozenset({"/recaptcha/api2/reload", "/recaptcha/api2/clr"})
+
 # What Search Console's REQUEST INDEXING does after the click (its JS module with Fj3Owf, read 2026-11-06): a modal
 # "Testing if live URL can be indexed" (the live test: RVtklb mode 1, then polls), then "Submitting request" (Fj3Owf),
 # then one result dialog. "Indexing requested" shows only after Fj3Owf succeeds. Any failure in that chain shows
@@ -69,6 +80,8 @@ REQUEST_INDEXING_FLOW_RPCIDS = frozenset({"oGVhvf", "gydQ5d"})
 # role=dialog|alertdialog with aria-modal=true; the nav drawer is role=dialog with aria-modal=false, and other panels
 # print their own "Something went wrong", so fetch.py reads the result from the modal dialog only.
 RESULT_DIALOG = "[role=dialog][aria-modal=true], [role=alertdialog]"
+# URL Inspection for one URL in Search Console, for a person to open (request indexing by hand, or check it).
+INSPECT_PAGE_URL = f"{APP_URL}/inspect"
 
 # Telemetry every gsc policy aborts without listing it in errors (guard.quiet): Google Tag Manager, Google Analytics,
 # Google's client log, and Search Console's own JS error, client log, and browser-info beacons.

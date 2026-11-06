@@ -7,11 +7,11 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 from webcli.sites.gemini.parse import AUTH_CODES, NOT_FOUND_CODES, RpcError, at, envelopes, freq_entries
-from webcli.sites.gsc.endpoints import REPORT_TZ, STALE_DAYS
+from webcli.sites.gsc.endpoints import INSPECT_PAGE_URL, REPORT_TZ, STALE_DAYS
 
 __all__ = ["AUTH_CODES", "NOT_FOUND_CODES", "RpcError", "freq_entries", "rpc_payload"]
 
@@ -156,6 +156,12 @@ def url_in_property(url: str, prop: str) -> bool:
         domain = prop.split(":", 1)[1]
         return host == domain or host.endswith("." + domain)
     return url.startswith(prop)
+
+
+def manual_url(prop: str, url: str) -> str:
+    """URL Inspection for `url` in `prop`, for a person to open: Search Console's own deep link, where REQUEST
+    INDEXING can be clicked by hand (manualUrl, inspectUrl)."""
+    return f"{INSPECT_PAGE_URL}?resource_id={quote(prop, safe='')}&id={quote(url, safe='')}"
 
 
 def property_for(url: str, props: list[str]) -> str | None:

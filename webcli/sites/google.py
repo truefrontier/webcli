@@ -53,11 +53,12 @@ def allowed(method: str, url: str, hosts: tuple[str, ...]) -> bool:
     return method == "POST" and (host, parts.path) in SESSION_POSTS
 
 
-def blocked() -> str:
+def blocked(shown: int = 6) -> str:
     """What the guard aborted during this command, for an error that says nothing came back (describe() lines:
-    no query strings, tokens redacted)."""
-    lines = list(dict.fromkeys(guard.state.blocked))[:6]
-    return f" The guard blocked: {'; '.join(lines)}." if lines else ""
+    no query strings, tokens redacted): the first `shown`, then "(+N more)" so none is silently left out."""
+    lines = list(dict.fromkeys(guard.state.blocked))
+    more = f" (+{len(lines) - shown} more)" if len(lines) > shown else ""
+    return f" The guard blocked: {'; '.join(lines[:shown])}{more}." if lines else ""
 
 
 async def open_app(page: "Page", url: str) -> None:
