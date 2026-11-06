@@ -59,6 +59,16 @@ class Library:
         self.save()
         return entry
 
+    def builtin(self, name: str = "loom", **extra) -> dict:
+        """An official built-in's catalog entry: no commit, sha256, or path, and no tarball."""
+        entry = {"name": name, "version": "1.0.0rc1", "summary": f"{name}, read-only", "tier": "official",
+                 "builtin": True, "verified": True, "requires_webcli": ">=1.0.0rc1,<2", "source": "core",
+                 "identity": name, "hosts": [], "commands": [{"name": "list", "strategy": "cookie", "writes": False}],
+                 **extra}
+        self.tools[name] = entry
+        self.save()
+        return entry
+
     def save(self, data: dict | None = None) -> None:
         index = {"tools": list(self.tools.values()), "revoked": self.revoked} if data is None else data
         (self.root / "index.json").write_text(json.dumps(index))
@@ -88,6 +98,11 @@ def ok(*args: str, input: str | None = None):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def installed_rows() -> list[dict]:
+    """`webcli tools list` without the built-ins it lists after the installed tools."""
+    return [r for r in ok("tools", "list") if r["status"] != "builtin"]
+
+
 def leftovers(tools: Path) -> list[str]:
     return sorted(p.name for p in tools.iterdir() if p.name.startswith(".")) if tools.is_dir() else []
 
@@ -105,7 +120,7 @@ def test_install_list_grant_revoke_disable_then_a_revocation_in_the_index_turns_
     assert run("toyhttp", "get").stdout == "got\n"
     assert ok("toyhttp", "label", "add")["dryRun"] is True  # the manifest's write is gated
 
-    rows = ok("tools", "list")
+    rows = installed_rows()
     assert [(r["name"], r["version"], r["status"], r["commit"]) for r in rows] == [
         ("toyhttp", "0.1.0", "loaded", entry["commit"][:12])]
 
@@ -204,10 +219,94 @@ def test_a_tool_that_needs_a_newer_webcli_is_refused(library, tools):
     assert result.exit_code == 2 and "needs webcli >=99" in result.stderr and not (tools / "toyhttp").exists()
 
 
-def test_a_built_in_provider_name_is_refused_before_download(library, tools):
-    library.publish("google")
-    result = run("tools", "install", "google", "--yes")
+@pytest.mark.parametrize("name", ["google", "loom"])  # a provider; a built-in site listed as if it were community
+def test_a_community_entry_with_a_built_in_name_is_refused_before_download(library, tools, name):
+    library.publish(name)
+    result = run("tools", "install", name, "--yes")
     assert result.exit_code == 2 and "can't replace it" in result.stderr and leftovers(tools) == []
+
+
+# Official built-ins: catalogued in the index, shipped inside webcli, never downloaded.
+
+@pytest.fixture
+def no_download(monkeypatch):
+    def refuse(entry, dest):
+        raise AssertionError(f"downloaded {entry.name}")
+
+    monkeypatch.setattr(index_client, "download", refuse)
+
+
+def test_search_lists_built_ins_next_to_community_tools(library, tools):
+    library.publish("toyhttp")
+    library.builtin("loom")
+    rows = {r["name"]: r for r in ok("tools", "search")}
+    assert (rows["loom"]["tier"], rows["loom"]["installed"], rows["loom"]["verified"]) == ("official", "builtin", True)
+    assert (rows["toyhttp"]["tier"], rows["toyhttp"]["installed"]) == ("community", "")
+    assert [r["name"] for r in ok("tools", "search", "loom")] == ["loom"]
+    assert "builtin" in run("tools", "search", "loom", "--format", "table").stdout
+
+
+def test_info_on_a_built_in_shows_the_catalog_without_downloading(library, tools, no_download):
+    library.builtin("loom", docs="https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md")
+    info = ok("tools", "info", "loom")
+    assert info == {"name": "loom", "version": "1.0.0rc1", "summary": "loom, read-only", "tier": "official",
+                    "builtin": True, "verified": True, "identity": "loom:default", "hosts": [],
+                    "commands": [{"name": "list", "strategy": "cookie", "writes": False}],
+                    "requiresWebcli": ">=1.0.0rc1,<2",
+                    "docs": "https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md",
+                    "installed": "builtin", "revoked": None}
+    text = run("tools", "info", "loom", "--format", "text").stdout
+    assert "Built into webcli (official): nothing to install." in text and "Signs in as: loom:default" in text
+    assert leftovers(tools) == []
+
+
+def test_install_of_a_built_in_is_a_no_op(library, tools, no_download):
+    library.builtin("loom")
+    result = ok("tools", "install", "loom")
+    assert (result["installed"], result["changed"], result["next"]) == ("builtin", False, ["webcli loom --help"])
+    assert not (tools / "loom").exists() and leftovers(tools) == []
+    assert sites.tier_of("loom") == "official"
+
+
+def test_a_built_in_this_webcli_doesnt_ship_points_at_updating_webcli(library, tools, no_download):
+    library.builtin("futuresite", requires_webcli=">=9.0.0,<10")
+    result = run("tools", "install", "futuresite")
+    assert result.exit_code == 2 and "built into webcli >=9.0.0,<10" in result.stderr
+    assert "pip install --pre -U truefrontier-webcli" in result.stderr and not (tools / "futuresite").exists()
+    assert ok("tools", "info", "futuresite")["installed"] is None
+    assert ok("tools", "search", "futuresite")[0]["installed"] == ""
+
+
+@pytest.mark.parametrize("command", [["update", "loom"], ["remove", "loom"], ["disable", "loom"], ["enable", "loom"]])
+def test_managing_a_built_in_is_a_usage_error(library, tools, command):
+    library.builtin("loom")
+    result = run("tools", *command)
+    assert result.exit_code == 2 and "loom is built into webcli; it isn't an installed tool" in result.stderr
+
+
+@pytest.mark.parametrize("listed", ["builtin", "publish"])  # the catalog entry, or a community entry with its name
+def test_update_never_downloads_over_a_leftover_folder_with_a_built_ins_name(library, tools, no_download, listed):
+    getattr(library, listed)("loom")
+    (tools / "loom").mkdir(parents=True)
+    assert ok("tools", "update", "--all") == [{"name": "loom", "status": "built in"}]
+    result = run("tools", "update", "loom")
+    assert result.exit_code == 2 and "no tool to update" in result.stderr
+
+
+def test_update_all_with_nothing_installed(library, tools):
+    library.builtin("loom")
+    assert ok("tools", "update", "--all") == []
+
+
+def test_list_shows_installed_tools_then_the_official_data_built_ins(library, tools):
+    library.publish()
+    ok("tools", "install", "toyhttp", "--yes")
+    rows = ok("tools", "list")
+    assert rows[0]["name"] == "toyhttp"
+    builtins = [r["name"] for r in rows if r["status"] == "builtin"]
+    assert builtins == sorted(n for n, s in sites.registry().items()
+                              if sites.tier_of(n) == "official" and s.kind == "data")
+    assert "loom" in builtins and not {"chatgpt", "gemini", "muse"} & set(builtins)
 
 
 @pytest.mark.parametrize("name", ["../evil", "tool-name", "Gmail"])
@@ -237,6 +336,10 @@ def test_offline_search_uses_the_cache_and_update_refuses(library, tools, monkey
     assert result.exit_code == 7 and "Can't download" in result.stderr
 
 
+BUILTIN = {"name": "loom", "version": "1.0.0rc1", "summary": "Loom", "tier": "official", "builtin": True,
+           "identity": "loom", "hosts": [], "commands": [{"name": "list", "strategy": "cookie", "writes": False}]}
+
+
 @pytest.mark.parametrize("index", [
     {"tools": []},  # no revoked list: a cut-off index must not clear revocations
     {"tools": [], "revoked": [{"name": "toyhttp", "versions": [1]}]},
@@ -246,6 +349,17 @@ def test_offline_search_uses_the_cache_and_update_refuses(library, tools, monkey
     {"tools": [{"name": "toy-http", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64}], "revoked": []},
     {"tools": [{"name": "toyhttp", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64,
                 "path": "../../etc"}], "revoked": []},
+    # a community entry that calls itself official, or says builtin without meaning it
+    {"tools": [{"name": "toyhttp", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64,
+                "tier": "official"}], "revoked": []},
+    {"tools": [{"name": "toyhttp", "version": "0.1.0", "commit": "a" * 40, "sha256": "0" * 64,
+                "builtin": "yes"}], "revoked": []},
+    # a half-broken built-in
+    {"tools": [{**BUILTIN, "commit": "a" * 40, "sha256": "0" * 64}], "revoked": []},
+    {"tools": [{**BUILTIN, "tier": "community"}], "revoked": []},
+    {"tools": [{k: v for k, v in BUILTIN.items() if k != "commands"}], "revoked": []},
+    {"tools": [{**BUILTIN, "commands": [{"name": "list", "strategy": "cookie", "writes": "no"}]}], "revoked": []},
+    {"tools": [{**BUILTIN, "identity": None}], "revoked": []},
 ])
 def test_a_broken_index_never_replaces_the_cache(library, tools, index):
     library.revoked.append("oldtool")
@@ -349,7 +463,7 @@ def test_remove_deletes_the_tool_and_its_grants(library, tools):
     ok("tools", "grant", "toyhttp", "google:default")
     assert ok("tools", "remove", "toyhttp") == {"removed": "toyhttp", "grantsRevoked": ["google:default"]}
     assert not (tools / "toyhttp").exists() and grants.list_grants() == {}
-    assert ok("tools", "list") == []
+    assert installed_rows() == []
     assert run("tools", "remove", "toyhttp").exit_code == 3
 
 

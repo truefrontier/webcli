@@ -6,6 +6,9 @@ sha256 (core/index_client.py), check its manifest, show what it will reach, sign
 putting it in ~/.webcli/tools/<name>/. Core loads it from there (core/tools_registry.py) and holds it to its manifest
 (docs/tool-trust.md). The other commands manage those folders and grants.toml.
 
+The index also lists webcli's official built-in data sites (loom, gmail, ...). They ship inside webcli: search and info
+show them, install says there's nothing to install, and the commands that manage installed tools refuse them.
+
     ~/.webcli/tools/<name>/.installed.json   what install pinned: version, commit, sha256, index, installedAt
 """
 
@@ -43,6 +46,7 @@ from webcli.core.output import (
 from webcli.sites.base import NO_IDENTITY
 
 RECORD = tools_registry.INSTALLED
+UPDATE_WEBCLI = "pip install --pre -U truefrontier-webcli"
 WARNING = ("A community tool is Python code that runs as you, next to your signed-in sessions. webcli holds it to the "
            "hosts, identity, and writes above, but that doesn't make a stranger's code safe: read it first.")
 
@@ -56,6 +60,9 @@ def _folder(name: str) -> Path:
 
 def _installed(name: str) -> Path:
     folder = _folder(name)
+    if not folder.is_dir() and _ships(name):
+        die(f"{name} is built into webcli; it isn't an installed tool.", EXIT_USAGE,
+            hint=f"It comes with webcli and updates with it: {UPDATE_WEBCLI}.")
     if not folder.is_dir():
         die(f"No installed tool named {name!r}.", EXIT_NOT_FOUND, hint="`webcli tools list` shows what's installed.")
     return folder
@@ -65,6 +72,10 @@ def _installed_names() -> list[str]:
     root = tools_registry.tools_dir()
     return [p.name for p in sorted(root.iterdir()) if p.is_dir() and not p.name.startswith(".")] \
         if root.is_dir() else []
+
+
+def _record(folder: Path) -> dict:
+    return tools_registry.installed_record(folder)
 
 
 def _manifest(folder: Path) -> Manifest | None:
@@ -90,6 +101,31 @@ def _entry(index: index_client.Index, name: str) -> Entry:
     if why:
         die(f"{name} {entry.version} is revoked: {why}", EXIT_USAGE, hint="It won't be installed or run.")
     return entry
+
+
+def _ships(name: str) -> bool:
+    """This webcli has `name` built in."""
+    return sites.tier_of(name) == sites.OFFICIAL
+
+
+def _builtin_view(entry: Entry) -> tuple[dict, str]:
+    """What `tools info` shows for an official built-in: the library's catalog entry. Nothing is downloaded."""
+    identity = None if entry.identity == NO_IDENTITY else f"{entry.identity}:default"
+    data = {"name": entry.name, "version": entry.version, "summary": entry.summary, "tier": sites.OFFICIAL,
+            "builtin": True, "verified": entry.verified, "identity": identity, "hosts": list(entry.hosts),
+            "commands": [{"name": n, "strategy": s, "writes": w} for n, s, w in entry.commands],
+            "requiresWebcli": entry.requires_webcli or None, "docs": entry.docs or None,
+            "installed": "builtin" if _ships(entry.name) else None}
+    lines = [f"{entry.name} {entry.version}: {entry.summary}",
+             "  Built into webcli (official): nothing to install." if _ships(entry.name) else
+             f"  Built into webcli {entry.requires_webcli or 'releases other than this one'}; this is webcli "
+             f"{__version__}. Update webcli to get it: {UPDATE_WEBCLI}",
+             f"  Signs in as: {identity or 'nothing (it never signs in)'}"]
+    if entry.docs:
+        lines.append(f"  Docs:        {entry.docs}")
+    lines.append("  Commands:")
+    lines += [f"    {n:<20} {s}{', WRITES' if w else ''}" for n, s, w in entry.commands]
+    return data, "\n".join(lines)
 
 
 def _check_requires(manifest: Manifest) -> None:
@@ -230,20 +266,23 @@ def group() -> None:
 @click.argument("query", required=False, default="")
 @agent_output_options()
 def search_cmd(query: str, fmt, compact, select, as_csv, quiet) -> None:
-    """Search the library by name and summary (no QUERY: list every tool)."""
+    """Search the library by name and summary (no QUERY: list every tool). webcli's official built-ins are listed
+    too, marked installed "builtin"."""
     index = index_client.fetch()
     installed = set(_installed_names())
     rows = []
     for entry in index.tools.values():
         if query.lower() in f"{entry.name} {entry.summary}".lower():
-            record = tools_registry.installed_record(tools_registry.tools_dir() / entry.name) \
-                if entry.name in installed else {}
+            record = _record(tools_registry.tools_dir() / entry.name) if entry.name in installed else {}
+            if entry.builtin:
+                state = "builtin" if _ships(entry.name) else ""
+            else:
+                state = (record.get("version") or "yes") if entry.name in installed else ""
             rows.append({"name": entry.name, "version": entry.version, "summary": entry.summary,
-                         "verified": entry.verified,
-                         "installed": (record.get("version") or "yes") if entry.name in installed else "",
-                         "revoked": revoked.reason(entry.name, entry.version) or ""})
+                         "tier": sites.OFFICIAL if entry.builtin else sites.COMMUNITY, "verified": entry.verified,
+                         "installed": state, "revoked": revoked.reason(entry.name, entry.version) or ""})
     emit_rows(rows, title="webcli-tools library",
-              fields=["name", "version", "summary", "verified", "installed", "revoked"],
+              fields=["name", "version", "summary", "tier", "verified", "installed", "revoked"],
               compact_fields=("name", "version"), columns=["name", "version", "installed", "summary"],
               noun="tools", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
     raise SystemExit(EXIT_OK)
@@ -258,16 +297,19 @@ def info_cmd(name: str, fmt, quiet) -> None:
     never run), or the installed one if the library no longer lists it."""
     folder = _folder(name)
     entry = index_client.fetch().tools.get(name)
-    if entry:
+    if entry and entry.builtin:
+        data, text = _builtin_view(entry)
+    elif entry:
         with _staged(entry) as (_stage, manifest):
             data, text = _describe(manifest, entry), _text(manifest, entry)
     elif folder.is_dir() and (manifest := _manifest(folder)):
-        data, text = _describe(manifest, None, tools_registry.installed_record(folder)), _text(manifest, None)
+        data, text = _describe(manifest, None, _record(folder)), _text(manifest, None)
         text += "\n(Installed; the library no longer lists it.)"
     else:
         die(f"No tool named {name!r} in the library or installed.", EXIT_NOT_FOUND,
             hint="`webcli tools search` lists the library.")
-    data["installed"] = (tools_registry.installed_record(folder).get("version") or "yes") if folder.is_dir() else None
+    if "installed" not in data:
+        data["installed"] = (_record(folder).get("version") or "yes") if folder.is_dir() else None
     data["revoked"] = revoked.reason(name, data["version"])
     if resolve_format(fmt, human="text") == "json":
         emit_json(data)
@@ -281,12 +323,22 @@ def info_cmd(name: str, fmt, quiet) -> None:
 @click.argument("name")
 @click.option("--yes", "-y", "yes", is_flag=True, help="Install without asking (the manifest is still shown).")
 def install_cmd(name: str, yes: bool) -> None:
-    """Install a tool from the library: shows its manifest (hosts, identity, writes) and asks first."""
+    """Install a tool from the library: shows its manifest (hosts, identity, writes) and asks first. An official
+    built-in is already part of webcli: nothing to install, exit 0."""
     folder = _folder(name)
     if folder.exists():
         die(f"{name} is already installed.", EXIT_USAGE,
             hint=f"`webcli tools update {name}` gets the library's version; `webcli tools remove {name}` uninstalls.")
     index = index_client.fetch()
+    listed = index.tools.get(name)
+    if listed is not None and listed.builtin:
+        if not _ships(name):
+            die(f"{name} is built into webcli {listed.requires_webcli or 'releases other than this one'}; this is "
+                f"webcli {__version__}.", EXIT_USAGE, hint=f"Update webcli to get it: {UPDATE_WEBCLI}.")
+        emit_json({"tool": name, "installed": "builtin", "changed": False, "version": __version__,
+                   "note": f"{name} is built into webcli {__version__}; there's nothing to install.",
+                   "next": [f"webcli {name} --help"]})
+        raise SystemExit(EXIT_OK)
     entry = _entry(index, name)
     with _staged(entry) as (stage, manifest):
         _check_requires(manifest)
@@ -303,10 +355,12 @@ def install_cmd(name: str, yes: bool) -> None:
 
 def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     folder = tools_registry.tools_dir() / name
-    old, record = _manifest(folder), tools_registry.installed_record(folder)
+    old, record = _manifest(folder), _record(folder)
     entry = index.tools.get(name)
     if entry is None:
         return {"name": name, "status": "not in library"}
+    if entry.builtin or name in _reserved():  # a leftover folder under a built-in's name; core never loads it
+        return {"name": name, "status": "built in"}
     why = revoked.reason(name, entry.version)
     if why:
         return {"name": name, "status": "revoked", "reason": why}
@@ -355,11 +409,14 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
     index = index_client.fetch(cached_ok=False)
     results = [_update(index, n, yes) for n in names]
     sites.reload()
-    status = results[0]["status"]
+    status = None if all_ else results[0]["status"]
     if not all_ and status == "declined":
         die(f"{name} was not updated.", EXIT_USAGE, hint="Pass --yes to update without asking.")
     if not all_ and status == "revoked":
         die(f"{name} is revoked: {results[0]['reason']}", EXIT_USAGE, hint=f"`webcli tools remove {name}`.")
+    if not all_ and status == "built in":
+        die(f"{name} is built into webcli; there's no tool to update.", EXIT_USAGE,
+            hint=f"`webcli tools remove {name}` deletes the leftover folder; webcli updates with {UPDATE_WEBCLI}.")
     if not all_ and status == "not in library":
         die(f"The webcli-tools library no longer lists {name}; nothing to update.", EXIT_NOT_FOUND)
     emit_json(results if all_ else results[0])
@@ -370,18 +427,23 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
 @group.command("list")
 @agent_output_options()
 def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
-    """Installed tools: version, pinned commit, grants, and whether core loads each one."""
+    """Installed tools: version, pinned commit, grants, and whether core loads each one. Then webcli's official
+    built-in data sites, status "builtin"."""
     granted = grants.list_grants()
     rows = []
     for name in _installed_names():
         folder = tools_registry.tools_dir() / name
-        record, manifest = tools_registry.installed_record(folder), _manifest(folder)
+        record, manifest = _record(folder), _manifest(folder)
         state = {"loaded": False, "reason": "disabled"} if tools_registry.is_disabled(folder) else _state(name)
         rows.append({"name": name, "version": manifest.version if manifest else record.get("version"),
                      "status": "loaded" if state["loaded"] else state["reason"],
                      "commit": (record.get("commit") or "")[:12], "grants": ", ".join(granted.get(name, [])),
                      "summary": manifest.summary if manifest else ""})
-    emit_rows(rows, title="Installed tools", fields=["name", "version", "status", "commit", "grants", "summary"],
+    rows += [{"name": name, "version": __version__, "status": "builtin", "commit": "", "grants": "",
+              "summary": site.summary} for name, site in sites.registry().items()
+             if _ships(name) and site.kind == "data"]
+    emit_rows(rows, title="Installed tools and built-ins",
+              fields=["name", "version", "status", "commit", "grants", "summary"],
               compact_fields=("name", "version", "status"), columns=["name", "version", "status", "grants"],
               noun="tools", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
     raise SystemExit(EXIT_OK)

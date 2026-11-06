@@ -1,10 +1,15 @@
 """The webcli-tools library's index.json: fetch it, cache it, and download a tool at its pinned commit.
 
     index.json (docs/webcli-tools-index.md has the format)
-      {"tools": [{"name", "version", "summary", "commit", "sha256", "path", "verified"}],
+      {"tools": [{"name", "version", "summary", "commit", "sha256", "path", "verified"}       a community tool
+                 | {"name", "version", "summary", "builtin": true, "tier": "official",
+                    "identity", "hosts", "commands", ...}],                                   an official built-in
        "revoked": [name | {"name", "versions", "reason"}]}
 
-The index is the trust root: it pins each tool to a commit and to the sha256 of the tool's files (tree_sha256), and
+An official built-in ships inside webcli. Its entry is a catalog entry, so `webcli tools search` and `info` can show
+it: it has no commit, sha256, or path, and nothing downloads it.
+
+The index is the trust root: it pins each community tool to a commit and to the sha256 of its files (tree_sha256), and
 it carries the revoked list core reads from the cache (core/revoked.py). A fetched index that isn't the right shape
 is refused and the old cache kept, so a broken index never clears a revocation.
 
@@ -37,6 +42,7 @@ URL_ENV = "WEBCLI_TOOLS_INDEX_URL"
 ARCHIVE_ENV = "WEBCLI_TOOLS_ARCHIVE_URL"
 DEFAULT_URL = "https://raw.githubusercontent.com/truefrontier/webcli-tools/main/index.json"
 DEFAULT_REPO = "https://github.com/truefrontier/webcli-tools"
+CORE_REPO = "https://github.com/truefrontier/webcli"
 DEFAULT_ARCHIVE = "https://codeload.github.com/truefrontier/webcli-tools/tar.gz/{commit}"
 CACHE = "index-cache.json"
 INDEX_LIMIT = 5_000_000
@@ -55,10 +61,17 @@ class Entry:
     name: str
     version: str
     summary: str
-    commit: str  # 40-hex: never a branch or tag
-    sha256: str  # tree_sha256 of the tool's folder at that commit
-    path: str  # the tool's folder in the repo: tools/<name>
+    commit: str = ""  # 40-hex: never a branch or tag. "" for a built-in
+    sha256: str = ""  # tree_sha256 of the tool's folder at that commit
+    path: str = ""  # the tool's folder in the repo: tools/<name>
     verified: bool = False
+    # An official built-in: listed so people can find it, never downloaded. Only a built-in sets these.
+    builtin: bool = False
+    requires_webcli: str = ""  # the webcli releases that ship it
+    identity: str = ""  # its provider ("google"), or "none"
+    hosts: tuple[str, ...] = ()
+    commands: tuple[tuple[str, str, bool], ...] = ()  # (name, strategy, writes)
+    docs: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,11 +86,15 @@ def url() -> str:
 
 
 def archive_url(entry: Entry) -> str:
+    if entry.builtin:
+        raise LibraryError(f"{entry.name} is built into webcli; there's nothing to download.")
     return (os.environ.get(ARCHIVE_ENV, "").strip() or DEFAULT_ARCHIVE).replace("{commit}", entry.commit)
 
 
 def source(entry: Entry) -> str:
     """Where a person can read the tool's code at its pinned commit."""
+    if entry.builtin:
+        return entry.docs or CORE_REPO
     if os.environ.get(ARCHIVE_ENV, "").strip():
         return f"{archive_url(entry)} ({entry.path}/)"
     return f"{DEFAULT_REPO}/tree/{entry.commit}/{entry.path}"
@@ -135,14 +152,41 @@ def parse(data: object, source: str) -> Index:
         name = raw.get("name") if isinstance(raw, dict) else None
         if not isinstance(name, str) or not _NAME.fullmatch(name) or name in tools:
             raise bad(f"tool {name!r}: needs a unique name (lowercase letters and digits, no hyphens)")
+        version_ok = isinstance(raw.get("version"), str) and _VERSION.fullmatch(raw["version"])
+        if raw.get("builtin") is True:
+            hosts, commands = raw.get("hosts"), raw.get("commands")
+            checks = {"version": version_ok,
+                      "summary": isinstance(raw.get("summary", ""), str),
+                      "tier": raw.get("tier") == "official",
+                      "identity": isinstance(raw.get("identity"), str) and _NAME.fullmatch(raw["identity"]),
+                      "hosts": isinstance(hosts, list) and all(isinstance(h, str) for h in hosts),
+                      "commands": isinstance(commands, list) and all(
+                          isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"]
+                          and isinstance(c.get("strategy"), str) and isinstance(c.get("writes"), bool)
+                          for c in commands),
+                      "requires_webcli": isinstance(raw.get("requires_webcli", ""), str),
+                      "docs": isinstance(raw.get("docs", ""), str),
+                      "verified": isinstance(raw.get("verified", False), bool),
+                      "commit, sha256, or path (a built-in has none)": not {"commit", "sha256", "path"} & raw.keys()}
+            wrong = [key for key, ok in checks.items() if not ok]
+            if wrong:
+                raise bad(f"built-in {name!r}: bad {', '.join(wrong)}")
+            tools[name] = Entry(name=name, version=raw["version"], summary=raw.get("summary", ""),
+                                verified=raw.get("verified", False), builtin=True,
+                                requires_webcli=raw.get("requires_webcli", ""), identity=raw["identity"],
+                                hosts=tuple(hosts), docs=raw.get("docs", ""),
+                                commands=tuple((c["name"], c["strategy"], c["writes"]) for c in commands))
+            continue
         path = raw.get("path", f"tools/{name}")
         parts = PurePosixPath(path).parts if isinstance(path, str) else ()
-        checks = {"version": isinstance(raw.get("version"), str) and _VERSION.fullmatch(raw["version"]),
+        checks = {"version": version_ok,
                   "summary": isinstance(raw.get("summary", ""), str),
                   "commit": isinstance(raw.get("commit"), str) and _HEX.fullmatch(raw["commit"]),
                   "sha256": isinstance(raw.get("sha256"), str) and _SHA256.fullmatch(raw["sha256"]),
                   "path": parts and not path.startswith("/") and ".." not in parts,
-                  "verified": isinstance(raw.get("verified", False), bool)}
+                  "verified": isinstance(raw.get("verified", False), bool),
+                  "tier": raw.get("tier", "community") == "community",
+                  "builtin": raw.get("builtin", False) is False}
         wrong = [key for key, ok in checks.items() if not ok]
         if wrong:
             raise bad(f"tool {name!r}: bad {', '.join(wrong)} (commit: 40 hex digits; sha256: 64)")

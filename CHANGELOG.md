@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`webcli tools search` lists the official built-ins.** The library's `index.json` now catalogs webcli's
+  18 official data sites (loom, gmail, amazon, ...) as `tier: "official"`, `builtin: true` entries, so
+  search and `info` show them next to the community tools, marked installed `builtin`. They still ship
+  inside webcli: `webcli tools install loom` is a no-op (exit 0), `info` never downloads anything, and
+  `update`, `remove`, `disable`, and `enable` on a built-in exit 2. `webcli tools list` shows the data
+  built-ins after the installed tools, status `builtin`. The llm sites (chatgpt, gemini, muse) belong to
+  llmcli, so the library doesn't list them.
+- The index parser accepts those catalog entries and refuses a half-built one (or a community entry
+  that calls itself official). webcli 1.0.0rc1 can't read an index that has them: it keeps its cached
+  copy and warns, so update past rc1 to use the library.
+
 ## 1.0.0rc1 / llmcli 0.9.0rc1 (2026-11-06)
 
 Release candidate for webcli 1.0: a tool library, `webcli new`, and trust controls for community tools.
