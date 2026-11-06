@@ -53,15 +53,16 @@ def build() -> click.Group:
     @main.command("sites")
     @agent_output_options()
     def sites_cmd(fmt, compact, select, as_csv, quiet) -> None:
-        """Installed site adapters: chat AIs under llmcli, data sites under webcli."""
-        rows = [site.describe() for site in sites.registry().values()]
+        """Installed site adapters: chat AIs under llmcli, data sites under webcli; tier official (built in) or
+        community (a tool from ~/.webcli/tools)."""
+        rows = [{**site.describe(), "tier": sites.tier_of(site.name)} for site in sites.registry().values()]
         out = "csv" if as_csv else resolve_format(fmt)
         if out == "json" and not (select or compact):
             emit_json({"llmcli": [r for r in rows if r["kind"] == "llm"],
                        "webcli": [r for r in rows if r["kind"] == "data"]})
         else:
-            emit_rows(rows, title="Sites", fields=["name", "binary", "provider", "defaultIdentity", "summary"],
-                      compact_fields=("name", "binary"), columns=["name", "binary", "provider", "defaultIdentity"],
+            emit_rows(rows, title="Sites", fields=["name", "binary", "tier", "provider", "defaultIdentity", "summary"],
+                      compact_fields=("name", "binary"), columns=["name", "binary", "tier", "provider", "defaultIdentity"],
                       noun="sites", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
         output.note("webcli data sites: none installed yet.", quiet=quiet or bool(sites.of_kind("data")))
         raise SystemExit(EXIT_OK)
