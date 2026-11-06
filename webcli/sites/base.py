@@ -1,5 +1,5 @@
 """What a site adapter declares. A site is a module exposing ADAPTER = Site(...), registered under the
-"webcli.sites" entry-point group (see sites/__init__.py)."""
+"webcli.sites" entry-point group (see sites/__init__.py). Tools outside core import these from webcli.adapter."""
 
 from __future__ import annotations
 
@@ -40,6 +40,13 @@ class Site:
     # A data site that also offers a chat surface under `llmcli <site>` (notebooklm's ask): its llmcli group,
     # imported lazily. It runs the same fetch ops in the same daemon; the group itself limits which.
     llm_cli: Callable[[], click.Group] | None = None
+    # Adapter API v1 (webcli.adapter, docs/adapter-api-v1.md). All optional; a built-in that sets none still works.
+    # There is no `tier`: core sets official/community when it loads a site, never the site itself.
+    adapter_api: int = 1  # the webcli.adapter.ADAPTER_API the site was built against
+    hosts: tuple[str, ...] = ()  # every host the site's pages may reach: "www.loom.com", "*.loom.com"
+    version: str = ""  # the site's own version, X.Y.Z; "" for a built-in, which ships with webcli
+    writes: frozenset[str] = frozenset()  # verbs that change something on the site
+    sends_to_people: frozenset[str] = frozenset()  # of those, the ones that reach another person (a DM, a post)
 
     def describe(self) -> dict[str, Any]:
         return {"name": self.name, "kind": self.kind, "binary": "llmcli" if self.kind == "llm" else "webcli",
@@ -47,4 +54,9 @@ class Site:
                 "provider": self.provider,
                 "defaultIdentity": None if self.provider == NO_IDENTITY else f"{self.provider}:default",
                 "summary": self.summary,
-                "verbs": {name: strategy.value for name, strategy in self.verbs.items()}}
+                "verbs": {name: strategy.value for name, strategy in self.verbs.items()},
+                "adapterApi": self.adapter_api,
+                **({"version": self.version} if self.version else {}),
+                **({"hosts": list(self.hosts)} if self.hosts else {}),
+                **({"writes": sorted(self.writes)} if self.writes else {}),
+                **({"sendsToPeople": sorted(self.sends_to_people)} if self.sends_to_people else {})}

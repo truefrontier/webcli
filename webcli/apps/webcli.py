@@ -6,6 +6,7 @@ from __future__ import annotations
 import click
 
 from webcli import __version__, sites
+from webcli.apps import devtools_new, devtools_run, submit_cmd, tools_cmd
 from webcli.apps.common import doctor_command, identity_group, serve_command
 from webcli.core import output
 from webcli.feed.cli import group as feed_group
@@ -67,6 +68,9 @@ def build() -> click.Group:
 
     for site in sites.of_kind("data"):
         main.add_command(site.cli(), site.name)
+    for module in (devtools_new, devtools_run, tools_cmd, submit_cmd):  # making and sharing tools (webcli 1.0)
+        for command in module.COMMANDS:
+            main.add_command(command)
     main.add_command(feed_group)
     main.add_command(identity_group())
     main.add_command(doctor_command())
