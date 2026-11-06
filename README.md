@@ -2,6 +2,23 @@
 
 webcli lets an AI agent use websites you're already signed in to, as you, from your own computer. The agent runs simple commands like `webcli amazon orders --since 30d` and gets back clean data (JSON) instead of clicking through web pages.
 
+## Make your own tool (1.0 release candidate)
+
+webcli 1.0 lets you build a small tool for a site you use, keep it on your machine, and optionally share it.
+
+```sh
+pip install --pre 'truefrontier-webcli==1.0.0rc1'   # pre-release; stable stays 0.18.x without --pre
+webcli new mysite --url https://example.com         # scaffold a read-only tool
+webcli lint mysite && webcli test mysite
+webcli tools search                                 # community library: truefrontier/webcli-tools
+webcli tools install httpbin --yes                  # demo tool; pinned commit + hash check
+webcli submit mysite                                # dry-run; add --confirm to open a PR
+```
+
+Community tools run with their **own** sign-in by default. They cannot replace a built-in (like `gmail`), and a broken one is skipped instead of taking down the whole CLI. See [docs/making-a-tool.md](docs/making-a-tool.md) and [docs/tool-trust.md](docs/tool-trust.md).
+
+
+
 You'd use it when you want an agent to watch, gather, or report on things that only live behind a login, and there's no official API (a way for programs to talk to the site) you can use.
 
 The same package also installs two related commands: `llmcli`, for chat AIs like Gemini and ChatGPT, and `chromecli`, for Chrome tabs you choose to share with an agent.
