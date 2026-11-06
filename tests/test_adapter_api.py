@@ -221,23 +221,12 @@ def test_mismatches_compare_the_adapter_with_its_manifest():
         "writes: the adapter says [], the manifest ['post']"]
 
 
-# The placeholder commands.
+# The Phase 0 placeholder commands are all built now (B/C/D). Help and agent-help still list them.
 
-@pytest.mark.parametrize("command", [["submit"]])
-def test_every_new_command_has_help(command):
-    result = run(*command, "--help")
+def test_submit_help_works():
+    result = run("submit", "--help")
     assert result.exit_code == 0
-    assert "not built yet" in result.stdout.lower()
-
-
-@pytest.mark.parametrize(("args", "path", "phase"), [
-    (["submit", "toyhttp", "--confirm"], "submit", "D"),
-])
-def test_running_one_exits_2_and_names_its_phase(args, path, phase):
-    result = run(*args)
-    assert result.exit_code == 2
-    assert json.loads(result.stderr) == {
-        "error": f"`webcli {path}` is not implemented in this build (Phase {phase}).", "code": 2}
+    assert "pull request" in result.stdout.lower() or "webcli-tools" in result.stdout.lower() or "submit" in result.stdout.lower()
 
 
 def test_tools_without_a_subcommand_shows_its_help():
