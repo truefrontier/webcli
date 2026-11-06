@@ -10,10 +10,11 @@ Everything lives in `~/.webcli/tools/` (or `$WEBCLI_HOME/tools/`), mode 0700.
 |---|---|---|
 | `<name>/` | `webcli tools install` | One installed tool: its `webcli-tool.toml` and its package, `webcli_tool_<name>/`, whose `__init__.py` sets `ADAPTER = Site(...)`. |
 | `<name>/.disabled` | `webcli tools disable` | If present, the tool is off. Core never imports its code. |
-| `.<anything>/` | `webcli tools install` | Skipped. Use a dot name for an install in progress. |
+| `<name>/.installed.json` | `webcli tools install` | What the install pinned: version, commit, sha256, and the index it came from. Core doesn't read it. |
+| `.<anything>/` | `webcli tools install` | Skipped. Use a dot name for an install in progress (`webcli tools` uses `.stage-<name>-…` and `.old-<name>-…`). |
 | `dev.toml` | `webcli new` | Tools you're still writing. One table per tool: `[toyhttp]` then `path = "/Users/you/webcli-tool-toyhttp"`. |
 | `grants.toml` | `webcli tools grant` | Which of your identities each tool may use besides its own. Mode 0600. One line per tool: `toyhttp = ["google:default"]`. |
-| `index-cache.json` | `webcli tools` | The library's `index.json`, cached. Core reads only its `revoked` list. |
+| `index-cache.json` | `webcli tools` | The library's `index.json`, cached. Core reads only its `revoked` list. Its format: [webcli-tools-index.md](webcli-tools-index.md). |
 | `revoked.json` | anyone | More revocations, in the same shape. It may be the bare list. |
 
 Core's code for each: `webcli/core/tools_registry.py` (loading), `webcli/core/grants.py`, `webcli/core/revoked.py`, and `webcli/sites/__init__.py` (the registry).

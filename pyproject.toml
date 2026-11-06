@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "playwright>=1.40",
     "click>=8.1",
+    "packaging>=22",
     "rich>=13",
     "tomli>=1.1; python_version < '3.11'",
 ]
