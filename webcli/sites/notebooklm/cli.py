@@ -21,6 +21,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     resolve_format,
@@ -115,6 +116,7 @@ notebook_option = click.option("-n", "--notebook", default=None, metavar="NOTEBO
                                help="The notebook it is in (faster; else every notebook is searched).")
 
 
+@effects("never")
 @group.command("status")
 @click.argument("artifact_id", required=False, metavar="[ARTIFACT]")
 @notebook_option
@@ -133,6 +135,7 @@ def status_cmd(artifact_id, notebook, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("notebooks")
 @json_flag
 @agent_output_options()
@@ -145,6 +148,7 @@ def notebooks_cmd(**opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("sources")
 @click.argument("notebook")
 @json_flag
@@ -164,6 +168,7 @@ def source_group() -> None:
     """Sources: `source get SOURCE` (its indexed text, or --guide), `source add NOTEBOOK` (dry run unless --confirm)."""
 
 
+@effects("never")
 @source_group.command("get")
 @click.argument("source_id", metavar="SOURCE")
 @notebook_option
@@ -190,6 +195,7 @@ def source_get_cmd(source_id, notebook, guide, out, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("notes")
 @click.argument("notebook")
 @json_flag
@@ -209,6 +215,7 @@ def _record(row: dict) -> dict:
     return {k: row.get(k) for k in ARTIFACT_FIELDS}
 
 
+@effects("never")
 @group.command("artifacts")
 @click.argument("notebook")
 @json_flag
@@ -221,6 +228,7 @@ def artifacts_cmd(notebook, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always")
 @group.command("ask")
 @click.argument("notebook")
 @click.argument("question")
@@ -243,6 +251,7 @@ def ask_cmd(notebook, question, source_ids, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("download")
 @click.argument("artifact_id", metavar="ARTIFACT")
 @click.option("-o", "--output", "out", required=True, help="File, or existing directory (then <title><ext>).")
@@ -393,6 +402,7 @@ def _finish(result: dict, fmt, heading: str, *, wait: bool, timeout: int, interv
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",))
 @group.command("create")
 @click.argument("title")
 @_source_options
@@ -416,6 +426,7 @@ def create_cmd(title, files, urls, urls_file, text, text_title, wait, timeout, i
             timeout=timeout, interval=interval)
 
 
+@effects("with_flag", via=("confirm",))
 @source_group.command("add")
 @click.argument("notebook")
 @_source_options
@@ -461,6 +472,7 @@ UNAVAILABLE = {"faq": "not in NotebookLM's current Studio RPCs (the old FAQ note
                "timeline": "not in NotebookLM's current Studio RPCs (the old timeline note type is gone)"}
 
 
+@effects("never")
 @generate_group.command("kinds")
 @json_flag
 @agent_output_options(rows=False)
@@ -531,6 +543,7 @@ def _choice(values: dict) -> click.Choice:
     return click.Choice(list(values))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("audio")
 @_common
 @click.option("--style", "fmt_", type=_choice(parse.AUDIO_FORMATS), default="deep-dive", show_default=True,
@@ -542,6 +555,7 @@ def gen_audio(notebook, source_ids, language, instructions, fmt_, length, **run)
                                          "instructions": instructions}, **_pop(run))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("video")
 @_common
 @click.option("--style", "fmt_", type=_choice(parse.VIDEO_FORMATS), default="explainer", show_default=True,
@@ -554,6 +568,7 @@ def gen_video(notebook, source_ids, language, instructions, fmt_, visual, visual
                                          "language": language, "instructions": instructions}, **_pop(run))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("report")
 @_common
 @click.option("--style", "fmt_", type=_choice(parse.REPORTS), default="briefing-doc", show_default=True,
@@ -573,13 +588,14 @@ def _app(kind: str):
                                           "instructions": instructions}, **_pop(run))
 
     command.__doc__ = KIND_HELP[kind]
-    return generate_group.command(kind)(command)
+    return effects("with_flag", via=("confirm",))(generate_group.command(kind)(command))
 
 
 _app("quiz")
 _app("flashcards")
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("mind-map")
 @_common
 def gen_mind_map(notebook, source_ids, language, instructions, **run) -> None:
@@ -587,6 +603,7 @@ def gen_mind_map(notebook, source_ids, language, instructions, **run) -> None:
     _run("mind-map", notebook, source_ids, {"language": language, "instructions": instructions}, **_pop(run))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("infographic")
 @_common
 @click.option("--orientation", type=_choice(parse.ORIENTATIONS), default="landscape", show_default=True)
@@ -598,6 +615,7 @@ def gen_infographic(notebook, source_ids, language, instructions, orientation, d
                                                "language": language, "instructions": instructions}, **_pop(run))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("slide-deck")
 @_common
 @click.option("--style", "fmt_", type=_choice(parse.SLIDE_FORMATS), default="detailed", show_default=True)
@@ -608,6 +626,7 @@ def gen_slides(notebook, source_ids, language, instructions, fmt_, length, **run
                                               "instructions": instructions}, **_pop(run))
 
 
+@effects("with_flag", via=("confirm",))
 @generate_group.command("data-table")
 @_common
 def gen_table(notebook, source_ids, language, instructions, **run) -> None:

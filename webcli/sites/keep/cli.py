@@ -13,6 +13,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_rows,
@@ -71,6 +72,7 @@ def _one(note_id: str) -> dict:
     return found
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -82,6 +84,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many notes.")
 @click.option("--archived", is_flag=True, help="Include archived notes.")
@@ -94,6 +97,7 @@ def list_cmd(limit, archived, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query")
 @click.option("--limit", type=click.IntRange(min=1), default=50, show_default=True, help="At most this many notes.")
@@ -109,6 +113,7 @@ def search_cmd(query, limit, archived, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("note_id")
 @agent_output_options(formats=("table", "md", "text", "json"))
@@ -129,6 +134,7 @@ def info_cmd(note_id, fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("get")
 @click.argument("note_id")
 @click.option("-o", "--output", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None,

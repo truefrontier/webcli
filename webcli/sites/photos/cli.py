@@ -5,7 +5,16 @@ from __future__ import annotations
 
 import click
 
-from webcli.core.output import EXIT_AUTH, EXIT_OK, agent_output_options, die, emit_csv, emit_rows, select_fields
+from webcli.core.output import (
+    EXIT_AUTH,
+    EXIT_OK,
+    agent_output_options,
+    die,
+    effects,
+    emit_csv,
+    emit_rows,
+    select_fields,
+)
 from webcli.sites import data
 from webcli.sites.photos import ADAPTER as SITE
 from webcli.sites.photos import parse
@@ -64,6 +73,7 @@ limit_option = click.option("--limit", type=click.IntRange(min=1), default=50, s
                             help="At most this many photos.")
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -75,6 +85,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("albums")
 @id_only_option
 @agent_output_options()
@@ -90,6 +101,7 @@ def albums_cmd(id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--album", default=None, callback=_key(parse.album_id), help="An album id or URL.")
 @limit_option
@@ -102,6 +114,7 @@ def list_cmd(album, limit, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query")
 @limit_option
@@ -114,6 +127,7 @@ def search_cmd(query, limit, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("photo", callback=_key(parse.photo_id))
 @agent_output_options()
@@ -128,6 +142,7 @@ def info_cmd(photo, fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("download")
 @click.argument("photo", callback=_key(parse.photo_id))
 @click.option("-o", "--output", "out", default=".", show_default=True, help="Directory to save the original in.")

@@ -12,6 +12,7 @@ from webcli import __version__
 from webcli.core import output
 from webcli.core.output import (
     EXIT_API, EXIT_CONFIG, EXIT_NOT_FOUND, EXIT_OK, EXIT_USAGE, agent_output_options, emit_json, json_flag, kv_table,
+    effects,
     rows_table, warn,
 )
 from webcli.feed import pull as pullmod
@@ -57,6 +58,7 @@ def _sites(value: str | None, cfg: dict) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+@effects("never")
 @group.command("pull")
 @click.option("--sites", default=None, help=f"Comma-separated, in order (default {','.join(pullmod.DEFAULT_SITES)}).")
 @click.option("--out", "out", type=click.Path(dir_okay=False, path_type=Path), default=None,
@@ -99,6 +101,7 @@ def pull_cmd(sites, out, limit_per_site, since, x_file, fmt, quiet) -> None:
     raise SystemExit(EXIT_API if summary["partial"] else EXIT_OK)
 
 
+@effects("never")
 @group.command("show")
 @click.option("--file", "file", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
 @json_flag
@@ -132,6 +135,7 @@ def _emit_status(info: dict, fmt: str | None) -> None:
         kv_table("Feed schedule", {**info, "times": ", ".join(info["times"]) or "-"}, fmt or "table")
 
 
+@effects("always", local_setup=True)
 @schedule_group.command("install")
 @click.option("--at", "at", default=None, help="Times, 24h local, comma separated (default 05:30,12:30).")
 @click.option("--no-load", is_flag=True, help="Write the plist only; don't load it.")
@@ -147,6 +151,7 @@ def schedule_install(at, no_load, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", local_setup=True)
 @schedule_group.command("remove")
 @json_flag
 @agent_output_options(rows=False)
@@ -156,6 +161,7 @@ def schedule_remove(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @schedule_group.command("status")
 @json_flag
 @agent_output_options(rows=False)
@@ -165,6 +171,7 @@ def schedule_status(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always")
 @group.command("push")
 @click.option("--to", "to", required=True, help="URL to PUT the file to (https).")
 @click.option("--file", "file", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,

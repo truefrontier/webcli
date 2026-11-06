@@ -43,6 +43,8 @@ class Loaded(NamedTuple):
     sites: dict[str, Site]
     tiers: dict[str, str]
     skipped: list[dict]  # {name, source, reason}: community tools not loaded, for `doctor`
+    candidates: dict  # name -> the tools_registry.Candidate each community tool was loaded from
+    skipped_from: list  # the Candidate behind each `skipped` entry (None for another package's entry point)
 
 
 def _load(target: str) -> Site:
@@ -64,6 +66,13 @@ def loaded() -> Loaded:
 
     sites: dict[str, Site] = {}
     skipped: list[dict] = []
+    candidates: dict = {}
+    skipped_from: list = []
+
+    def skip(name: str, source: str, reason: str, candidate=None, *, quiet: bool = False) -> None:
+        _skip(skipped, name, source, reason, quiet=quiet)
+        skipped_from.append(candidate)
+
     for name, target in sorted(BUILTIN.items()):
         site = _load(target)
         if not isinstance(site, Site) or site.name != name:
@@ -72,7 +81,7 @@ def loaded() -> Loaded:
     tiers = dict.fromkeys(sites, OFFICIAL)
     for ep in entry_points(group=GROUP):  # webcli's own (even a stale install's) are BUILTIN's; anyone else's: skipped
         if BUILTIN.get(ep.name) != ep.value and getattr(ep.dist, "name", None) != "truefrontier-webcli":
-            _skip(skipped, ep.name, f"entry point {ep.value}",
+            skip(ep.name, f"entry point {ep.value}",
                   "another package's entry point; community tools install with `webcli tools install`")
     reserved = set(sites) | {site.provider for site in sites.values()} | {NO_IDENTITY} | \
         manifest_schema.CORE_COMMANDS
@@ -80,17 +89,18 @@ def loaded() -> Loaded:
         name, source = candidate.name, f"{candidate.source} {candidate.folder}"
         if name in reserved or name in sites:
             what = "a webcli built-in or command" if name in reserved else "another tool's name"
-            _skip(skipped, name, source, f"{name!r} is {what}; a tool can't replace it")
+            skip(name, source, f"{name!r} is {what}; a tool can't replace it", candidate)
         elif tools_registry.is_disabled(candidate.folder):
-            _skip(skipped, name, source, "disabled", quiet=True)
+            skip(name, source, "disabled", candidate, quiet=True)
         else:
             try:
                 sites[name] = tools_registry.load(candidate)
             except (Exception, SystemExit) as exc:
-                _skip(skipped, name, source, str(exc) or type(exc).__name__)
+                skip(name, source, str(exc) or type(exc).__name__, candidate)
             else:
                 tiers[name] = COMMUNITY
-    return Loaded(sites, tiers, skipped)
+                candidates[name] = candidate
+    return Loaded(sites, tiers, skipped, candidates, skipped_from)
 
 
 def registry() -> dict[str, Site]:
@@ -110,6 +120,33 @@ def tier_of(name: str) -> str | None:
 
 def skipped() -> list[dict]:
     return loaded().skipped
+
+
+BUILT_IN = {"source": "builtin", "verified": None, "commit": None, "sha256": None, "grants": [], "revoked": False,
+            "disabled": False}
+
+
+def provenance(name: str, granted: dict[str, list[str]]) -> dict:
+    """Where a loaded site came from (`webcli sites` JSON): a built-in, or the community tool's own candidate, the one
+    core loaded (tools_registry.provenance). `granted` is grants.list_grants()."""
+    from webcli.core import tools_registry
+
+    candidate = loaded().candidates.get(name)
+    return tools_registry.provenance(candidate, granted) if candidate else dict(BUILT_IN)
+
+
+def skipped_tools(granted: dict[str, list[str]]) -> list[dict]:
+    """Every community tool core didn't load (revoked, disabled, shadowed, broken), with the same provenance as a
+    loaded one, read without importing any of its code."""
+    from webcli.core import tools_registry
+
+    out = []
+    for entry, candidate in zip(loaded().skipped, loaded().skipped_from):
+        facts = tools_registry.provenance(candidate, granted) if candidate else \
+            {"source": "entrypoint", "verified": False, "commit": None, "sha256": None, "grants": [],
+             "revoked": False, "disabled": False}
+        out.append({"name": entry["name"], "reason": entry["reason"], **facts})
+    return out
 
 
 def get(name: str) -> Site:

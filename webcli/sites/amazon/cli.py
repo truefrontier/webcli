@@ -8,16 +8,17 @@ from datetime import date
 import click
 
 from webcli.core.output import (
-    json_flag,
     EXIT_AUTH,
     EXIT_NOT_FOUND,
     EXIT_OK,
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_rows,
+    json_flag,
     kv_table,
     resolve_format,
     select_fields,
@@ -114,6 +115,7 @@ def _record(title: str, record: dict, fmt, select, as_csv=False) -> None:
 LIMIT = click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after this many rows.")
 
 
+@effects("always", human=True, window=True, local_setup=True)
 @group.command("login")
 @click.option("--timeout", default=600, show_default=True, type=click.IntRange(min=10), help="Seconds to wait.")
 def login_cmd(timeout: int) -> None:
@@ -125,6 +127,7 @@ def login_cmd(timeout: int) -> None:
     login_and_report(data.identity(), timeout)
 
 
+@effects("never")
 @group.command("status")
 @json_flag
 @agent_output_options(rows=False)
@@ -138,6 +141,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("orders")
 @click.option("--year", type=click.IntRange(min=1995, max=date.today().year + 1), default=None,
               help="One calendar year.")
@@ -158,6 +162,7 @@ def orders_cmd(year, since, limit, details, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("order")
 @click.argument("order_id", callback=_order_arg, metavar="ORDER_ID")
 @json_flag
@@ -170,6 +175,7 @@ def order_cmd(order_id, fmt, quiet, select) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("transactions")
 @click.option("--since", callback=_since_arg, default="30d", show_default=True, metavar="DATE",
               help="Back to this date (YYYY-MM-DD, or 30d / 8w / 6m).")
@@ -185,6 +191,7 @@ def transactions_cmd(since, limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("match")
 @click.argument("amount", callback=_amount_arg, metavar="AMOUNT")
 @click.option("--date", "on", callback=_date_arg, default=None, metavar="DATE",
@@ -208,6 +215,7 @@ def match_cmd(amount, on, window, no_orders, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("track")
 @click.argument("order_id", callback=_order_arg, metavar="ORDER_ID")
 @json_flag
@@ -224,6 +232,7 @@ def track_cmd(order_id, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("wishlists")
 @json_flag
 @agent_output_options()
@@ -235,6 +244,7 @@ def wishlists_cmd(**opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("wishlist")
 @click.argument("list_ref", metavar="LIST")
 @LIMIT

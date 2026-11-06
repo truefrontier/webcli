@@ -16,7 +16,7 @@ import click
 from webcli import __version__
 from webcli.core import browser, config, daemon, output
 from webcli.core.identities import Identity, resolve
-from webcli.core.output import EXIT_API, EXIT_USAGE, die, write_atomic
+from webcli.core.output import EXIT_API, EXIT_USAGE, die, effects, write_atomic
 from webcli.sites.base import Site
 
 UNIFORM = {"answer": None, "chatId": None, "requestedModel": None, "servedModel": None, "servedModelDisplay": None,
@@ -184,6 +184,7 @@ output_format_option = click.option(
 def add_common_commands(group: click.Group, site: Site, *, notes: list[str], writes: list[str]) -> None:
     """login (delegates to `identity login`), serve (the identity's daemon), and agent-help."""
 
+    @effects("always", human=True, window=True, local_setup=True)
     @group.command("login")
     @click.option("--timeout", default=600, show_default=True, type=click.IntRange(min=10), help="Seconds to wait.")
     def login_cmd(timeout: int) -> None:
@@ -192,6 +193,7 @@ def add_common_commands(group: click.Group, site: Site, *, notes: list[str], wri
 
         login_and_report(identity(), timeout)
 
+    @effects("with_flag", via=("install_launchd", "uninstall_launchd"), human=True, local_setup=True)
     @group.command("serve")
     @click.option("--status", "show_status", is_flag=True,
                   help="Print whether the identity's daemon runs, its Chrome, and launchd.")

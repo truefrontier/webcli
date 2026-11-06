@@ -17,6 +17,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -114,6 +115,7 @@ def _emit(contacts: list[dict], title: str, *, fmt, compact, select, quiet, as_c
               compact=compact, select=select, quiet=quiet, as_csv=as_csv)
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -126,6 +128,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK if info["contactsApi"] == "ok" else EXIT_API)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after N contacts (default: all).")
 @click.option("--label", default=None, metavar="NAME|ID", help="Only members of this label.")
@@ -139,6 +142,7 @@ def list_cmd(limit, label, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("other")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after N contacts (default: all).")
 @agent_output_options()
@@ -151,6 +155,7 @@ def other_cmd(limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many results.")
@@ -165,6 +170,7 @@ def search_cmd(query, limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("get")
 @click.argument("ref", metavar="ID|EMAIL|PHONE", callback=_lookup_arg)
 @agent_output_options(rows=False)
@@ -183,6 +189,7 @@ def get_cmd(ref: str, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("labels")
 @agent_output_options()
 def labels_cmd(fmt, compact, select, quiet, as_csv) -> None:
@@ -194,6 +201,7 @@ def labels_cmd(fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("export")
 @click.option("--format", "fmt", type=click.Choice(export.FORMATS), default="json", show_default=True,
               help="The FILE format. The stdout summary is JSON when piped.")
@@ -290,6 +298,7 @@ def _label_run(action: str, label: str, *, from_label, query, ids, dry_run, conf
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",))
 @label_group.command("add")
 @_label_options(create=True)
 def label_add_cmd(label, from_label, query, ids, create_missing, dry_run, confirm, fmt, quiet) -> None:
@@ -298,6 +307,7 @@ def label_add_cmd(label, from_label, query, ids, create_missing, dry_run, confir
                create_missing=create_missing, fmt=fmt)
 
 
+@effects("with_flag", via=("confirm",))
 @label_group.command("remove")
 @_label_options(create=False)
 def label_remove_cmd(label, from_label, query, ids, dry_run, confirm, fmt, quiet) -> None:

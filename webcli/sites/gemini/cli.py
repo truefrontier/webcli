@@ -22,6 +22,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -347,6 +348,7 @@ thinking_option = click.option(
 headed_option = click.option("--headed", is_flag=True, help="Show the Chrome window (the one visible mode).")
 
 
+@effects("never", window=True)
 @group.command("status")
 @headed_option
 @agent_output_options(rows=False)
@@ -364,6 +366,7 @@ def status_cmd(headed: bool, fmt: str | None, quiet: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", window=True)
 @group.command("ask")
 @click.argument("prompt", callback=llm.prompt_arg)
 @click.option("-m", "--model", "model", metavar="NAME", default=None,
@@ -400,6 +403,7 @@ def ask_cmd(prompt, model, thinking, new, chat_id, files, image_out, canvas, can
     raise SystemExit(EXIT_OK)
 
 
+@effects("always")
 @group.command("-p")
 @click.argument("words", metavar="[PROMPT]...", nargs=-1)
 @click.option("--chat", "chat_id", metavar="ID", default=None, callback=_id_arg,
@@ -445,6 +449,7 @@ def chats_group() -> None:
     """Your Gemini chat history (READ-ONLY)."""
 
 
+@effects("never", window=True)
 @chats_group.command("list")
 @click.option("--limit", default=50, show_default=True, type=click.IntRange(min=1), help="Max rows.")
 @headed_option
@@ -461,6 +466,7 @@ def chats_list_cmd(limit, headed, fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never", window=True)
 @chats_group.command("show")
 @click.argument("chat_id", metavar="ID", callback=_id_arg)
 @headed_option
@@ -477,6 +483,7 @@ def chats_show_cmd(chat_id, headed, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never", window=True)
 @group.command("models")
 @headed_option
 @agent_output_options()

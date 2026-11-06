@@ -10,6 +10,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_md,
@@ -68,6 +69,7 @@ def _cell(row: dict, col: str) -> str:
     return str(row.get(col) or "")
 
 
+@effects("never")
 @group.command("status")
 @json_flag
 @agent_output_options(rows=False)
@@ -81,6 +83,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, window=True, local_setup=True)
 @group.command("login")
 @click.option("--timeout", default=600, show_default=True, type=click.IntRange(min=10), help="Seconds to wait.")
 def login_cmd(timeout) -> None:
@@ -91,6 +94,7 @@ def login_cmd(timeout) -> None:
     login_and_report(data.identity(), timeout)
 
 
+@effects("never")
 @group.command("discover")
 @click.option("--topic", type=click.Choice(TOPICS), default="top", show_default=True,
               help="Discover feed: science reads Perplexity's \"Tech & Science\" (same as tech).")

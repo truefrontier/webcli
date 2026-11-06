@@ -21,6 +21,7 @@ from webcli.core.output import (
     EXIT_RATE_LIMITED,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_md,
     emit_rows,
@@ -123,6 +124,7 @@ def _digest_limit(default: int) -> Callable:
                         help="At most this many models.")
 
 
+@effects("never")
 @group.command("models")
 @limit_option
 @click.option("--creator", default=None, help="Only models whose creator name contains this (case-insensitive).")
@@ -141,6 +143,7 @@ def digest_group() -> None:
     """Ranked LLM digests: smartest, smart-fast, smart-cheap, open, coding, pick, all."""
 
 
+@effects("never")
 @digest_group.command("smartest")
 @_digest_limit(10)
 @refresh_option
@@ -152,6 +155,7 @@ def digest_smartest(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("smart-fast")
 @_digest_limit(10)
 @refresh_option
@@ -164,6 +168,7 @@ def digest_smart_fast(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("smart-cheap")
 @_digest_limit(10)
 @refresh_option
@@ -176,6 +181,7 @@ def digest_smart_cheap(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("open")
 @_digest_limit(10)
 @refresh_option
@@ -194,6 +200,7 @@ def digest_open(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("coding")
 @_digest_limit(10)
 @refresh_option
@@ -205,6 +212,7 @@ def digest_coding(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("pick")
 @click.argument("category", type=click.Choice(digest.PICK_CATEGORIES))
 @refresh_option
@@ -226,6 +234,7 @@ def digest_pick(category, refresh, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @digest_group.command("all")
 @_digest_limit(5)
 @refresh_option
@@ -249,6 +258,7 @@ def tts_group() -> None:
     """Text-to-speech models (the Speech Arena): models, digest."""
 
 
+@effects("never")
 @tts_group.command("models")
 @limit_option
 @click.option("--creator", default=None, help="Only models whose creator name contains this (case-insensitive).")
@@ -267,6 +277,7 @@ def tts_digest_group() -> None:
     """Ranked TTS digests: smartest, smart-fast, smart-cheap, all."""
 
 
+@effects("never")
 @tts_digest_group.command("smartest")
 @_digest_limit(10)
 @refresh_option
@@ -278,6 +289,7 @@ def tts_smartest(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @tts_digest_group.command("smart-fast")
 @_digest_limit(10)
 @refresh_option
@@ -292,6 +304,7 @@ def tts_smart_fast(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @tts_digest_group.command("smart-cheap")
 @_digest_limit(10)
 @refresh_option
@@ -306,6 +319,7 @@ def tts_smart_cheap(limit, refresh, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @tts_digest_group.command("all")
 @_digest_limit(5)
 @refresh_option
@@ -326,6 +340,7 @@ def config_group() -> None:
     """The Artificial Analysis API key."""
 
 
+@effects("always", human=True, local_setup=True)
 @config_group.command("set-key")
 @click.option("--key-file", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
               help="Read the key from this file (default: stdin; a hidden prompt on a terminal).")

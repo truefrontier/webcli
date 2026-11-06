@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
@@ -471,16 +472,93 @@ def confirm_write(confirm: bool, plan: dict, *, dry_run: bool = False) -> bool:
     return False
 
 
-def _leaves(group: click.Group, path: tuple[str, ...] = ()):
-    """(path, aliases, command) for every visible command, descending into subgroups like `chats`."""
+# Command effects (effectsApi 1, docs/adapter-api-v1.md): what each command can do besides read. Every leaf command
+# declares them with @effects; agent-help prints them. A command that declares nothing gets UNDECLARED, which claims
+# the worst of everything, never "never".
+EFFECTS_API = 1
+WRITE_KINDS = ("never", "with_flag", "always")
+_EFFECTS_ATTR = "webcli_effects"
+
+
+@dataclass(frozen=True)
+class Effects:
+    writes: str = "never"  # "never" | "with_flag" (a dry run unless one of `via` is given) | "always"
+    via: tuple[str, ...] = ()  # with_flag: the click option names ("confirm") whose flags turn the write on
+    sends: bool = False  # can reach another person: a message, a post, a pull request
+    human: bool = False  # only a person runs it: signs in, opens a window for a person, stores a secret, changes
+    # which tools or identities webcli trusts, or runs code nobody reviewed
+    window: bool = False  # can show a visible Chrome window or bring one to the front
+    local_setup: bool = False  # its writes change webcli's setup on this computer, not a site
+
+    def __post_init__(self) -> None:
+        if self.writes not in WRITE_KINDS:
+            raise ValueError(f"writes must be one of {WRITE_KINDS}, not {self.writes!r}")
+        if (self.writes == "with_flag") != bool(self.via):
+            raise ValueError("writes=\"with_flag\" needs via=(the options that turn the write on), and only it")
+        if self.writes == "never" and (self.sends or self.local_setup):
+            raise ValueError("a command that sends to people or changes local setup writes")
+
+
+UNDECLARED = {"writes": "always", "writeFlags": [], "sendsToPeople": True, "humanOnly": True, "opensWindow": True,
+              "changesLocalSetup": True, "undeclared": True}
+
+
+def effects(writes: str = "never", *, via: Sequence[str] = (), sends: bool = False, human: bool = False,
+            window: bool = False, local_setup: bool = False) -> Callable[[click.Command], click.Command]:
+    """Declare a command's effects. Goes above the click decorators, so it gets the command:
+
+        @effects("with_flag", via=("confirm",), sends=True)
+        @group.command("send")
+        ...
+    """
+    declared = Effects(writes, tuple(via), sends, human, window, local_setup)
+
+    def mark(command: click.Command) -> click.Command:
+        set_effects(command, declared)
+        return command
+
+    return mark
+
+
+def set_effects(command: click.Command, declared: Effects | None) -> None:
+    """Attach `declared` to `command` (None: take back whatever it declared, so it reads as UNDECLARED)."""
+    if not isinstance(command, click.Command) or isinstance(command, click.Group):
+        raise TypeError("@effects goes on a click command, above its @click/@group decorators")
+    setattr(command, _EFFECTS_ATTR, declared)
+
+
+def command_effects(command: click.Command) -> dict[str, Any]:
+    """The effects block agent-help prints for `command`. writeFlags are every spelling of the `via` options, aliases
+    too (--confirm, --yes). Anything that doesn't add up falls back to the worst case: no declaration, or a `via`
+    that isn't an on/off flag of the command, is UNDECLARED; a `via` flag that can be on without being typed (a
+    default, an env var) makes the command write "always"."""
+    declared = getattr(command, _EFFECTS_ATTR, None)
+    if not isinstance(declared, Effects):
+        return dict(UNDECLARED)
+    writes, flags = declared.writes, []
+    for name in declared.via:
+        option = next((p for p in command.params if p.name == name and isinstance(p, click.Option)), None)
+        if option is None or not option.is_bool_flag:
+            return dict(UNDECLARED)
+        if option.envvar or command.context_settings.get("auto_envvar_prefix") \
+                or option.get_default(click.Context(command), call=True):
+            writes = "always"
+        flags += [flag for flag in option.opts if flag not in flags]
+    return {"writes": writes, "writeFlags": flags if writes == "with_flag" else [], "sendsToPeople": declared.sends,
+            "humanOnly": declared.human, "opensWindow": declared.window, "changesLocalSetup": declared.local_setup}
+
+
+def leaves(group: click.Group, path: tuple[str, ...] = (), *, hidden: bool = False):
+    """(path, aliases, command) for every command under `group`, descending into subgroups like `chats`. Hidden ones
+    only with hidden=True (they still run, so checks over every command include them)."""
     names: dict[int, list[str]] = {}
     for name, cmd in group.commands.items():
         names.setdefault(id(cmd), []).append(name)
     for name, cmd in group.commands.items():
-        if names[id(cmd)][0] != name or cmd.hidden:
+        if names[id(cmd)][0] != name or (cmd.hidden and not hidden):
             continue
         if isinstance(cmd, click.Group):
-            yield from _leaves(cmd, (*path, name))
+            yield from leaves(cmd, (*path, name), hidden=hidden)
         else:
             yield (*path, name), names[id(cmd)][1:], cmd
 
@@ -489,7 +567,7 @@ def agent_reference(group: click.Group, ctx: click.Context, *, env: dict[str, st
                     writes: list[str], exit_codes: dict | None = None) -> dict:
     """Commands, aliases, args, options, exit codes, error shapes, and env vars, read from the click tree."""
     commands = []
-    for path, aliases, cmd in _leaves(group):
+    for path, aliases, cmd in leaves(group):
         args, options = [], []
         for p in cmd.params:
             if isinstance(p, click.Argument):
@@ -510,12 +588,14 @@ def agent_reference(group: click.Group, ctx: click.Context, *, env: dict[str, st
             "summary": cmd.get_short_help_str(200),
             "args": args,
             "options": options,
+            "effects": command_effects(cmd),
         })
     global_options = [
         {"flags": p.opts, "help": p.help or ""} for p in group.params if isinstance(p, click.Option) and not p.hidden
     ]
     return {
         "name": ctx.command_path,
+        "effectsApi": EFFECTS_API,
         "writes": writes,
         "globalOptions": global_options,
         "commands": commands,
@@ -549,6 +629,7 @@ def agent_help_command(group: click.Group, *, version: str, env: Callable[[], di
                        writes: list[str], exit_codes: dict | None = None) -> click.Command:
     """The `agent-help` command for `group` (every umbrella and site has one)."""
 
+    @effects("never")
     @click.command("agent-help")
     @click.option("--format", "fmt", type=click.Choice(["markdown", "md", "json"]), default=None,
                   help="Default: markdown on a terminal, json when piped; the format env overrides the default.")

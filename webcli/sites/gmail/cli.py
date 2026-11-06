@@ -13,6 +13,7 @@ from webcli.core.output import (
     agent_output_options,
     confirm_write,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -66,6 +67,7 @@ def _emit_one(title: str, row: dict, fmt) -> None:
         kv_table(title, row, resolve_format(fmt))
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -82,6 +84,7 @@ def filters_group() -> None:
     """List, create, and delete Gmail filters (create and delete: dry runs unless --confirm)."""
 
 
+@effects("never")
 @filters_group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many filters.")
 @agent_output_options()
@@ -93,6 +96,7 @@ def list_cmd(limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",))
 @filters_group.command("create")
 @click.option("--from", "from_", default=None, help="Match the From address.")
 @click.option("--to", default=None, help="Match the To address.")
@@ -125,6 +129,7 @@ def create_cmd(from_, to, subject, query, negated_query, has_attachment, skip_in
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",))
 @filters_group.command("delete")
 @click.argument("filter_id")
 @write_options

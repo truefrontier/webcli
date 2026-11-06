@@ -29,6 +29,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     note,
 )
 from webcli.scaffold import checks
@@ -212,6 +213,7 @@ def _open_pr(repo: Path, login: str, branch: str, title: str, body: str) -> tupl
     return (url[-1] if url else ""), True
 
 
+@effects("with_flag", via=("confirm",), sends=True, human=True)
 @click.command("submit", options_metavar="[--confirm] [--format F]",
                short_help="Send a tool to the webcli-tools library as a pull request.")
 @click.argument("name")

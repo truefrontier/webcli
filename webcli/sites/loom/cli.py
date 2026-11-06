@@ -14,6 +14,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_rows,
@@ -60,6 +61,7 @@ def _call(op: str, *args):
     return data.call(SITE, op, *args)
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -71,6 +73,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after this many videos.")
 @click.option("--id-only", is_flag=True, help="Print only video ids, one per line.")
@@ -86,6 +89,7 @@ def list_cmd(limit, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("video", callback=_video_arg)
 @agent_output_options()
@@ -104,6 +108,7 @@ def info_cmd(video, fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("transcript")
 @click.argument("video", callback=_video_arg)
 @click.option("-o", "--output", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None,

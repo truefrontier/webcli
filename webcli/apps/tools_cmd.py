@@ -33,6 +33,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     note,
@@ -41,7 +42,7 @@ from webcli.core.output import (
 )
 from webcli.sites.base import NO_IDENTITY
 
-RECORD = ".installed.json"
+RECORD = tools_registry.INSTALLED
 WARNING = ("A community tool is Python code that runs as you, next to your signed-in sessions. webcli holds it to the "
            "hosts, identity, and writes above, but that doesn't make a stranger's code safe: read it first.")
 
@@ -64,14 +65,6 @@ def _installed_names() -> list[str]:
     root = tools_registry.tools_dir()
     return [p.name for p in sorted(root.iterdir()) if p.is_dir() and not p.name.startswith(".")] \
         if root.is_dir() else []
-
-
-def _record(folder: Path) -> dict:
-    try:
-        data = json.loads((folder / RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _manifest(folder: Path) -> Manifest | None:
@@ -232,6 +225,7 @@ def group() -> None:
     library pins, after its files match the library's sha256 and you've seen its hosts, identity, and writes."""
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query", required=False, default="")
 @agent_output_options()
@@ -242,7 +236,8 @@ def search_cmd(query: str, fmt, compact, select, as_csv, quiet) -> None:
     rows = []
     for entry in index.tools.values():
         if query.lower() in f"{entry.name} {entry.summary}".lower():
-            record = _record(tools_registry.tools_dir() / entry.name) if entry.name in installed else {}
+            record = tools_registry.installed_record(tools_registry.tools_dir() / entry.name) \
+                if entry.name in installed else {}
             rows.append({"name": entry.name, "version": entry.version, "summary": entry.summary,
                          "verified": entry.verified,
                          "installed": (record.get("version") or "yes") if entry.name in installed else "",
@@ -254,6 +249,7 @@ def search_cmd(query: str, fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("name")
 @agent_output_options(formats=("text", "json"), rows=False)
@@ -266,12 +262,12 @@ def info_cmd(name: str, fmt, quiet) -> None:
         with _staged(entry) as (_stage, manifest):
             data, text = _describe(manifest, entry), _text(manifest, entry)
     elif folder.is_dir() and (manifest := _manifest(folder)):
-        data, text = _describe(manifest, None, _record(folder)), _text(manifest, None)
+        data, text = _describe(manifest, None, tools_registry.installed_record(folder)), _text(manifest, None)
         text += "\n(Installed; the library no longer lists it.)"
     else:
         die(f"No tool named {name!r} in the library or installed.", EXIT_NOT_FOUND,
             hint="`webcli tools search` lists the library.")
-    data["installed"] = (_record(folder).get("version") or "yes") if folder.is_dir() else None
+    data["installed"] = (tools_registry.installed_record(folder).get("version") or "yes") if folder.is_dir() else None
     data["revoked"] = revoked.reason(name, data["version"])
     if resolve_format(fmt, human="text") == "json":
         emit_json(data)
@@ -280,6 +276,7 @@ def info_cmd(name: str, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("install")
 @click.argument("name")
 @click.option("--yes", "-y", "yes", is_flag=True, help="Install without asking (the manifest is still shown).")
@@ -306,7 +303,7 @@ def install_cmd(name: str, yes: bool) -> None:
 
 def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     folder = tools_registry.tools_dir() / name
-    old, record = _manifest(folder), _record(folder)
+    old, record = _manifest(folder), tools_registry.installed_record(folder)
     entry = index.tools.get(name)
     if entry is None:
         return {"name": name, "status": "not in library"}
@@ -343,6 +340,7 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     return out
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("update")
 @click.argument("name", required=False)
 @click.option("--all", "all_", is_flag=True, help="Update every installed tool; reports each one's status, exit 0.")
@@ -368,6 +366,7 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @agent_output_options()
 def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
@@ -376,7 +375,7 @@ def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
     rows = []
     for name in _installed_names():
         folder = tools_registry.tools_dir() / name
-        record, manifest = _record(folder), _manifest(folder)
+        record, manifest = tools_registry.installed_record(folder), _manifest(folder)
         state = {"loaded": False, "reason": "disabled"} if tools_registry.is_disabled(folder) else _state(name)
         rows.append({"name": name, "version": manifest.version if manifest else record.get("version"),
                      "status": "loaded" if state["loaded"] else state["reason"],
@@ -388,6 +387,7 @@ def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("remove")
 @click.argument("name")
 def remove_cmd(name: str) -> None:
@@ -405,6 +405,7 @@ def remove_cmd(name: str) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("grant")
 @click.argument("name")
 @click.argument("identity")
@@ -428,6 +429,7 @@ def grant_cmd(name: str, identity: str) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("revoke-grant")
 @click.argument("name")
 @click.argument("identity")
@@ -451,6 +453,7 @@ def _toggle(name: str, on: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("disable")
 @click.argument("name")
 def disable_cmd(name: str) -> None:
@@ -458,6 +461,7 @@ def disable_cmd(name: str) -> None:
     _toggle(name, False)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("enable")
 @click.argument("name")
 def enable_cmd(name: str) -> None:

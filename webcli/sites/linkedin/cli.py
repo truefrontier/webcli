@@ -19,6 +19,7 @@ from webcli.core.output import (
     agent_output_options,
     compact_rows,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_rows,
@@ -167,6 +168,7 @@ def _safety(out: dict, did: str, verb: str) -> None:
         warn(f"REFUSED: {mismatch} Nothing was {did}.")
 
 
+@effects("never")
 @group.command("status")
 @click.option("--expect-author", default=None, metavar="HANDLE", help=AUTHOR_HELP)
 @agent_output_options(rows=False)
@@ -193,6 +195,7 @@ def messages_group() -> None:
     """List and read LinkedIn DMs; send one (dry run unless --confirm, only as the expected author)."""
 
 
+@effects("never")
 @messages_group.command("list")
 @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max threads.")
 @agent_output_options()
@@ -203,6 +206,7 @@ def messages_list(limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @messages_group.command("history")
 @click.argument("thread_or_person")
 @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max messages (the newest).")
@@ -217,6 +221,7 @@ def messages_history(thread_or_person, limit, **opts) -> None:
 messages_group.add_command(messages_history, "read")
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @messages_group.command("send")
 @click.argument("thread_or_person")
 @click.option("--text", required=True, help="Message body.")
@@ -253,6 +258,7 @@ def activity_group() -> None:
 
 
 def _activity_command(kind: str, summary: str) -> None:
+    @effects("never")
     @activity_group.command(kind, help=summary)
     @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max rows.")
     @click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this time: ISO 8601, or relative (48h, 2d).")
@@ -269,6 +275,7 @@ _activity_command("reactions", "Your recent reactions (READ-ONLY).")
 _activity_command("posts", "Your recent posts and shares (READ-ONLY).")
 
 
+@effects("never")
 @activity_group.command("export")
 @click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max rows per kind.")
 @click.option("--since", default=None, callback=_since_arg, help="Only rows at or after this time: ISO 8601, or relative (48h, 2d).")
@@ -330,6 +337,7 @@ def _emit_posts(rows: list[dict], title: str, opts: dict) -> None:
               noun="posts", **opts)
 
 
+@effects("never")
 @group.command("feed")
 @_post_options
 @click.option("--ranked", is_flag=True, help="Keep LinkedIn's ranked order (default: newest first).")
@@ -367,6 +375,7 @@ def _post_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
         raise click.BadParameter(str(exc)) from None
 
 
+@effects("never")
 @posts_group.command("search")
 @click.argument("query", callback=_query_arg)
 @_post_options
@@ -380,6 +389,7 @@ def posts_search(query, limit, since, sort, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @posts_group.command("from")
 @click.argument("handle_or_url", callback=_author_arg)
 @_post_options
@@ -391,6 +401,7 @@ def posts_from(handle_or_url, limit, since, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @posts_group.command("read")
 @click.argument("url_or_urn", callback=_post_arg)
 @click.option("--comments", "comments", default=DEFAULT_COMMENTS, show_default=True,
@@ -457,6 +468,7 @@ def _window_options(f):
                         help="Analytics start, ISO date or datetime (UTC), or relative (30d).")(f)
 
 
+@effects("never")
 @boost_group.command("list")
 @_window_options
 @click.option("--account", default=None, type=int, help="Only this Boost ad account id.")
@@ -471,6 +483,7 @@ def boost_list(since, until, account, fmt, compact, select, quiet, as_csv) -> No
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @boost_group.command("stats")
 @click.argument("target", callback=_target_arg)
 @_window_options
@@ -520,6 +533,7 @@ def _emit_post(out: dict, fmt: str | None, quiet: bool) -> None:
     click.echo("\n".join(lines))
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @post_group.command("create")
 @click.option("--text", default=None, help=f"Post text (max {MAX_TEXT} characters).")
 @click.option("--text-file", default=None, type=click.Path(dir_okay=False), help="Read the post text from a UTF-8 file.")
