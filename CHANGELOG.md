@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.18.2 (2026-11-06)
+
+A fix to `webcli gsc inspect --request-indexing` from its first real run, and to plain `inspect`. It adds no
+writes.
+
+### Fixed
+
+- `inspect --request-indexing --yes` now judges the result only by Google's own answer. On Nov 6 every attempt
+  exited 5 with "Something went wrong (request sent: True)". That "request sent" meant only that the guard had let
+  the indexing request (`Fj3Owf`) out of the browser: webcli never read Google's answer, so it never knew whether
+  Google queued it. Now:
+  - the result is read from Search Console's modal dialog only. Other panels on the page print their own
+    "Something went wrong", and before, the whole page's text counted;
+  - webcli reads Google's HTTP answer to `Fj3Owf`: its status and batchexecute error code only, never kept;
+  - exit 0 only when the dialog says "Indexing requested" and the answer (when seen) is HTTP 200 with no error:
+    `{"requested": true, "outcome": "confirmed", "confirmed": "dialog", "fj3owfStatus": 200, ...}`;
+  - exit 8 (error `sent_unverified`) when `Fj3Owf` went out but Google didn't confirm it: a failure dialog, an error
+    answer, or no result in 240 s. The message says what went out and what Google answered, then "Google may or
+    may not have queued it; check URL Inspection in Search Console before retrying";
+  - exit 5 when `Fj3Owf` never went out: nothing was submitted. Search Console's "Indexing request rejected" (the
+    live test found issues) is now recognized; before, it ran into the timeout;
+  - exit 6 on the quota, as before, now also when Google answers error code 8.
+- `inspect`: when Google says "URL is unknown to Google", or the URL is not on Google and in no sitemap, inspect
+  reads the live sitemap by itself. If the sitemap lists the URL, inspect asks Google once more and uses that answer
+  unless it went back to "unknown". On Nov 6, two calls two minutes apart got "URL is unknown to Google" and then
+  "Discovered - currently not indexed". New `recheckedAfterUnknown` field, and a note that says what each answer
+  was. `--no-live-sitemap` turns this off.
+
+### Changed
+
+- `inspect --request-indexing --json` output: `requestsSent` is now `fj3owfSent`, joined by `outcome`, `confirmed`,
+  `dialog`, `fj3owfStatus`, `fj3owfError`, and `message`. Its line in `~/.webcli/logs/gsc.log` adds
+  `fj3owf=<HTTP status|unsent|unseen>` (and `fj3owfError=` on an error answer).
+- The request-indexing guard now lets through Search Console's two load-time reads `oGVhvf` (the property's "New!
+  ..." callouts) and `gydQ5d` (the unread-messages count), in calls of their own, each with a `[property]` payload.
+  Search Console's own code marks both read-only. They fire when the page loads, before the click. Read commands
+  and `sitemaps submit` still abort them.
+- Telemetry (Google Tag Manager, Google Analytics, `play.google.com/log`, and Search Console's `jserror`, `log`, and
+  `browserinfo` beacons) is still aborted, but no longer listed in "The guard blocked: ..." messages. The core guard's
+  `Policy` has a new optional `quiet` predicate for this; other sites are unchanged.
+- Version 0.18.2 for webcli, chromecli (and its pin), and the extension manifest. llmcli / llmcli-bare stay 0.8.1,
+  pinned to truefrontier-webcli==0.18.1.
+
 ## 0.18.1 / llmcli 0.8.1 (2026-10-30)
 
 A read-only patch to `webcli gsc` from its first real SEO run. It adds no writes.

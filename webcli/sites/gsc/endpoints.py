@@ -10,8 +10,8 @@ asked for again as one batchexecute RPC:
 
 The `at` token (WIZ_global_data.SNlM0e), build label (cfb2h), and session id (FdrFJe) are read inside the page by
 fetch.py's JS, as gemini and notebooklm do; Python only ever sees response bodies. So webcli gsc loads one page,
-then makes exactly the RPCs below, one at a time. The page's own load-time RPCs (callouts, message counts, and
-SM7Bqb, which saves the recent-properties list) are aborted: nothing it needs.
+then makes exactly the RPCs below, one at a time. The page's own load-time RPCs (oGVhvf callouts, gydQ5d message
+counts, and SM7Bqb, which saves the recent-properties list) are aborted: nothing it needs.
 
 Payload shapes are Search Console's own, copied from AF_dataServiceRequests and the page's own calls.
 """
@@ -49,6 +49,32 @@ WRITE_RPC = {
 # the request-indexing policy, where Search Console's own UI drives the page. Captured 2026-10-30.
 INSPECT_PAGE_RPCIDS = frozenset({"yol87d", "DETOSe", "HZPzjb", "C4lTm", "zUbeBb", "oUNqRb", "ueowNe", "OFNzWe",
                                  "czrWJf", "YDPhmb", "pPDvCb", "RVtklb", "MrNfbc"})
+
+# Two more reads Search Console's page makes on every load, allowed only in the request-indexing policy (READ and
+# submit still abort them). Each takes exactly [property]. Recon 2026-11-06, read-only (the page loaded, the URL
+# inspected, REQUEST INDEXING never clicked): both fire at page load, before any click, so neither is part of the
+# REQUEST INDEXING flow; 0.18.1 aborted them and the flow doesn't need them, but the page loads as it does for a person
+# when they answer. Search Console's own JS marks both read-only (their RPC descriptors have Ob:!0, as every read
+# above; the writes Fj3Owf and SM7Bqb have Ob:!1). What they are, from that JS:
+#   oGVhvf  the property's callouts: the "New! ..." feature tips Search Console shows ([property] -> a list; a
+#           dismissed tip is saved through SM7Bqb, which stays aborted)
+#   gydQ5d  the unread Search Console messages count: the bell's badge ("Unread messages: N")
+REQUEST_INDEXING_FLOW_RPCIDS = frozenset({"oGVhvf", "gydQ5d"})
+
+# What Search Console's REQUEST INDEXING does after the click (its JS module with Fj3Owf, read 2026-11-06): a modal
+# "Testing if live URL can be indexed" (the live test: RVtklb mode 1, then polls), then "Submitting request" (Fj3Owf),
+# then one result dialog. "Indexing requested" shows only after Fj3Owf succeeds. Any failure in that chain shows
+# "Oops! Something went wrong / We had a problem submitting your indexing request", error code 8 shows "Quota
+# Exceeded", and a failed live test shows "Indexing request rejected" (Fj3Owf never sent). The dialogs are
+# role=dialog|alertdialog with aria-modal=true; the nav drawer is role=dialog with aria-modal=false, and other panels
+# print their own "Something went wrong", so fetch.py reads the result from the modal dialog only.
+RESULT_DIALOG = "[role=dialog][aria-modal=true], [role=alertdialog]"
+
+# Telemetry every gsc policy aborts without listing it in errors (guard.quiet): Google Tag Manager, Google Analytics,
+# Google's client log, and Search Console's own JS error, client log, and browser-info beacons.
+QUIET_HOSTS = frozenset({"www.googletagmanager.com", "www.google-analytics.com"})
+QUIET_PATHS = {"play.google.com": frozenset({"/log"}),
+               APP_HOST: frozenset({f"/_/SearchConsoleAggReportUi/{p}" for p in ("jserror", "log", "browserinfo")})}
 
 # Performance --dimension -> the report's dimension id (Search Console's own: 1 date, 2 query, 3 page, 4 country).
 DIMENSIONS = {"date": 1, "query": 2, "page": 3}

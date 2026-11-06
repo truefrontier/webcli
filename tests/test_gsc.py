@@ -93,6 +93,63 @@ def test_request_indexing_policy_allows_the_page_flow_and_one_request():
     assert guard.request_indexing_check(guard.Budget({}))(*post(("Fj3Owf", [job, "T", None, PROP]))) is False
 
 
+@pytest.mark.parametrize("rpcid", ["oGVhvf", "gydQ5d"])
+def test_page_load_reads_only_in_the_request_indexing_policy(rpcid):
+    check = guard.request_indexing_check(guard.Budget({"Fj3Owf": 1}))
+    assert check(*post((rpcid, [PROP]))) is True
+    assert check(*post((rpcid, ["https://www.example.org/"]))) is True  # the last-used property, on the first load
+    assert check(*post(("oGVhvf", [PROP]), ("gydQ5d", [PROP]))) is True  # only each other
+    assert guard.read_allowed(*post((rpcid, [PROP]))) is False
+    assert guard.submit_check(PROP, "https://example.com/sitemap.xml", guard.Budget({"CyYwI": 1}))(
+        *post((rpcid, [PROP]))) is False
+
+
+@pytest.mark.parametrize("req", [
+    post(("oGVhvf", [PROP]), ("HZPzjb", ["JOB", PROP])),  # mixed with another page read
+    post(("oGVhvf", [PROP]), ("zzWrit", [PROP])),  # an unknown rpcid with the same [property] shape
+    post(("gydQ5d", [PROP]), ("SM7Bqb", [[1, []]])),  # mixed with a write
+    post(("oGVhvf", [PROP]), ("Fj3Owf", ["JOB", "T", None, PROP])),  # never rides along with Fj3Owf
+    post(("oGVhvf", [PROP]), rpcids="gydQ5d"),  # label and body disagree
+    post(("oGVhvf", [])), post(("oGVhvf", [PROP, PROP])), post(("gydQ5d", ["not a property"])),
+    post(("gydQ5d", [7])), post(("gydQ5d", ["sc-domain:EXAMPLE.com"])),  # not as Search Console names it
+    post(("oGVhvf", [PROP]), method="GET"),
+    ("POST", "https://search.google.com/_/SearchConsoleAggReportUi/data/other?rpcids=oGVhvf",
+     body(("oGVhvf", [PROP]))),
+    ("POST", f"https://evil.example.com{BATCH_PATH}?rpcids=oGVhvf", body(("oGVhvf", [PROP]))),
+])
+def test_page_load_reads_refused_mixed_misshapen_or_elsewhere(req):
+    budget = guard.Budget({"Fj3Owf": 1})
+    assert guard.request_indexing_check(budget)(*req) is False
+    assert budget.sent == {}
+
+
+def test_a_closed_budget_lets_no_late_write_out():
+    budget = guard.Budget({"Fj3Owf": 1})
+    check = guard.request_indexing_check(budget)
+    assert budget.close() == {}
+    assert check(*post(("Fj3Owf", ["JOB", "T", None, PROP]))) is False and budget.sent == {}
+    budget = guard.Budget({"Fj3Owf": 1})
+    assert guard.request_indexing_check(budget)(*post(("Fj3Owf", ["JOB", "T", None, PROP]))) is True
+    assert budget.close() == {"Fj3Owf": 1} and budget.left == {}
+
+
+@pytest.mark.parametrize(("method", "url", "quiet"), [
+    ("GET", "https://www.googletagmanager.com/gtag/js?id=G-X", True),
+    ("GET", "https://www.google-analytics.com/analytics.js", True),
+    ("POST", "https://play.google.com/log?format=json", True),
+    ("POST", "https://search.google.com/_/SearchConsoleAggReportUi/jserror?script=1", True),
+    ("POST", "https://search.google.com/_/SearchConsoleAggReportUi/log", True),
+    ("POST", "https://search.google.com/_/SearchConsoleAggReportUi/browserinfo", True),
+    ("POST", BATCH + "?rpcids=SM7Bqb", False),  # a refused write is still listed
+    ("POST", "https://play.google.com/logs", False),
+    ("POST", "https://evil.example.com/_/SearchConsoleAggReportUi/jserror", False),
+    ("POST", "https://ogads-pa.clients6.google.com/$rpc/x/GetAsyncData", False),
+])
+def test_quiet_is_only_telemetry(method, url, quiet):
+    assert guard.quiet(method, url) is quiet
+    assert guard.READ.quiet is not None and guard.request_indexing_policy(guard.Budget({})).quiet is not None
+
+
 def test_describe_names_rpcids_not_payloads():
     method, url, data = post(("Fj3Owf", ["JOB", "SECRET-ATTESTATION", None, PROP]))
     text = guard.describe(method, url, data)
@@ -338,6 +395,83 @@ def test_rpc_payload_errors():
     assert exc.value.code == 3
 
 
+def test_rpc_error_summarizes_an_answer_without_its_body():
+    assert parse.rpc_error(answer("Fj3Owf", []), "Fj3Owf") is None
+    assert parse.rpc_error(answer("Fj3Owf", None), "Fj3Owf") == "code 3"
+    assert parse.rpc_error(answer("HZPzjb", []), "Fj3Owf") == "no Fj3Owf result"
+    assert parse.rpc_error("<html>Error 500</html>", "Fj3Owf") == "no Fj3Owf result"
+    bad = ")]}'\n\n" + json.dumps([["wrb.fr", "Fj3Owf", "{not json", None, None, None, "generic"]])
+    assert parse.rpc_error(bad, "Fj3Owf") == "unreadable"
+
+
+@pytest.mark.parametrize(("shown", "where", "sent", "status", "error", "outcome"), [
+    ("done", "dialog", 1, 200, None, "confirmed"),
+    ("done", "dialog", 1, None, None, "confirmed"),  # answer unseen: Google shows the dialog only after it
+    ("done", "page", 1, 200, None, "confirmed"),  # text outside a dialog needs the clean answer
+    ("done", "page", 1, None, None, "unconfirmed"),
+    ("done", "dialog", 1, 200, "code 3", "unconfirmed"),  # dialog and answer disagree
+    ("done", "dialog", 1, 200, "unreadable", "unconfirmed"),
+    ("done", "dialog", 1, 500, "no Fj3Owf result", "unconfirmed"),
+    ("failed", "dialog", 1, 200, None, "unconfirmed"),
+    ("failed", "dialog", 1, 200, "code 13", "unconfirmed"),
+    (None, None, 1, None, None, "unconfirmed"),  # timeout after Fj3Owf went out
+    (None, None, 0, None, None, "not_sent"),  # timeout before
+    ("rejected", "dialog", 0, None, None, "not_sent"),  # the live test found issues
+    ("failed", "dialog", 0, None, None, "not_sent"),
+    ("done", "dialog", 0, None, None, "not_sent"),
+    ("quota", "dialog", 1, 200, "code 8", "quota"),
+    ("quota", "dialog", 0, None, None, "quota"),
+    ("failed", "dialog", 1, 200, "code 8", "quota"),
+])
+def test_ri_outcome(shown, where, sent, status, error, outcome):
+    assert parse.ri_outcome(shown, where, sent, status, error) == outcome
+
+
+BASE = {"dialog": fetch._counts(""), "page": fetch._counts("")}
+
+
+def test_ri_result_comes_from_the_dialog_only():
+    side = "Performance\nSomething went wrong\nURL inspection"  # a side panel outside the dialog
+    assert fetch.ri_shown("", side, BASE) is None
+    done = "Indexing requested\nURL was added to a priority crawl queue. Learn more.\nDismiss"
+    assert fetch.ri_shown(done, "", BASE)[0::2] == ("done", "dialog")
+    failed = "Oops! Something went wrong\nWe had a problem submitting your indexing request.\nDismiss"
+    assert fetch.ri_shown(failed, "", BASE) == ("failed", " ".join(failed.split()), "dialog")
+    assert fetch.ri_shown("Quota Exceeded\nSorry--we couldn't process this request", "", BASE)[0] == "quota"
+    rejected = "Indexing request rejected\nDuring live testing, indexing issues were detected with the URL"
+    assert fetch.ri_shown(rejected, "", BASE)[0] == "rejected"
+    assert fetch.ri_shown("Testing if live URL can be indexed\nThis might take a minute or two", side, BASE) is None
+    assert fetch.ri_shown("", "Status: Indexing requested", BASE) == ("done", "Indexing requested", "page")
+    before = {"dialog": BASE["dialog"], "page": fetch._counts("Indexing requested")}
+    assert fetch.ri_shown("", "Indexing requested", before) is None  # already on the page before the click
+
+
+DISCOVERED = [[5, "JOB", False], 0, ["https://example.com/sitemap.xml"], None, None, [None, None, 0], 0, 0, None, 5,
+              "KEY", None, 0, 0, "https://support.google.com/webmasters/answer/7440203#discovered__unclear_status",
+              ["", 0], 0]
+
+
+def test_needs_recheck_and_notes():
+    unknown = parse.inspection(UNKNOWN, "https://example.com/new", PROP)
+    found = parse.inspection(DISCOVERED, "https://example.com/new", PROP)
+    indexed = parse.inspection(INDEXED, "https://example.com/", PROP)
+    alternate = parse.inspection(ALTERNATE, "https://www.example.com/", PROP)
+    assert parse.needs_recheck(unknown) and parse.needs_recheck(alternate)
+    assert not parse.needs_recheck(found) and not parse.needs_recheck(indexed)
+    assert parse.pick_answer(unknown, found) is found and parse.pick_answer(found, unknown) is found
+    live = {"inLiveSitemap": True, "liveSitemaps": ["https://example.com/sitemap.xml"]}
+    note = parse.recheck_note(unknown, found, live)
+    assert note == ("Google's stored data said this URL is unknown, but it is in your live sitemap "
+                    "(https://example.com/sitemap.xml). Google's answers can lag or flip between calls; webcli asked "
+                    "again and got: Discovered - currently not indexed.")
+    assert "still says it is unknown. Run inspect again later." in parse.recheck_note(unknown, unknown, live)
+    assert "set aside" in parse.recheck_note(alternate, unknown, live)
+    assert "--check-live-sitemap" in parse.recheck_note(unknown, None, None)
+    assert "don't list it" in parse.recheck_note(unknown, None, {"inLiveSitemap": False, "liveSitemaps": []})
+    assert "liveSitemapErrors" in parse.recheck_note(unknown, None, {"inLiveSitemap": None, "liveSitemaps": []})
+    assert parse.recheck_note(alternate, None, {"inLiveSitemap": False}) is None
+
+
 # fetch, on a fake page
 
 class FakePage:
@@ -482,6 +616,167 @@ def test_inspect_polls_until_done_and_never_live_tests(page):
         asyncio.run(fetch.inspect("https://example.net/", "example.com"))
 
 
+LIVE = "https://example.com/sitemap.xml"
+
+
+@pytest.fixture
+def live(monkeypatch):
+    seen, answer_ = [], {"inLiveSitemap": True}
+
+    def check(url, sitemaps, prop):
+        seen.append(url)
+        found = answer_["inLiveSitemap"]
+        return {"inLiveSitemap": found, "liveSitemaps": [LIVE] if found else [], "liveSitemapsRead": 1,
+                "liveSitemapUrls": 3, "liveSitemapErrors": []}
+    monkeypatch.setattr(fetch.livesitemap, "check", check)
+    return seen, answer_
+
+
+def test_inspect_rechecks_an_unknown_url_in_the_live_sitemap(page, live):
+    seen, _ = live
+    p = page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]], "MrNfbc": ["JOB", 2, [], 2],
+              "HZPzjb": ["SEQ", UNKNOWN, DISCOVERED], "vyvePb": SITEMAPS})
+    out = asyncio.run(fetch.inspect("https://example.com/new"))
+    assert out["coverageState"] == "Discovered - currently not indexed" and out["inSitemap"] is True
+    assert out["recheckedAfterUnknown"] is True and out["inLiveSitemap"] is True and seen == ["https://example.com/new"]
+    assert [c[0] for c in p.calls].count("RVtklb") == 2
+    assert out["notes"] == [parse.recheck_note(parse.inspection(UNKNOWN, "https://example.com/new", PROP),
+                                               parse.inspection(DISCOVERED, "https://example.com/new", PROP),
+                                               {"liveSitemaps": [LIVE]})]
+    assert "webcli asked again and got: Discovered - currently not indexed." in out["notes"][0]
+
+
+def test_inspect_still_unknown_or_not_in_the_live_sitemap(page, live):
+    seen, answer_ = live
+    p = page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]], "MrNfbc": ["JOB", 2, [], 2], "HZPzjb": UNKNOWN,
+              "vyvePb": SITEMAPS})
+    out = asyncio.run(fetch.inspect("https://example.com/new"))
+    assert out["coverageState"] == "URL is unknown to Google" and out["recheckedAfterUnknown"] is True
+    assert "still says it is unknown" in out["notes"][0] and len(out["notes"]) == 1  # no "caught up" note too
+    answer_["inLiveSitemap"] = False
+    p.calls.clear()
+    out = asyncio.run(fetch.inspect("https://example.com/new"))
+    assert out["recheckedAfterUnknown"] is False and [c[0] for c in p.calls].count("RVtklb") == 1
+    assert "don't list it" in out["notes"][0]
+    p.calls.clear()
+    out = asyncio.run(fetch.inspect("https://example.com/new", None, False, False))  # --no-live-sitemap
+    assert "vyvePb" not in [c[0] for c in p.calls] and "inLiveSitemap" not in out and len(seen) == 2
+    assert out["recheckedAfterUnknown"] is False and "--check-live-sitemap" in out["notes"][0]
+
+
+def test_inspect_skips_the_live_sitemap_when_google_knows_the_url(page, live):
+    seen, _ = live
+    page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]], "MrNfbc": ["JOB", 2, [], 2], "HZPzjb": DISCOVERED})
+    out = asyncio.run(fetch.inspect("https://example.com/new"))
+    assert seen == [] and out["recheckedAfterUnknown"] is False and out["notes"] == []
+
+
+class RIPage(FakePage):
+    """URL Inspection's page for REQUEST INDEXING. The click sends Fj3Owf through the real request-indexing policy
+    (so the guard's budget counts it) when `sends`, answers it with `fj3owf` (status, payload; None payload: an error
+    envelope), then shows `dialog` in a modal and `side` elsewhere on the page."""
+
+    def __init__(self, *, policy, dialog="", side="", sends=True, fj3owf=(200, [])):
+        super().__init__({"BWF8he": PROPERTIES})
+        self.policy, self.dialog_after, self.side, self.sends, self.fj3owf = policy, dialog, side, sends, fj3owf
+        self.dialog, self.handlers, self.clicked = "", [], 0
+        self.text = "URL is not on Google\nREQUEST INDEXING\nPage indexing"
+
+    def on(self, event, handler):
+        assert event == "response"
+        self.handlers.append(handler)
+
+    def locator(self, _selector):
+        async def nothing(_value):
+            pass
+        return SimpleNamespace(first=SimpleNamespace(fill=nothing, press=nothing))
+
+    def get_by_text(self, _pattern):
+        return SimpleNamespace(first=SimpleNamespace(click=self.click_request_indexing))
+
+    async def click_request_indexing(self):
+        self.clicked += 1
+        method, url, data = post(("Fj3Owf", ["JOB", "ATTESTATION", None, PROP]))
+        request = SimpleNamespace(method=method, url=url, post_data=data)
+        if self.sends and self.policy()(request, None):
+            status, payload = self.fj3owf
+
+            async def text():
+                return answer("Fj3Owf", payload)
+            for handler in self.handlers:
+                handler(SimpleNamespace(request=request, status=status, text=text))
+        self.dialog, self.text = self.dialog_after, self.text + "\n" + self.side
+
+    async def evaluate(self, script, arg=None):
+        if script == fetch.DIALOG_JS:
+            return self.dialog
+        if script == fetch.TEXT_JS:
+            return self.text
+        return await super().evaluate(script, arg)
+
+
+@pytest.fixture
+def ri_page(page, monkeypatch):
+    holder = page.holder
+
+    def make(**kwargs):
+        holder["page"] = RIPage(policy=lambda: holder["policy"].allowed, **kwargs)
+        return holder["page"]
+    monkeypatch.setattr(fetch, "REQUEST_INDEXING_TIMEOUT_S", 0.01)
+    return make
+
+
+def request_indexing():
+    return asyncio.run(fetch.request_indexing("https://example.com/", PROP, confirm=True))
+
+
+DONE = "Indexing requested\nURL was added to a priority crawl queue.\nDismiss"
+FAILED = "Oops! Something went wrong\nWe had a problem submitting your indexing request. Please try again later."
+
+
+def test_request_indexing_confirmed_by_the_dialog_despite_a_side_panel_error(ri_page):
+    p = ri_page(dialog=DONE, side="Something went wrong")
+    out = request_indexing()
+    assert p.clicked == 1 and page_policy_is_request_indexing(p)
+    assert {k: out[k] for k in ("requested", "outcome", "confirmed", "fj3owfSent", "fj3owfStatus", "fj3owfError")} \
+        == {"requested": True, "outcome": "confirmed", "confirmed": "dialog", "fj3owfSent": 1, "fj3owfStatus": 200,
+            "fj3owfError": None}
+    assert out["message"].startswith("Indexing requested: the request left the browser (Fj3Owf sent once); Google "
+                                     "answered HTTP 200; the dialog said \"Indexing requested")
+
+
+def page_policy_is_request_indexing(p):
+    method, url, data = post(("oGVhvf", [PROP]))
+    return p.policy()(SimpleNamespace(method=method, url=url, post_data=data), None)
+
+
+@pytest.mark.parametrize(("kwargs", "outcome", "error", "says"), [
+    ({"dialog": FAILED}, "unconfirmed", None, 'Google answered HTTP 200; the dialog said "Oops! Something went wrong'),
+    ({"dialog": DONE, "fj3owf": (200, None)}, "unconfirmed", "code 3", "Google answered HTTP 200, error code 3"),
+    ({"dialog": FAILED, "fj3owf": (500, [])}, "unconfirmed", None, "Google answered HTTP 500;"),
+    ({"dialog": ""}, "unconfirmed", None, "no result showed in 0.01s"),  # timeout after Fj3Owf went out
+    ({"dialog": "Indexing request rejected\nDuring live testing", "sends": False}, "not_sent", None,
+     "the request never left the browser (Fj3Owf not sent), so nothing was submitted"),
+    ({"dialog": FAILED, "sends": False}, "not_sent", None, "never left the browser"),
+    ({"dialog": "Quota Exceeded\nyou've exceeded your daily quota"}, "quota", None, "quota exceeded for today"),
+])
+def test_request_indexing_outcomes(ri_page, kwargs, outcome, error, says):
+    ri_page(**kwargs)
+    out = request_indexing()
+    assert out["outcome"] == outcome and out["requested"] is False and out["confirmed"] is None
+    assert out["fj3owfError"] == error and says in out["message"]
+    if outcome == "unconfirmed":
+        assert out["fj3owfSent"] == 1 and "Google may or may not have queued it; check URL Inspection in Search " \
+                                          "Console before retrying." in out["message"]
+    assert "request sent: True" not in out["message"]
+
+
+def test_request_indexing_never_reads_a_body_into_its_result(ri_page):
+    ri_page(dialog=DONE, fj3owf=(200, ["SECRET-ANSWER"]))
+    out = request_indexing()
+    assert out["outcome"] == "confirmed" and "SECRET" not in json.dumps(out) and "ATTESTATION" not in json.dumps(out)
+
+
 @pytest.mark.parametrize(("kwargs", "error"), [
     ({"landed": "https://accounts.google.com/signin"}, AuthRequired),
     ({"landed": "https://search.google.com/search-console/about"}, AuthRequired),
@@ -569,10 +864,16 @@ def test_read_commands(calls):
     assert run("sitemaps", PROP, "--json").exit_code == 0 and seen[-1][:2] == ("sitemaps", (PROP,))
     answers["inspect"] = parse.inspection(INDEXED, "https://example.com/", PROP)
     out = run("inspect", "https://example.com/", "--json")
-    assert out.exit_code == 0 and seen[-1][:2] == ("inspect", ("https://example.com/", None, False))
+    assert out.exit_code == 0 and seen[-1][:2] == ("inspect", ("https://example.com/", None, False, True))
     run("inspect", "https://example.com/", "--check-live-sitemap", "--json")
-    assert seen[-1][:2] == ("inspect", ("https://example.com/", None, True))
+    assert seen[-1][:2] == ("inspect", ("https://example.com/", None, True, True))
+    run("inspect", "https://example.com/", "--no-live-sitemap", "--json")
+    assert seen[-1][:2] == ("inspect", ("https://example.com/", None, False, False))
+    n = len(seen)
     assert run("inspect", "https://example.com/", "--check-live-sitemap", "--request-indexing").exit_code == 2
+    assert run("inspect", "https://example.com/", "--no-live-sitemap", "--request-indexing").exit_code == 2
+    assert run("inspect", "https://example.com/", "--check-live-sitemap", "--no-live-sitemap").exit_code == 2
+    assert len(seen) == n
     answers["inspect"] = {**answers["inspect"], "notes": ["a note"]}
     out = run("inspect", "https://example.com/", "--format", "table")
     assert out.exit_code == 0 and "note: a note" in out.stderr
@@ -636,14 +937,46 @@ def test_request_indexing_refuses_without_yes(calls):
     assert run("inspect", "https://example.com/", "--yes").exit_code == 2  # --yes alone writes nothing
 
 
+def ri_result(outcome, sent=1, status=200, error=None):
+    return {"requested": outcome == "confirmed", "url": "https://example.com/", "property": PROP, "outcome": outcome,
+            "confirmed": "dialog" if outcome == "confirmed" else None, "dialog": "a dialog", "fj3owfSent": sent,
+            "fj3owfStatus": status, "fj3owfError": error, "message": f"the {outcome} message"}
+
+
 def test_request_indexing_with_yes(calls):
     seen, answers, home = calls
-    answers["request_indexing"] = {"requested": True, "url": "https://example.com/", "property": PROP,
-                                   "message": "Indexing requested", "requestsSent": 1}
+    answers["request_indexing"] = ri_result("confirmed")
     out = run("inspect", "https://example.com/", "--property", "example.com", "--request-indexing", "--yes", "--json")
-    assert out.exit_code == 0 and json.loads(out.stdout)["requested"] is True
+    got = json.loads(out.stdout)
+    assert out.exit_code == 0 and got["requested"] is True and got["confirmed"] == "dialog"
+    assert got["fj3owfStatus"] == 200
     assert seen == [("request_indexing", ("https://example.com/", PROP), {"headed": False, "confirm": True})]
-    assert [ln.split(" outcome=")[1].split()[0] for ln in audit_lines(home)] == ["attempt", "done"]
+    lines = audit_lines(home)
+    assert [ln.split(" outcome=")[1].split()[0] for ln in lines] == ["attempt", "done"]
+    assert "fj3owf=200" in lines[-1] and "exit=" not in lines[-1]
+
+
+@pytest.mark.parametrize(("result", "code", "logged"), [
+    (ri_result("unconfirmed", error="code 3"), 8, "exit=8 fj3owf=200 fj3owfError=code-3"),
+    (ri_result("unconfirmed", status=None), 8, "exit=8 fj3owf=unseen"),
+    (ri_result("not_sent", sent=0, status=None), 5, "exit=5 fj3owf=unsent"),
+    (ri_result("quota"), 6, "exit=6 fj3owf=200"),
+    ({"requested": True}, 5, "exit=5 fj3owf=unsent"),  # no outcome: never exit 0
+])
+def test_request_indexing_exit_codes(calls, result, code, logged):
+    _, answers, home = calls
+    answers["request_indexing"] = result
+    out = run("inspect", "https://example.com/", "--request-indexing", "--yes", "--json")
+    assert out.exit_code == code
+    line = audit_lines(home)[-1]
+    assert "outcome=failed" in line and logged in line
+    err = json.loads(out.stderr.strip().splitlines()[-1])
+    assert err["code"] == code
+    if code == 8:
+        assert err["error"] == "sent_unverified" and err["message"] == "the unconfirmed message"
+        assert "before retrying" in err["hint"] and json.loads(out.stdout)["requested"] is False
+    if code == 6:
+        assert err["error"] == "rate_limited" and "Fj3Owf went out once" in err["hint"]
 
 
 def test_a_failed_write_is_audited(calls, monkeypatch):

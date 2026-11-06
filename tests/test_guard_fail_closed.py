@@ -4,6 +4,7 @@ sends only in send mode; nothing at all with no command running or from another 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from urllib.parse import urlencode
 
@@ -12,6 +13,7 @@ import pytest
 from webcli.core import guard
 from webcli.sites.chatgpt.guard import POLICY as CHATGPT
 from webcli.sites.gemini.guard import POLICY as GEMINI
+from webcli.sites.gsc.guard import READ as GSC
 
 BATCH = "https://gemini.google.com/_/BardChatUi/data/batchexecute"
 CHANNEL = "https://geminiweb-pa.clients6.google.com/v1/processSession"
@@ -101,6 +103,22 @@ def test_a_policy_that_raises_fails_closed():
     broken = guard.Policy("broken", lambda request, state: 1 / 0, lambda request: "x")
     assert not allowed(broken, Request("GET", "https://chatgpt.com/"))
     assert guard.state.blocked == ["x"]
+
+
+def test_quiet_requests_are_aborted_but_not_listed():
+    log = Request("POST", "https://play.google.com/log?format=json")
+    assert not allowed(GSC, log)
+    assert not allowed(GSC, Request("GET", "https://www.googletagmanager.com/gtag/js?id=G-X"))
+    assert not allowed(GSC, Request("POST", "https://search.google.com/_/SearchConsoleAggReportUi/jserror?x=1"))
+    assert guard.state.blocked == []
+    assert not allowed(GSC, Request("POST", "https://search.google.com/_/SearchConsoleAggReportUi/data/other"))
+    assert guard.state.blocked == ["POST search.google.com/_/SearchConsoleAggReportUi/data/other"]
+    assert GEMINI.quiet is None and not allowed(GEMINI, log)  # a policy without quiet lists every refusal
+    assert len(guard.state.blocked) == 1
+    everything = dataclasses.replace(GEMINI, quiet=lambda request: True)
+    assert allowed(everything, Request("GET", "https://gemini.google.com/app"))  # quiet never blocks a read
+    broken = dataclasses.replace(GEMINI, quiet=lambda request: 1 / 0)
+    assert not allowed(broken, log) and len(guard.state.blocked) == 1  # a quiet() that raises: listed
 
 
 def test_routes_continue_or_abort_and_websockets_close():
