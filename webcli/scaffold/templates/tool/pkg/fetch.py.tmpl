@@ -1,0 +1,65 @@
+"""Browser-side work for webcli {{name}}: open {{url}} in the identity's hidden Chrome and read the rendered page.
+These are the tool's daemon ops (ADAPTER.ops); each takes headed= (always headless here). The guard (guard.py)
+lets the page make GET and HEAD requests to endpoints.HOSTS only.
+
+Start here when you make the tool your own: change PAGE_JS to read what you want off the page (or use page.evaluate
+to fetch the site's own JSON API with credentials: "include"), parse.py to turn it into rows, and status() to check
+something only a signed-in page shows.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING
+
+from webcli.adapter import AuthRequired, site_page, warn
+from webcli_tool_{{name}}.endpoints import APP_URL, RENDER_WAIT_MS
+from webcli_tool_{{name}}.guard import POLICY, SIGN_IN_POLICY
+from webcli_tool_{{name}}.parse import rows, status_info
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+
+# The page's url, title, whether it shows a password field, its h1-h3 headings, and its links.
+PAGE_JS = """{{page_js}}"""
+
+
+async def _snapshot(page: "Page") -> dict:
+    response = await page.goto(APP_URL, wait_until="domcontentloaded", timeout=60_000)
+    status = response.status if response is not None else None
+    if status is None or status >= 400:
+        raise RuntimeError(f"{APP_URL} answered HTTP {status}.")
+    await page.wait_for_timeout(RENDER_WAIT_MS)
+    return await page.evaluate(PAGE_JS)
+
+
+async def status(*, headed: bool = False) -> dict:
+    """{signedIn, url, title}."""
+    async with site_page(POLICY) as page:
+        return status_info(await _snapshot(page))
+
+
+async def page(limit: int = 50, *, headed: bool = False) -> list[dict]:
+    """The page's headings, then its links, as rows: up to `limit`."""
+    async with site_page(POLICY) as tab:
+        return rows(await _snapshot(tab), limit)
+
+
+async def login(timeout: int, on_state=lambda _state: None) -> dict:
+    """A visible Chrome on APP_URL for a person to sign in (any method, still only to endpoints.HOSTS). Done when the
+    person closes the window; then a fresh hidden Chrome on the same profile must be signed in too, as every
+    command will be. Needs a person; only `webcli identity login {{provider}}:default` calls it."""
+    on_state("signing in")
+    warn("Sign in to {{host}} in the Chrome window, then close the window.")
+    async with site_page(SIGN_IN_POLICY, mode="visible", sign_in=True) as tab:
+        await tab.goto(APP_URL, wait_until="domcontentloaded", timeout=60_000)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not tab.is_closed():
+            if loop.time() >= deadline:
+                raise AuthRequired(f"Timed out after {timeout}s waiting for the sign-in window to close.")
+            await asyncio.sleep(1)
+    info = await status()
+    if not info["signedIn"]:
+        raise AuthRequired("The window closed, but {{host}} still shows a sign-in form in a fresh hidden Chrome.")
+    return info

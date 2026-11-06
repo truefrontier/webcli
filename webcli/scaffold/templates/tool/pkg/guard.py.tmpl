@@ -1,0 +1,39 @@
+"""{{name}}'s request policies, fail-closed.
+
+POLICY (every command): GET and HEAD over https to endpoints.HOSTS. Every other method, every other host, and every
+WebSocket is aborted, so the page can show what the site sends but can't change anything there.
+
+SIGN_IN_POLICY (`webcli identity login {{provider}}:default` only, with a person at the window): any method, still only
+to endpoints.HOSTS. If the site signs in through another host (accounts.google.com, an SSO page), add that host to
+HOSTS and to webcli-tool.toml's hosts.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+
+from webcli.adapter import Policy, describe, host_matches
+from webcli_tool_{{name}}.endpoints import HOSTS
+
+if TYPE_CHECKING:
+    from playwright.async_api import Request
+
+
+def on_hosts(url: str) -> bool:
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.port not in (None, 443) or "@" in parts.netloc:
+        return False
+    return any(host_matches(pattern, parts.hostname or "") for pattern in HOSTS)
+
+
+def request_allowed(method: str, url: str) -> bool:
+    return method.upper() in ("GET", "HEAD") and on_hosts(url)
+
+
+def _describe(request: "Request") -> str:
+    return describe(request.method, request.url)
+
+
+POLICY = Policy("{{name}}", lambda request, _state: request_allowed(request.method, request.url), _describe)
+SIGN_IN_POLICY = Policy("{{name}}", lambda request, _state: on_hosts(request.url), _describe)

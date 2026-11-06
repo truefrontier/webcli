@@ -17,6 +17,7 @@ from webcli.adapter import ADAPTER_API, Site, Strategy, Policy, host_matches, wr
 | Output and exit codes | `EXIT_OK`, `EXIT_USAGE`, `EXIT_NOT_FOUND`, `EXIT_AUTH`, `EXIT_API`, `EXIT_RATE_LIMITED`, `EXIT_CONFIG`, `EXIT_SENT_UNVERIFIED`, `agent_output_options`, `emit_json`, `emit_rows`, `die`, `fail`, `note`, `warn` |
 | Writes | `write_options` (`--dry-run` by default, `--confirm` alias `--yes`), `confirm_write` |
 | Redaction | `redact_text`, `redact_value`, `redact_url`, `shape` |
+| A browser tool | `site_group` (the tool's `webcli <tool>` group, with `--identity`), `call` (run one of its fetch ops in the identity's hidden Chrome), `site_page` (the page an op works in; `mode="visible", sign_in=True` for the sign-in window), `emit_record`, `login_hint`, `add_agent_help` |
 
 Raise these errors rather than exiting with your own codes. That way every tool's exit codes mean the same thing.
 

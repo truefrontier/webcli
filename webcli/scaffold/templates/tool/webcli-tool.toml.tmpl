@@ -1,0 +1,23 @@
+# What this tool is and may do. A person reads this before installing it, and webcli holds the tool to it.
+# The rules: https://github.com/truefrontier/webcli/blob/main/docs/webcli-tool-manifest.md
+# Keep it in step with webcli_tool_{{name}}/__init__.py (ADAPTER) and endpoints.py (HOSTS): `webcli lint {{name}}`
+# checks that they agree.
+name = "{{name}}"
+version = "0.1.0"
+adapter_api = 1
+requires_webcli = ">=1.0.0rc1,<2"
+summary = "{{host}}, read-only: page (its headings and links), status"
+identity = "{{provider}}"
+hosts = [{{hosts_toml}}]
+maintainers = ["github:your-github-login"]
+license = "MIT"
+
+[[commands]]
+name = "status"
+strategy = "cookie"
+requests = ["GET {{host}}{{path}}"]
+
+[[commands]]
+name = "page"
+strategy = "cookie"
+requests = ["GET {{host}}{{path}}"]

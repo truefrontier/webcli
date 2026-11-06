@@ -12,6 +12,7 @@ same facts in its webcli-tool.toml manifest (docs/webcli-tool-manifest.md). docs
 
 from __future__ import annotations
 
+from webcli.core.browser import site_page
 from webcli.core.errors import (
     AuthRequired,
     Challenged,
@@ -44,6 +45,7 @@ from webcli.core.output import (
 )
 from webcli.core.redact import redact_text, redact_url, redact_value, shape
 from webcli.sites.base import NO_IDENTITY, Site, Strategy
+from webcli.sites.data import add_agent_help, call, emit_record, login_hint, site_group
 
 ADAPTER_API = 1
 SUPPORTED_ADAPTER_APIS = (ADAPTER_API,)
@@ -63,4 +65,7 @@ __all__ = [
     "write_options", "confirm_write",
     # redaction, for fixtures and anything printed
     "redact_text", "redact_value", "redact_url", "shape",
+    # a browser tool: its `webcli <tool>` group, running its fetch ops in the identity's hidden Chrome, the page an
+    # op works in (or, mode="visible" with sign_in=True, the sign-in window), and its agent-help
+    "site_group", "call", "site_page", "emit_record", "login_hint", "add_agent_help",
 ]

@@ -1,0 +1,55 @@
+"""Offline tests for webcli {{name}}: `webcli test {{name}}` runs them with the network blocked, and so does the
+library's CI (plain pytest works too). Each test is a function that takes no arguments.
+
+tests/fixtures/*.json are page snapshots (what fetch.PAGE_JS returns). `webcli new {{name}} --capture` adds one
+recorded from the real site, scrubbed; read it before you share the tool, and never commit cookies, tokens, or
+anyone's personal details.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from webcli_tool_{{name}} import ADAPTER
+from webcli_tool_{{name}}.endpoints import APP_URL
+from webcli_tool_{{name}}.guard import request_allowed
+from webcli_tool_{{name}}.parse import rows, status_info
+
+FIXTURES = sorted((Path(__file__).parent / "fixtures").glob("*.json"))
+PAGE = {"url": APP_URL, "title": "Home", "loginForm": False, "headings": ["Welcome", "Welcome", "  News  "],
+        "links": [{"text": "About us", "href": APP_URL + "about"}, {"text": "", "href": APP_URL + "empty"}]}
+
+
+def test_rows_are_headings_then_links_without_repeats():
+    assert rows(PAGE, 10) == [
+        {"kind": "heading", "text": "Welcome", "url": None},
+        {"kind": "heading", "text": "News", "url": None},
+        {"kind": "link", "text": "About us", "url": APP_URL + "about"},
+    ]
+    assert rows(PAGE, 1) == [{"kind": "heading", "text": "Welcome", "url": None}]
+
+
+def test_a_password_field_means_signed_out():
+    assert status_info(PAGE) == {"signedIn": True, "url": APP_URL, "title": "Home"}
+    assert status_info({**PAGE, "loginForm": True})["signedIn"] is False
+
+
+def test_every_recorded_page_parses():
+    assert FIXTURES, "tests/fixtures/ needs at least one page snapshot"
+    for path in FIXTURES:
+        for row in rows(json.loads(path.read_text(encoding="utf-8")), 250):
+            assert row["kind"] in ("heading", "link") and row["text"], path.name
+            assert row["url"] is None or row["url"].startswith(("https://", "http://")), path.name
+
+
+def test_the_guard_only_reads_from_the_tools_hosts():
+    assert request_allowed("GET", APP_URL)
+    assert not request_allowed("POST", APP_URL)
+    assert not request_allowed("DELETE", APP_URL)
+    assert not request_allowed("GET", "https://webcli-test.invalid/")
+    assert not request_allowed("GET", APP_URL.replace("https://", "http://", 1))
+
+
+def test_the_adapter_is_read_only():
+    assert ADAPTER.writes == frozenset() and ADAPTER.sends_to_people == frozenset()

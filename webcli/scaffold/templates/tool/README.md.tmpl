@@ -1,0 +1,34 @@
+# webcli {{name}}
+
+A read-only [webcli](https://github.com/truefrontier/webcli) tool for {{host}}. It opens {{url}} in your own hidden Chrome, signed in as `{{provider}}:default`, and reads the page. It never changes anything on the site.
+
+## Try it
+
+```
+webcli dev {{name}} -- page        # the page's headings and links
+webcli dev {{name}} -- status      # can it read the site signed in?
+webcli identity login {{provider}}:default   # sign in once, if the site needs it (a person does this)
+```
+
+## Make it yours
+
+| File | What to change |
+|---|---|
+| `webcli_tool_{{name}}/fetch.py` | What the tool reads off the page (`PAGE_JS`), or the site's own JSON API |
+| `webcli_tool_{{name}}/parse.py` | How that becomes rows. Keep it pure, so tests can check it offline |
+| `webcli_tool_{{name}}/cli.py` | The commands people type |
+| `webcli_tool_{{name}}/endpoints.py` and `webcli-tool.toml` | Every host the tool reaches. Keep the two lists the same |
+| `tests/` | Tests that run offline, against the pages in `tests/fixtures/` |
+
+A tool imports from `webcli.adapter` and its own package only. Each command you add goes in the manifest's `[[commands]]` too, and in `ADAPTER.verbs`. A command that changes something on the site needs `writes = true` in the manifest and `--confirm` to run; the library reviews every one.
+
+## Check it
+
+```
+webcli lint {{name}}    # the checks the library's CI runs
+webcli test {{name}}    # the tests, with the network blocked
+```
+
+## Share it
+
+`webcli submit {{name}}` opens a pull request to the [webcli-tools](https://github.com/truefrontier/webcli-tools) library. Before you do, read `tests/fixtures/`: it must not hold cookies, tokens, or anyone's personal details. Use the tool only with your own accounts and within the site's terms.
