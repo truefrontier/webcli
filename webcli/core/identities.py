@@ -132,8 +132,12 @@ def known(sites: "list[Site]") -> list[Identity]:
 
 
 def login_site(identity: Identity, sites: "list[Site]") -> "Site":
-    """The site whose sign-in flow logs `identity` in: the first of its provider's sites that has one."""
+    """The site whose sign-in flow logs `identity` in: the first of its provider's sites that has one. A community
+    tool signs in only its own identities (<tool>:...), never a provider it shares through a grant."""
+    from webcli import sites as registry
+
     for site in sites:
-        if site.provider == identity.provider and site.login is not None:
+        if site.provider == identity.provider and site.login is not None and (
+                registry.tier_of(site.name) != registry.COMMUNITY or site.name == identity.provider):
             return site
     raise ConfigError(f"No installed site signs in with {identity.provider}.", hint="See `webcli sites`.")

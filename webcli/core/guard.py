@@ -15,13 +15,20 @@ only from the command's own page while its lease runs, and are closed when the c
 A policy that raises counts as "no": a guard that raises would leave the request hanging.
 A policy may also name `quiet` requests (its site's telemetry): aborted like every other refusal, but left out of
 `blocked`, so error messages list only what matters.
+
+The core host envelope (webcli 1.0): a community tool's pages reach only the hosts in its manifest (Site.hosts),
+whatever its own Policy says. Core sets `envelope` around the tool's daemon op (daemon.site_op) and its sign-in
+(`identity login`); begin() copies it into the page's state, so it lasts exactly as long as the page's lease. None:
+no core limit (the official sites); an empty tuple allows nothing.
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterator
 from urllib.parse import urlsplit
 
 from webcli.core.redact import redact_url
@@ -54,11 +61,12 @@ class Guard:
     blocked: list[str] = field(default_factory=list)  # what was aborted during this command, as describe() lines
     lease: object | None = None  # the running command's; its page's route carries the same object
     opened: list = field(default_factory=list)  # WebSockets this command's page connected; closed when it ends
+    hosts: tuple[str, ...] | None = None  # the core host envelope for this page (None: no core limit)
 
     def begin(self, policy: Policy, *, send: bool = False, download: bool = False, sign_in: bool = False) -> object:
         """Start a command's permissions; returns its lease for the page's route."""
         self.policy, self.send, self.download, self.sign_in = policy, send, download, sign_in
-        self.expect_models = None
+        self.expect_models, self.hosts = None, envelope.get()
         self.blocked.clear()
         self.lease = object()
         return self.lease
@@ -66,10 +74,26 @@ class Guard:
     def end(self) -> None:
         """Back to deny-all. `blocked` stays readable until the next command begins."""
         self.policy, self.send, self.download, self.sign_in = None, False, False, False
-        self.expect_models, self.lease = None, None
+        self.expect_models, self.lease, self.hosts = None, None, None
 
 
 state = Guard()
+envelope: ContextVar[tuple[str, ...] | None] = ContextVar("envelope", default=None)
+
+
+@contextmanager
+def held_to(hosts: tuple[str, ...] | None) -> Iterator[None]:
+    """Pages opened inside reach only `hosts` (None: no core limit), whatever their Policy allows."""
+    token = envelope.set(None if hosts is None else tuple(hosts))
+    try:
+        yield
+    finally:
+        envelope.reset(token)
+
+
+def within_envelope(url: str) -> bool:
+    """Whether `url`'s host is inside the running page's core host envelope (always, when there is none)."""
+    return state.hosts is None or any(host_matches(p, urlsplit(url).hostname or "") for p in state.hosts)
 
 
 def describe(method: str, url: str) -> str:
@@ -90,7 +114,8 @@ def check(request: "Request", *, own_page: bool) -> bool:
     """Whether `request` may go out. own_page: it came through the command page's route."""
     policy = state.policy
     try:
-        if policy is not None and (own_page or state.sign_in) and policy.allowed(request, state):
+        if policy is not None and (own_page or state.sign_in) and within_envelope(request.url) \
+                and policy.allowed(request, state):
             return True
     except Exception:
         pass  # fail closed
@@ -138,7 +163,8 @@ def socket_allowed(url: str, *, own_page: bool) -> bool:
     it."""
     policy = state.policy
     try:
-        return bool(policy is not None and own_page and policy.sockets is not None and policy.sockets(url))
+        return bool(policy is not None and own_page and policy.sockets is not None and within_envelope(url)
+                    and policy.sockets(url))
     except Exception:
         return False  # fail closed
 

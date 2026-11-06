@@ -7,7 +7,7 @@ from typing import Any
 
 import click
 
-from webcli.core import browser, daemon, identities, output
+from webcli.core import browser, daemon, guard, identities, output
 from webcli.core.errors import ConfigError
 from webcli.core.identities import Identity
 from webcli.core.output import EXIT_AUTH, EXIT_OK, EXIT_USAGE, agent_output_options, die, emit_json, emit_rows
@@ -31,6 +31,8 @@ def login_and_report(ident: Identity, timeout: int) -> None:
     paused (its Chrome closed) meanwhile. Needs a person; never run unattended."""
     from rich.markup import escape
 
+    from webcli import sites
+
     site = identities.login_site(ident, _sites())
     console = _stderr()
     console.print(f"Opening a visible Chrome window to sign {escape(ident.id)} in through {site.name}. "
@@ -43,9 +45,13 @@ def login_and_report(ident: Identity, timeout: int) -> None:
         else:
             console.print("Waiting for you to sign in in the Chrome window…")
 
+    async def sign_in() -> dict:
+        with guard.held_to(sites.hosts_limit(site.name)):  # a community tool's sign-in, too, stays on its hosts
+            return await site.login(timeout, on_state)
+
     browser.identity = ident
     try:
-        info = browser.run(daemon.paused(ident, lambda: site.login(timeout, on_state)))
+        info = browser.run(daemon.paused(ident, sign_in))
     except Exception as exc:
         output.fail(exc, site=site.name, login=f"retry: webcli identity login {ident.id}", chats="the chat list")
     who = " ".join(x for x in (info.get("name"), f"<{info['email']}>" if info.get("email") else None) if x)
@@ -185,7 +191,7 @@ def doctor_command() -> click.Command:
     @click.option("--no-browser", is_flag=True, help="Don't check sign-in with a (headless) Chrome.")
     def doctor_cmd(fix: bool, no_browser: bool) -> None:
         """Health report (JSON): data home hardening, FileVault, Chrome, every identity's profile, daemon, and
-        sign-in, and the chromecli bridge (host manifest, extension ID, socket, extension connected). Shared by
+        sign-in, community tools loaded and skipped (and why), and the chromecli bridge (host manifest, extension ID, socket, extension connected). Shared by
         webcli and llmcli (one data home). Never shows a window."""
         from webcli import __version__, sites
 
@@ -199,6 +205,8 @@ def doctor_command() -> click.Command:
             "identities": [identity_report(i, browser_check=not no_browser) for i in known],
             "sites": {"llmcli": [s.name for s in sites.of_kind("llm")],
                       "webcli": [s.name for s in sites.of_kind("data")]},
+            "tools": {"community": [n for n in sites.registry() if sites.tier_of(n) == sites.COMMUNITY],
+                      "skipped": sites.skipped()},
             "chromecli": chromecli_doctor.report(),
         }
         report["ok"] = bool(home["ok"] and report["chrome"]["installed"])

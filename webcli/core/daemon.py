@@ -104,15 +104,37 @@ def log(message: str) -> None:
 
 
 def site_op(ident: Identity, site_name: str, op: str) -> Callable[..., Awaitable[Any]]:
-    """<site>.fetch.<op>, if this identity's daemon may run it."""
+    """<site>.fetch.<op>, if this identity's daemon may run it. A community tool also must not be revoked, may use
+    only its own identities (<tool>:...) or ones granted to it, and runs held to its manifest's hosts."""
     from webcli import sites
+    from webcli.core import grants, guard, revoked
 
-    site = sites.get(site_name)
+    try:
+        site = sites.get(site_name)
+    except ConfigError:  # a tool installed after this daemon started
+        sites.reload()
+        site = sites.get(site_name)
     if site.provider != ident.provider:
         raise ConfigError(f"{site.name} doesn't sign in with {ident.provider}; this daemon serves {ident.id}.")
     if op not in site.ops:
         raise ConfigError(f"{site.name} has no daemon op {op!r}.")
-    return getattr(importlib.import_module(site.fetch), op)
+    hosts = sites.hosts_limit(site.name)
+    if hosts is None:
+        return getattr(importlib.import_module(site.fetch), op)
+    why = revoked.reason(site.name, site.version)  # read on every op: a long-lived daemon honors the kill switch
+    if why:
+        raise ConfigError(f"The {site.name} tool is revoked, so it won't run: {why}",
+                          hint=f"Remove it: webcli tools remove {site.name}")
+    if ident.provider != site.name and not grants.is_granted(site.name, ident.id):
+        raise ConfigError(f"{site.name} is a community tool, and it may use {ident.id} only if you grant it.",
+                          hint=f"To let it run with that session: webcli tools grant {site.name} {ident.id}")
+    fn = getattr(importlib.import_module(site.fetch), op)
+
+    async def held(*args, **kwargs):
+        with guard.held_to(hosts):
+            return await fn(*args, **kwargs)
+
+    return held
 
 
 class Shared:
