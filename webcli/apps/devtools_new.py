@@ -23,7 +23,8 @@ CAPTURE_TIMEOUT = 600
 
 def reserved() -> set[str]:
     """Names a tool can't take: a built-in site, a webcli command, or the provider a built-in signs in with."""
-    return set(manifest_schema._reserved()) | {s.provider for s in sites.registry().values()} | {NO_IDENTITY}
+    official = {s.provider for n, s in sites.registry().items() if sites.tier_of(n) == sites.OFFICIAL}
+    return set(manifest_schema._reserved()) | official | {NO_IDENTITY}
 
 
 def check_name(name: str) -> None:

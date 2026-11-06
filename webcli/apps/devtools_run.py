@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import importlib
 import os
-from contextlib import contextmanager
-from typing import Iterator
 
 import click
 
@@ -25,35 +23,15 @@ from webcli.scaffold import checks
 from webcli.sites.base import Site
 
 
-def dev_site(name: str, folder) -> tuple[Site, bool]:
-    """(the tool's Site, whether this command must add it to the registry itself). A webcli whose registry loads
-    dev.toml tools (core's tool loader: tier, grants, host envelope, write gating) has its own copy, and that copy
-    is the one to run; a tool it skipped doesn't run at all. Without that loader, the tool is loaded and checked
-    here."""
+def dev_site(name: str) -> Site:
+    """The tool as core loaded it from dev.toml (tier community: grants, host envelope, write gating), loaded
+    fresh so it's the code on disk now. A tool core skipped doesn't run: this says why."""
+    sites.reload()
     registry = sites.registry()
-    skipped = getattr(sites, "skipped", None)
-    if skipped is not None:
-        reason = next((s["reason"] for s in skipped() if s["name"] == name), None)
-        if reason or name not in registry:
-            die(f"webcli didn't load the {name} tool: {reason or 'not in the registry'}", EXIT_CONFIG)
-        return registry[name], False
-    if name in registry:
-        die(f"{name!r} is a built-in site, not a tool you're writing.", EXIT_CONFIG)
-    return scaffold.load(name, folder)[1], True
-
-
-@contextmanager
-def registered(site: Site, add: bool) -> Iterator[None]:
-    """`site` in the registry while inside, so its daemon ops resolve (daemon.site_op looks sites up by name)."""
-    if not add:
-        yield
-        return
-    registry = sites.registry()
-    registry[site.name] = site
-    try:
-        yield
-    finally:
-        registry.pop(site.name, None)
+    reason = next((s["reason"] for s in sites.skipped() if s["name"] == name), None)
+    if reason or sites.tier_of(name) != sites.COMMUNITY:
+        die(f"webcli didn't load the {name} tool: {reason or 'it is not a community tool'}", EXIT_CONFIG)
+    return registry[name]
 
 
 @click.command("dev", options_metavar="", short_help="Run a tool you're writing, as if it were installed.",
@@ -63,17 +41,16 @@ def registered(site: Site, add: bool) -> Iterator[None]:
 def dev_cmd(name, args) -> None:
     """Run the tool NAME with ARGS, exactly as `webcli NAME ARGS` would once it's installed: `webcli dev NAME -- page
     --format json`. Its Chrome runs in this command, not the identity's daemon, so every edit shows up on the next
-    run. NAME is a tool in ~/.webcli/tools/dev.toml (`webcli new` lists it there), or a tool folder's path."""
-    name, folder = scaffold.find(name)
-    site, add = dev_site(name, folder)
+    run. NAME is a tool in ~/.webcli/tools/dev.toml (`webcli new` lists it there)."""
+    name, _ = scaffold.find(name)
+    site = dev_site(name)
     os.environ[daemon.DAEMON_ENV] = "0"  # a daemon keeps the code it started with; this run must see your edits
     try:
         group = site.cli()
         importlib.import_module(site.fetch)  # its ops' module: a mistake there is a broken tool, not a site error
     except Exception as exc:
         die(f"{name}'s commands failed to load: {type(exc).__name__}: {exc}", EXIT_CONFIG)
-    with registered(site, add):
-        group.main(list(args), prog_name=f"webcli {name}", standalone_mode=True)
+    group.main(list(args), prog_name=f"webcli {name}", standalone_mode=True)
 
 
 def _emit(record: dict, lines: list[str], fmt: str | None) -> None:

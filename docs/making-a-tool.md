@@ -62,7 +62,7 @@ On a tool that already exists, `--capture` adds a recorded page and suggests any
 
 ## `webcli dev NAME -- ARGS`
 
-It runs the tool as `webcli NAME ARGS` would once installed: `webcli dev acmenotes -- page --format json`. Chrome runs in this command, not in the identity's daemon, so each run picks up your latest edits. If core's tool loader skipped the tool (a broken manifest, a name clash), `dev` says why and stops.
+It runs the tool as `webcli NAME ARGS` would: `webcli dev acmenotes -- page --format json`. Core loads it from `dev.toml` the way it loads an installed tool, with the same trust rules ([tool-trust.md](tool-trust.md)). Chrome runs in this command, not in the identity's daemon, so each run picks up your latest edits. If core skipped the tool (a broken manifest, a name clash), `dev` says why and stops.
 
 ## `webcli test NAME`
 
@@ -85,4 +85,4 @@ It runs the library's checks. It exits 0 when there are no errors (warnings are 
 
 It warns about the placeholder host and maintainer, too.
 
-`dev`, `test`, and `lint` also take a tool folder's path instead of a name: `webcli lint ./tools/acmenotes`. `test` and `lint` import the tool's code, so run them on code you trust.
+`test` and `lint` also take a tool folder's path instead of a name: `webcli lint ./tools/acmenotes`. `test` and `lint` import the tool's code, so run them on code you trust.

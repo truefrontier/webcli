@@ -30,7 +30,9 @@ def workdir(tmp_path, monkeypatch):
     work = tmp_path / "work"  # beside conftest's WEBCLI_HOME (tmp_path/home), not around it
     work.mkdir()
     monkeypatch.chdir(work)
+    sites.reload()
     yield work
+    sites.reload()  # the registry is cached per process: don't hand this test's tools to the next test
     for name in [m for m in sys.modules if m.startswith(("webcli_tool_", "_webcli_test_"))]:
         del sys.modules[name]
 
@@ -313,8 +315,8 @@ def test_dev_runs_the_tool_as_if_installed(workdir, monkeypatch):
     calls = []
 
     async def fake_call(ident, site, op, *args, **kwargs):
-        fn = daemon.site_op(ident, site, op)  # resolves through the registry, as the daemon does
-        calls.append((ident.id, site, fn.__module__, fn.__name__, args, daemon.enabled()))
+        daemon.site_op(ident, site, op)  # resolves through the registry and core's trust checks, as the daemon does
+        calls.append((ident.id, site, op, args, daemon.enabled()))
         return [{"kind": "heading", "text": "httpbin", "url": None}]
 
     monkeypatch.setattr(daemon, "call", fake_call)
@@ -322,8 +324,8 @@ def test_dev_runs_the_tool_as_if_installed(workdir, monkeypatch):
     result = run("dev", "toyhttp", "--", "page", "--limit", "5", "--format", "json")
     assert result.exit_code == 0, result.output
     assert out(result) == [{"kind": "heading", "text": "httpbin", "url": None}]
-    assert calls == [("toyhttp:default", "toyhttp", "webcli_tool_toyhttp.fetch", "page", (5,), False)]
-    assert "toyhttp" not in sites.registry()
+    assert calls == [("toyhttp:default", "toyhttp", "page", (5,), False)]
+    assert sites.tier_of("toyhttp") == sites.COMMUNITY and sites.hosts_limit("toyhttp") == ("httpbin.org",)
 
     edit(folder / "webcli_tool_toyhttp" / "cli.py", "Max rows.", "Max rows, edited.")
     assert "Max rows, edited." in run("dev", "toyhttp", "page", "--help").stdout
@@ -332,6 +334,14 @@ def test_dev_runs_the_tool_as_if_installed(workdir, monkeypatch):
 def test_dev_without_a_tool_says_how_to_make_one(workdir):
     result = run("dev", "nope", "--", "page")
     assert result.exit_code == 7 and "webcli new nope" in result.stderr
+
+
+def test_dev_refuses_a_tool_core_skipped(workdir):
+    folder = make()
+    edit(folder / "webcli-tool.toml", 'version = "0.1.0"', 'version = "0.2.0"')
+    result = run("dev", "toyhttp", "--", "page")
+    assert result.exit_code == 7 and "webcli didn't load the toyhttp tool" in result.stderr
+    assert "version: the adapter says '0.1.0', the manifest '0.2.0'" in result.stderr
 
 
 def test_dev_reports_a_tool_that_doesnt_load(workdir):
