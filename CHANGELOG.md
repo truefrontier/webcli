@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.18.3 (2026-11-06)
+
+A fix to `webcli gsc inspect --request-indexing`: Search Console's own reCAPTCHA check now runs. It adds no writes.
+
+### Fixed
+
+- `inspect --request-indexing --yes` let Search Console's reCAPTCHA v3 check run. REQUEST INDEXING asks reCAPTCHA
+  for a token before it sends the indexing request (`Fj3Owf`). The guard aborted reCAPTCHA's two POSTs
+  (`www.google.com/recaptcha/api2/reload` and `/clr`), so the page got only an unscored fallback token, and Google
+  refused `Fj3Owf` with error code 7 (PERMISSION_DENIED). The request-indexing policy now lets those two POSTs
+  through: https, `www.google.com`, the default port, exactly those paths. Read commands and `sitemaps submit`
+  still abort them. webcli never reads or handles the token: the page's own code mints and sends it, and Google
+  decides. In a read-only check on Nov 6, with the change, reCAPTCHA answered both POSTs with HTTP 200 and the
+  guard aborted none of its requests.
+- Error code 7 now gets a plain message: "Google refused the indexing request (PERMISSION_DENIED, code 7). Search
+  Console's reCAPTCHA check most likely rejected this automated browser. Request it by hand: <link>". Exit stays 8.
+
+### Changed
+
+- `inspect --request-indexing`: every outcome now prints its record on stdout (before: only exit 0 and 8), with a
+  new `manualUrl` field: URL Inspection for the URL in Search Console, where you can click REQUEST INDEXING by hand.
+  Every message except "Indexing requested" ends with that link. The dry run (no `--yes`) shows `manualUrl` too
+  (null without `--property`, since the property isn't known until the browser resolves it).
+- `inspect` adds `inspectUrl`, the same Search Console link.
+- "The guard blocked: ..." in error messages from Google sites now ends with "(+N more)" when more than 6 requests
+  were blocked. Before, the rest were left out without a word, and that hid the reCAPTCHA POSTs.
+- Version 0.18.3 for webcli, chromecli (and its pin), and the extension manifest. llmcli / llmcli-bare stay 0.8.1,
+  pinned to truefrontier-webcli==0.18.1.
+
 ## 0.18.2 (2026-11-06)
 
 A fix to `webcli gsc inspect --request-indexing` from its first real run, and to plain `inspect`. It adds no

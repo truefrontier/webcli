@@ -15,8 +15,9 @@ from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
 from webcli.core import browser, daemon
+from webcli.core import guard as core_guard
 from webcli.core.errors import AuthRequired, NotFound, UsageError
-from webcli.sites import registry
+from webcli.sites import google, registry
 from webcli.sites.gsc import fetch, guard, parse
 from webcli.sites.gsc.endpoints import BATCH_PATH
 
@@ -35,10 +36,10 @@ def post(*entries, rpcids=None, method="POST"):
     return method, f"{BATCH}?rpcids={ids}&source-path=/search-console", body(*entries)
 
 
-def answer(rpcid: str, payload) -> str:
-    """A batchexecute answer carrying `payload` for rpcid (None: an error envelope, code 3)."""
+def answer(rpcid: str, payload, code: int = 3) -> str:
+    """A batchexecute answer carrying `payload` for rpcid (None: an error envelope with `code`)."""
     env = (["wrb.fr", rpcid, json.dumps(payload), None, None, None, "generic"] if payload is not None
-           else ["wrb.fr", rpcid, None, None, None, [3], "generic"])
+           else ["wrb.fr", rpcid, None, None, None, [code], "generic"])
     line = json.dumps([env, ["di", 40]])
     return f")]}}'\n\n{len(line)}\n{line}\n"
 
@@ -123,6 +124,48 @@ def test_page_load_reads_refused_mixed_misshapen_or_elsewhere(req):
     assert budget.sent == {}
 
 
+RECAPTCHA = "https://www.google.com/recaptcha/api2"
+
+
+@pytest.mark.parametrize("path", ["reload", "clr"])
+def test_recaptcha_posts_only_in_the_request_indexing_policy(path):
+    budget = guard.Budget({"Fj3Owf": 1})
+    check = guard.request_indexing_check(budget)
+    for url in (f"{RECAPTCHA}/{path}", f"{RECAPTCHA}/{path}?k=SITEKEY", f"https://www.google.com:443/recaptcha/api2/"
+                                                                         f"{path}?k=SITEKEY"):
+        assert check("POST", url, None) is True
+        assert check("post", url, None) is True
+        assert guard.read_allowed("POST", url, None) is False
+        assert guard.submit_check(PROP, "https://example.com/sitemap.xml", guard.Budget({"CyYwI": 1}))(
+            "POST", url, None) is False
+    assert budget.sent == {}
+
+
+@pytest.mark.parametrize("url", [
+    "http://www.google.com/recaptcha/api2/reload",  # not https
+    "https://www.google.com:8443/recaptcha/api2/reload",  # not the default port
+    "https://user@www.google.com/recaptcha/api2/reload",
+    "https://google.com/recaptcha/api2/reload", "https://www.google.com.evil.example/recaptcha/api2/reload",
+    "https://recaptcha.net/recaptcha/api2/reload", "https://www.gstatic.com/recaptcha/api2/reload",
+    "https://search.google.com/recaptcha/api2/reload",
+    f"{RECAPTCHA}/userverify", f"{RECAPTCHA}/reload/x", f"{RECAPTCHA}/clr/", "https://www.google.com/recaptcha/api2",
+    "https://www.google.com/recaptcha/enterprise/reload", "https://www.google.com/accounts/Logout",
+])
+def test_recaptcha_posts_refused_elsewhere(url):
+    assert guard.request_indexing_check(guard.Budget({"Fj3Owf": 1}))("POST", url, None) is False
+
+
+def test_recaptcha_frame_loads_and_only_posts_pass():
+    check = guard.request_indexing_check(guard.Budget({"Fj3Owf": 1}))
+    for url in (f"{RECAPTCHA}/anchor?ar=1&k=SITEKEY", f"{RECAPTCHA}/bframe?k=SITEKEY", f"{RECAPTCHA}/webworker.js",
+                "https://www.google.com/recaptcha/api.js?render=SITEKEY",
+                "https://www.gstatic.com/recaptcha/releases/abc/recaptcha__en.js"):
+        assert check("GET", url, None) is True and guard.read_allowed("GET", url, None) is True
+    for method in ("PUT", "DELETE", "PATCH"):
+        assert check(method, f"{RECAPTCHA}/reload", None) is False
+    assert check("GET", "https://www.google.com/accounts/Logout", None) is False
+
+
 def test_a_closed_budget_lets_no_late_write_out():
     budget = guard.Budget({"Fj3Owf": 1})
     check = guard.request_indexing_check(budget)
@@ -148,6 +191,27 @@ def test_a_closed_budget_lets_no_late_write_out():
 def test_quiet_is_only_telemetry(method, url, quiet):
     assert guard.quiet(method, url) is quiet
     assert guard.READ.quiet is not None and guard.request_indexing_policy(guard.Budget({})).quiet is not None
+
+
+@pytest.mark.parametrize(("prop", "url", "out"), [
+    (PROP, "https://example.com/", "https://search.google.com/search-console/inspect"
+                                   "?resource_id=sc-domain%3Aexample.com&id=https%3A%2F%2Fexample.com%2F"),
+    ("https://www.example.org/", "https://www.example.org/a b/?q=1&r=é#top",
+     "https://search.google.com/search-console/inspect?resource_id=https%3A%2F%2Fwww.example.org%2F"
+     "&id=https%3A%2F%2Fwww.example.org%2Fa%20b%2F%3Fq%3D1%26r%3D%C3%A9%23top"),
+])
+def test_manual_url(prop, url, out):
+    assert parse.manual_url(prop, url) == out
+
+
+def test_blocked_says_how_many_more(monkeypatch):
+    monkeypatch.setattr(core_guard.state, "blocked", [f"POST a/{i}" for i in range(6)] + ["POST a/0"])
+    assert google.blocked() == " The guard blocked: POST a/0; POST a/1; POST a/2; POST a/3; POST a/4; POST a/5."
+    monkeypatch.setattr(core_guard.state, "blocked", [f"POST a/{i}" for i in range(9)] + ["POST a/8"])
+    assert google.blocked() == (" The guard blocked: POST a/0; POST a/1; POST a/2; POST a/3; POST a/4; POST a/5 "
+                                "(+3 more).")
+    monkeypatch.setattr(core_guard.state, "blocked", [])
+    assert google.blocked() == ""
 
 
 def test_describe_names_rpcids_not_payloads():
@@ -609,7 +673,7 @@ def test_inspect_polls_until_done_and_never_live_tests(page):
     p = page({"BWF8he": PROPERTIES, "RVtklb": ["JOB", 1, [60]],
               "MrNfbc": ["SEQ", ["JOB", 1, [], 2], ["JOB", 2, [], 2]], "HZPzjb": INDEXED})
     out = asyncio.run(fetch.inspect("https://example.com/"))
-    assert out["property"] == PROP and out["onGoogle"] is True
+    assert out["property"] == PROP and out["onGoogle"] is True and out["inspectUrl"] == MANUAL
     assert p.calls[1] == ("RVtklb", ["https://example.com/", None, 4, 2, PROP])
     assert [c[0] for c in p.calls].count("MrNfbc") == 2
     with pytest.raises(UsageError):
@@ -673,8 +737,8 @@ def test_inspect_skips_the_live_sitemap_when_google_knows_the_url(page, live):
 
 class RIPage(FakePage):
     """URL Inspection's page for REQUEST INDEXING. The click sends Fj3Owf through the real request-indexing policy
-    (so the guard's budget counts it) when `sends`, answers it with `fj3owf` (status, payload; None payload: an error
-    envelope), then shows `dialog` in a modal and `side` elsewhere on the page."""
+    (so the guard's budget counts it) when `sends`, answers it with `fj3owf` (status, payload[, code]; None payload:
+    an error envelope with code, default 3), then shows `dialog` in a modal and `side` elsewhere on the page."""
 
     def __init__(self, *, policy, dialog="", side="", sends=True, fj3owf=(200, [])):
         super().__init__({"BWF8he": PROPERTIES})
@@ -699,10 +763,10 @@ class RIPage(FakePage):
         method, url, data = post(("Fj3Owf", ["JOB", "ATTESTATION", None, PROP]))
         request = SimpleNamespace(method=method, url=url, post_data=data)
         if self.sends and self.policy()(request, None):
-            status, payload = self.fj3owf
+            status, payload, *code = self.fj3owf
 
             async def text():
-                return answer("Fj3Owf", payload)
+                return answer("Fj3Owf", payload, *code)
             for handler in self.handlers:
                 handler(SimpleNamespace(request=request, status=status, text=text))
         self.dialog, self.text = self.dialog_after, self.text + "\n" + self.side
@@ -731,6 +795,8 @@ def request_indexing():
 
 
 DONE = "Indexing requested\nURL was added to a priority crawl queue.\nDismiss"
+MANUAL = ("https://search.google.com/search-console/inspect?resource_id=sc-domain%3Aexample.com"
+          "&id=https%3A%2F%2Fexample.com%2F")
 FAILED = "Oops! Something went wrong\nWe had a problem submitting your indexing request. Please try again later."
 
 
@@ -741,6 +807,7 @@ def test_request_indexing_confirmed_by_the_dialog_despite_a_side_panel_error(ri_
     assert {k: out[k] for k in ("requested", "outcome", "confirmed", "fj3owfSent", "fj3owfStatus", "fj3owfError")} \
         == {"requested": True, "outcome": "confirmed", "confirmed": "dialog", "fj3owfSent": 1, "fj3owfStatus": 200,
             "fj3owfError": None}
+    assert out["manualUrl"] == MANUAL and MANUAL not in out["message"]
     assert out["message"].startswith("Indexing requested: the request left the browser (Fj3Owf sent once); Google "
                                      "answered HTTP 200; the dialog said \"Indexing requested")
 
@@ -759,16 +826,30 @@ def page_policy_is_request_indexing(p):
      "the request never left the browser (Fj3Owf not sent), so nothing was submitted"),
     ({"dialog": FAILED, "sends": False}, "not_sent", None, "never left the browser"),
     ({"dialog": "Quota Exceeded\nyou've exceeded your daily quota"}, "quota", None, "quota exceeded for today"),
+    ({"dialog": FAILED, "fj3owf": (200, None, 8)}, "quota", "code 8", "Google answered HTTP 200, error code 8"),
 ])
 def test_request_indexing_outcomes(ri_page, kwargs, outcome, error, says):
     ri_page(**kwargs)
     out = request_indexing()
     assert out["outcome"] == outcome and out["requested"] is False and out["confirmed"] is None
     assert out["fj3owfError"] == error and says in out["message"]
+    assert out["manualUrl"] == MANUAL and out["message"].endswith(MANUAL)
     if outcome == "unconfirmed":
-        assert out["fj3owfSent"] == 1 and "Google may or may not have queued it; check URL Inspection in Search " \
-                                          "Console before retrying." in out["message"]
-    assert "request sent: True" not in out["message"]
+        assert out["fj3owfSent"] == 1 and out["message"].endswith(
+            "Google may or may not have queued it; check URL Inspection in Search Console before retrying: " + MANUAL)
+    assert "request sent: True" not in out["message"] and "reCAPTCHA" not in out["message"]
+
+
+@pytest.mark.parametrize("dialog", [FAILED, DONE, ""])
+def test_request_indexing_code_7_says_google_refused_it(ri_page, dialog):
+    ri_page(dialog=dialog, fj3owf=(200, None, 7))
+    out = request_indexing()
+    assert {k: out[k] for k in ("requested", "outcome", "fj3owfSent", "fj3owfStatus", "fj3owfError", "manualUrl")} \
+        == {"requested": False, "outcome": "unconfirmed", "fj3owfSent": 1, "fj3owfStatus": 200, "fj3owfError": "code 7",
+            "manualUrl": MANUAL}
+    assert out["message"] == ("Google refused the indexing request (PERMISSION_DENIED, code 7). Search Console's "
+                              "reCAPTCHA check most likely rejected this automated browser. Request it by hand: "
+                              + MANUAL)
 
 
 def test_request_indexing_never_reads_a_body_into_its_result(ri_page):
@@ -932,15 +1013,19 @@ def test_request_indexing_refuses_without_yes(calls):
     assert out.exit_code == 2 and seen == []
     plan = json.loads(out.stdout)
     assert plan["dryRun"] is True and plan["write"] == "request_indexing" and plan["url"] == "https://example.com/page"
+    assert plan["manualUrl"] is None  # the property isn't known until the browser resolves it
     (line,) = audit_lines(home)
     assert "write=request_indexing outcome=refused" in line and "url=https://example.com/page" in line
+    out = run("inspect", "https://example.com/", "--property", "example.com", "--request-indexing")
+    assert out.exit_code == 2 and seen == [] and json.loads(out.stdout)["manualUrl"] == MANUAL
+    assert "manualUrl" not in audit_lines(home)[-1] and "search-console/inspect" not in audit_lines(home)[-1]
     assert run("inspect", "https://example.com/", "--yes").exit_code == 2  # --yes alone writes nothing
 
 
 def ri_result(outcome, sent=1, status=200, error=None):
     return {"requested": outcome == "confirmed", "url": "https://example.com/", "property": PROP, "outcome": outcome,
             "confirmed": "dialog" if outcome == "confirmed" else None, "dialog": "a dialog", "fj3owfSent": sent,
-            "fj3owfStatus": status, "fj3owfError": error, "message": f"the {outcome} message"}
+            "fj3owfStatus": status, "fj3owfError": error, "manualUrl": MANUAL, "message": f"the {outcome} message"}
 
 
 def test_request_indexing_with_yes(calls):
@@ -972,11 +1057,35 @@ def test_request_indexing_exit_codes(calls, result, code, logged):
     assert "outcome=failed" in line and logged in line
     err = json.loads(out.stderr.strip().splitlines()[-1])
     assert err["code"] == code
+    if "outcome" in result:  # every known outcome prints its record, manualUrl intact, on stdout
+        record = json.loads(out.stdout)
+        assert record["requested"] is False and record["manualUrl"] == MANUAL and record["outcome"] == result["outcome"]
+    else:
+        assert out.stdout == ""  # never a record that says requested: true with a failing exit
     if code == 8:
         assert err["error"] == "sent_unverified" and err["message"] == "the unconfirmed message"
-        assert "before retrying" in err["hint"] and json.loads(out.stdout)["requested"] is False
+        assert "before retrying" in err["hint"]
     if code == 6:
         assert err["error"] == "rate_limited" and "Fj3Owf went out once" in err["hint"]
+
+
+def test_request_indexing_code_7_record_and_hint(ri_page, calls):
+    """The exit-8 record on stdout, from fetch.request_indexing's own result (as the daemon hands it over, JSON),
+    carries Fj3Owf's HTTP status and error code."""
+    _, answers, home = calls
+    ri_page(dialog=FAILED, fj3owf=(200, None, 7))
+    answers["request_indexing"] = json.loads(json.dumps(request_indexing()))
+    out = run("inspect", "https://example.com/", "--property", PROP, "--request-indexing", "--yes", "--json")
+    assert out.exit_code == 8
+    record = json.loads(out.stdout)
+    assert (record["fj3owfStatus"], record["fj3owfError"], record["manualUrl"]) == (200, "code 7", MANUAL)
+    err = json.loads(out.stderr.strip().splitlines()[-1])
+    assert err["error"] == "sent_unverified" and err["message"].startswith("Google refused the indexing request "
+                                                                          "(PERMISSION_DENIED, code 7).")
+    assert err["message"].endswith(MANUAL) and "manualUrl" in err["hint"]
+    assert "exit=8 fj3owf=200 fj3owfError=code-7" in audit_lines(home)[-1]
+    out = run("inspect", "https://example.com/", "--property", PROP, "--request-indexing", "--yes")
+    assert out.exit_code == 8 and "fj3owfStatus" in out.stdout and "200" in out.stdout
 
 
 def test_a_failed_write_is_audited(calls, monkeypatch):

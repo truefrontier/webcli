@@ -14,7 +14,7 @@ Signed out, every command exits 4; a person runs `webcli identity login google:d
 | `webcli gsc status` | signed in or not, and how many properties it sees |
 | `webcli gsc properties` | your properties: `property`, `type` (domain / url-prefix), `permission` (owner / full / restricted), `displayName` |
 | `webcli gsc pages PROPERTY [--examples N] [--sitemap all\|SITEMAP_URL] [--indexed]` | the Page indexing report: `filter`, `indexed`, `notIndexed`, `total`, `lastUpdated` (`asOf` is the same), `stale`, `staleReasons`, `warning`, and each not-indexed reason (`reason`, `source`, `pages`, `examples` with `lastCrawled`, `examplesAvailable`, `examplesTruncated`); with `--indexed`, also `indexedExamples`, `indexedExamplesAvailable`, `indexedExamplesTruncated`. `--examples` default 5, max 1000, 0 skips them |
-| `webcli gsc inspect URL [--property P] [--check-live-sitemap \| --no-live-sitemap]` | URL Inspection's indexed data: `onGoogle`, `verdict`, `coverageState`, `lastCrawl`, `crawledAs`, `crawlAllowed`, `pageFetch`, `userCanonical`, `googleCanonical`, `inSitemap`, `sitemaps`, `referringUrls`, `recheckedAfterUnknown`, `notes`; with `--check-live-sitemap` (or when inspect checks the live sitemap by itself, below), also `submittedSitemaps`, `inLiveSitemap`, `liveSitemaps`, `liveSitemapsRead`, `liveSitemapUrls`, `liveSitemapErrors` |
+| `webcli gsc inspect URL [--property P] [--check-live-sitemap \| --no-live-sitemap]` | URL Inspection's indexed data: `onGoogle`, `verdict`, `coverageState`, `lastCrawl`, `crawledAs`, `crawlAllowed`, `pageFetch`, `userCanonical`, `googleCanonical`, `inSitemap`, `sitemaps`, `referringUrls`, `recheckedAfterUnknown`, `notes`, `inspectUrl` (the same URL Inspection in Search Console, to open); with `--check-live-sitemap` (or when inspect checks the live sitemap by itself, below), also `submittedSitemaps`, `inLiveSitemap`, `liveSitemaps`, `liveSitemapsRead`, `liveSitemapUrls`, `liveSitemapErrors` |
 | `webcli gsc performance PROPERTY [--start D] [--end D] [--dimension query\|page\|date] [--limit N]` | web search over the range: `--json` gives `{property, searchType, start, end, dimension, lastUpdated, totals: {clicks, impressions, ctr, position}, rows, rowsTruncated}`; rows hold `clicks`, `impressions`, `ctr` (0..1), `position` per query, page, or day. Default the 28 days ending yesterday, `--dimension query`, `--limit 25` (max 1000) |
 | `webcli gsc sitemaps PROPERTY` | submitted sitemaps: `status`, `submitted`, `lastRead`, `discoveredPages`, `errors`, `warnings` |
 | `webcli gsc sitemaps submit PROPERTY SITEMAP_URL --yes` | WRITE: submit one sitemap, then read the list back |
@@ -114,7 +114,36 @@ Both are gated behind `--yes` (alias `--confirm`). Without it, a write contacts 
 - `inspect URL --request-indexing --yes` clicks REQUEST INDEXING in Search Console's own URL Inspection page.
   Google mints the request's attestation in the page, so webcli drives the page instead of making the call
   itself, and never sees the attestation. Google runs a live test first, which takes a minute or two. The guard
-  allows one indexing request (`Fj3Owf`) per run, and blocks every other write the page tries.
+  allows one indexing request (`Fj3Owf`) per run, and blocks every other write the page tries. Without `--yes`, the
+  plan also shows `manualUrl` (below; null without `--property`).
+
+### The reCAPTCHA step
+
+Before it sends `Fj3Owf`, Search Console's REQUEST INDEXING asks Google's reCAPTCHA v3 for a token: it loads
+`www.google.com/recaptcha/api.js` with Search Console's site key and calls `grecaptcha.execute(key, {action:
+"submit"})`. The token goes into `Fj3Owf`. reCAPTCHA's own frame posts to two paths on `www.google.com`:
+`/recaptcha/api2/reload` and `/recaptcha/api2/clr`.
+
+The request-indexing policy lets those two POSTs through (https, `www.google.com`, the default port, exactly those
+paths, any query; `RECAPTCHA_POSTS` in `endpoints.py`). Read commands and `sitemaps submit` still abort them.
+reCAPTCHA's scripts and frame (`api.js`, `anchor`, `webworker.js`, `www.gstatic.com/recaptcha/...`) are plain GETs
+on Google's hosts, which every policy allows.
+
+This is not a workaround. webcli never reads, handles, or stores the token: the page's own code mints it and the
+page sends it. Google's check runs as it does for a person, and Google decides. Up to 0.18.2 the guard aborted the
+two POSTs. The page then got only an unscored fallback token, and Google refused `Fj3Owf` with error code 7.
+
+Google may still refuse a headless browser. Then `Fj3Owf` comes back with error code 7 (gRPC PERMISSION_DENIED),
+the command exits 8, and the message says:
+
+> Google refused the indexing request (PERMISSION_DENIED, code 7). Search Console's reCAPTCHA check most likely
+> rejected this automated browser. Request it by hand: https://search.google.com/search-console/inspect?...
+
+Then request indexing is manual: open `manualUrl` (URL Inspection for that URL, in that property) in your own
+browser and click REQUEST INDEXING. Don't retry with webcli: it would most likely be refused again.
+
+Attempts that reach Google likely count against the property's daily request-indexing quota, even the ones Google
+refuses. Every run that sends `Fj3Owf` may use one up.
 
 ### Did Google take the indexing request?
 
@@ -129,13 +158,21 @@ webcli trusts only Google's own answer. It reads two things:
 |---|---|---|
 | The dialog says "Indexing requested", and Fj3Owf's answer (when webcli saw it) is HTTP 200 with no error | 0 | `{"requested": true, "outcome": "confirmed", "confirmed": "dialog", "fj3owfStatus": 200, ...}` |
 | Google's daily quota ("Quota Exceeded", or error code 8) | 6 | error `rate_limited` |
-| Fj3Owf went out, but the dialog says "Something went wrong", Google answered with an error, or no result showed in 240 s | 8 | error `sent_unverified`; the record (`"requested": false`, `fj3owfStatus`, `fj3owfError`, `dialog`) on stdout |
+| Fj3Owf went out, but the dialog says "Something went wrong", Google answered with an error (code 7: see above), or no result showed in 240 s | 8 | error `sent_unverified` |
 | Fj3Owf never went out (for example, the live test said "Indexing request rejected") | 5 | error: nothing was submitted |
+
+Every outcome prints its record on stdout (`requested`, `outcome`, `confirmed`, `dialog`, `fj3owfSent`,
+`fj3owfStatus`, `fj3owfError`, `manualUrl`, `message`), and the error on stderr. `manualUrl` is URL Inspection for
+the URL in Search Console:
+`https://search.google.com/search-console/inspect?resource_id=<property>&id=<URL>`, both URL-encoded. Every message
+except "Indexing requested" ends with it. Error text goes through webcli's redaction, which can blank out a URL or
+property that contains digits, so take the link from the stdout record.
 
 The message says plainly what happened, for example: "Search Console didn't confirm the indexing request: the
 request left the browser (Fj3Owf sent once); Google answered HTTP 200, error code 3; the dialog said "Oops!
 Something went wrong ...". Google may or may not have queued it; check URL Inspection in Search Console before
-retrying." On exit 8, don't send the request again until you have looked.
+retrying: https://search.google.com/search-console/inspect?..." On exit 8, don't send the request again until
+you have looked.
 
 If no modal dialog is open, the words "Indexing requested" elsewhere on the page count only when Fj3Owf's answer
 was HTTP 200 with no error (`"confirmed": "page"`).
@@ -174,7 +211,10 @@ captcha.
 The request-indexing policy also lets Search Console's page load as it does for a person: its own URL Inspection
 reads, the live test, and `oGVhvf` and `gydQ5d`. Those two go through only in calls of their own, each with a
 `[property]` payload. Search Console's own code marks both read-only. They fire when the page loads, before the
-click, so they aren't part of REQUEST INDEXING itself.
+click, so they aren't part of REQUEST INDEXING itself. It also lets reCAPTCHA's two POSTs through (see "The
+reCAPTCHA step").
+
+When more than 6 requests were blocked, "The guard blocked: ..." in an error lists 6 and ends with "(+N more)".
 
 | RPC | Command |
 |---|---|
