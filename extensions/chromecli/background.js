@@ -31,7 +31,7 @@ import {
 } from "./recorder.js";
 
 const HOST = "com.truefrontier.chromecli";
-const VERSION = chrome.runtime.getManifest().version;
+const VERSION = chrome.runtime.getManifest().version_name || chrome.runtime.getManifest().version;  // webcli's, rc included
 const AUDIT_MAX = 200;
 // page.scroll (0.10.2) is a read op: it moves a scroll position on a Read or Act tab, never prompts, never gated.
 const READ_OPS = ["status", "tabs.list", "tabs.show", "tabs.read", "tabs.screenshot", "history.search", "page.wait",

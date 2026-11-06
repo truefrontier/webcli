@@ -14,6 +14,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_rows,
     select_fields,
@@ -73,6 +74,7 @@ def _one(recording_id: str) -> dict:
 out_option = click.option("-o", "--output", "out", default=".", show_default=True, help="Directory to write into.")
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -84,6 +86,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--id-only", is_flag=True, help="Print only recording ids, one per line.")
 @agent_output_options()
@@ -98,6 +101,7 @@ def list_cmd(id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("recording_id")
 @agent_output_options()
@@ -112,6 +116,7 @@ def info_cmd(recording_id, fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query")
 @click.option("--id-only", is_flag=True, help="Print only recording ids, one per line.")
@@ -129,6 +134,7 @@ def search_cmd(query, id_only, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("transcript")
 @click.argument("recording_id")
 @out_option
@@ -149,6 +155,7 @@ def transcript_cmd(recording_id, out, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("download")
 @click.argument("recording_id")
 @out_option
@@ -159,6 +166,7 @@ def download_cmd(recording_id, out, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("sync")
 @click.option("-o", "--output", "out", default="./recorder-backup", show_default=True,
               help="Directory to back up into (transcripts/ and audio/ under it).")

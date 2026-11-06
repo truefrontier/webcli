@@ -6,6 +6,7 @@ decides the order, the names, and what to skip; this module turns one tool folde
         webcli-tool.toml          webcli_tool_<name>/ (whose __init__ holds ADAPTER = Site(...))
         webcli_tool_<name>/
         .disabled                 present: the tool is off (`webcli tools disable`); its code is never imported
+        .installed.json           what install pinned: version, commit, sha256 (`webcli sites` rechecks the files)
       dev.toml                    in-progress tools (`webcli new`): [<name>] path = "/abs/path/webcli-tool-<name>"
       grants.toml                 identity grants (core/grants.py)
       index-cache.json            the library's index.json, cached; its "revoked" list (core/revoked.py)
@@ -23,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -30,7 +32,7 @@ from typing import Callable, NamedTuple
 
 import click
 
-from webcli.core import config, manifest_schema, revoked
+from webcli.core import config, manifest_schema, output, revoked
 from webcli.core.errors import ConfigError
 from webcli.core.output import EXIT_OK, emit_json, warn
 from webcli.sites.base import Site
@@ -38,6 +40,7 @@ from webcli.sites.base import Site
 DIR_NAME = "tools"
 DEV_FILE = "dev.toml"
 DISABLED = ".disabled"
+INSTALLED = ".installed.json"  # what install pinned: version, commit, sha256, index, installedAt
 OFF_ENV = "WEBCLI_NO_TOOLS"  # "1": load no community tools at all (a way out when one hangs at import)
 
 try:
@@ -98,6 +101,49 @@ def candidates() -> list[Candidate]:
     return installed + _dev_tools()
 
 
+def installed_record(folder: Path) -> dict:
+    """What `webcli tools install` pinned for the tool in `folder` ({} when there's no readable record)."""
+    try:
+        data = json.loads((folder / INSTALLED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def provenance(candidate: Candidate, granted: dict[str, list[str]]) -> dict:
+    """Where a community tool came from and what vouches for it, for `webcli sites`: read from its manifest, install
+    record, the cached library index, grants.toml, and the revoked lists; none of its code is imported.
+
+    verified is true only for an installed tool the cached index marks verified at exactly the version, commit, and
+    sha256 install pinned, whose files on disk still hash to that sha256. A dev tool is never verified."""
+    name, folder = candidate.name, candidate.folder
+    try:
+        version = manifest_schema.load(folder).version
+    except ConfigError:
+        version = None
+    record = installed_record(folder) if candidate.source == "installed" else {}
+    why = revoked.reason(name, version)
+    return {"source": candidate.source, "verified": not why and _verified(candidate, version, record),
+            "commit": record.get("commit"), "sha256": record.get("sha256"), "grants": granted.get(name, []),
+            "revoked": why or False, "disabled": is_disabled(folder)}
+
+
+def _verified(candidate: Candidate, version: str | None, record: dict) -> bool:
+    from webcli.core import index_client
+
+    if candidate.source != "installed" or version is None:
+        return False
+    index = index_client.cached()
+    entry = index.tools.get(candidate.name) if index else None
+    if entry is None or not entry.verified or (entry.version, entry.version, entry.commit, entry.sha256) != \
+            (version, record.get("version"), record.get("commit"), record.get("sha256")):
+        return False
+    try:
+        return index_client.tree_sha256(candidate.folder, added=(INSTALLED, DISABLED)) == entry.sha256
+    except (ConfigError, OSError):
+        return False
+
+
 def _import(name: str, folder: Path) -> object:
     """webcli_tool_<name>.ADAPTER, imported from `folder` by path. Any earlier copy (and its submodules) is dropped
     first, so a reload sees the tool's current code."""
@@ -155,12 +201,47 @@ def guarded_cli(site: Site) -> Callable[[], click.Command]:
             if isinstance(group, click.Group):
                 for verb in site.writes:
                     _gate(group, verb, site.name)
+                _declare_effects(group, site)
+            else:
+                output.set_effects(group, None)
             return group
         except Exception as exc:
             warn(f"webcli: the {site.name} tool's commands didn't load: {exc}")
             return _broken(site.name, exc)
 
     return cli
+
+
+def _declare_effects(group: click.Group, site: Site) -> None:
+    """Each command's effects, from the manifest (site's verbs, writes, and sends_to_people match it by now), over
+    whatever the tool's code set: a write is a dry run unless --confirm (_gate), a read never writes, core's
+    agent-help reads. Any other command the manifest doesn't name is UNDECLARED, the worst case. A tool whose groups
+    can turn --confirm on without it being typed (an env var prefix, a default_map) writes "always"."""
+    implicit = any(output.implicit(g) for g in (group, *_subgroups(group)))
+    decided: dict[int, output.Effects | None] = {}
+    for path, _aliases, command in output.leaves(group, hidden=True):
+        verb = " ".join(path)
+        if verb in site.writes and getattr(command, "_webcli_gated", False):
+            sends = verb in site.sends_to_people
+            declared = output.Effects("always", sends=sends) if implicit else \
+                output.Effects("with_flag", via=("confirm",), sends=sends)
+        elif verb in site.verbs and verb not in site.writes:
+            declared = output.Effects()
+        elif verb == "agent-help" and getattr(command, output.CORE_AGENT_HELP, False):
+            declared = output.Effects()
+        else:
+            declared = None
+        if id(command) in decided and decided[id(command)] != declared:
+            declared = None  # one command under two paths that disagree: neither answer holds for both
+        decided[id(command)] = declared
+        output.set_effects(command, declared)
+
+
+def _subgroups(group: click.Group):
+    for command in group.commands.values():
+        if isinstance(command, click.Group):
+            yield command
+            yield from _subgroups(command)
 
 
 def _broken(name: str, exc: Exception) -> click.Command:

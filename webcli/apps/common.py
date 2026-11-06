@@ -10,7 +10,7 @@ import click
 from webcli.core import browser, daemon, guard, identities, output
 from webcli.core.errors import ConfigError
 from webcli.core.identities import Identity
-from webcli.core.output import EXIT_AUTH, EXIT_OK, EXIT_USAGE, agent_output_options, die, emit_json, emit_rows
+from webcli.core.output import EXIT_AUTH, EXIT_OK, EXIT_USAGE, agent_output_options, die, effects, emit_json, emit_rows
 from webcli.core.redact import redact_text
 
 
@@ -83,6 +83,7 @@ def run_serve(ident: Identity, *, show_status: bool, stop: bool, install_launchd
 
 
 def serve_command() -> click.Command:
+    @effects("with_flag", via=("install_launchd", "uninstall_launchd"), human=True, local_setup=True)
     @click.command("serve")
     @click.option("--identity", "identity_id", metavar="PROVIDER:ACCOUNT", required=True,
                   help="The identity whose daemon to run or manage, e.g. google:default.")
@@ -125,6 +126,7 @@ def identity_group() -> click.Group:
     def group() -> None:
         """Logged-in browser profiles (provider:account). Only `login` ever shows a window."""
 
+    @effects("never")
     @group.command("list")
     @agent_output_options()
     def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
@@ -136,6 +138,7 @@ def identity_group() -> click.Group:
                   noun="identities", fmt=fmt, compact=compact, select=select, quiet=quiet, as_csv=as_csv)
         raise SystemExit(EXIT_OK)
 
+    @effects("always", human=True, window=True, local_setup=True)
     @group.command("login")
     @click.argument("identity_id", metavar="PROVIDER:ACCOUNT")
     @click.option("--timeout", default=600, show_default=True, type=click.IntRange(min=10), help="Seconds to wait.")
@@ -144,6 +147,7 @@ def identity_group() -> click.Group:
         command that shows a window by itself; never run it unattended."""
         login_and_report(identities.parse(identity_id), timeout)
 
+    @effects("never")
     @group.command("status")
     @click.argument("identity_id", metavar="[PROVIDER:ACCOUNT]", required=False)
     @click.option("--no-browser", is_flag=True, help="Don't check sign-in with a (headless) Chrome.")
@@ -186,6 +190,7 @@ def doctor_command() -> click.Command:
     from webcli.chromecli import doctor as chromecli_doctor
     from webcli.core import config, hardening
 
+    @effects("with_flag", via=("fix",), local_setup=True)
     @click.command("doctor")
     @click.option("--fix", is_flag=True, help="Re-apply the H4 hardening to the data home first.")
     @click.option("--no-browser", is_flag=True, help="Don't check sign-in with a (headless) Chrome.")

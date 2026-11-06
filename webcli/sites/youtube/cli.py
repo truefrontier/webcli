@@ -16,6 +16,7 @@ from webcli.core.output import (
     agent_output_options,
     confirm_write,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_md,
@@ -109,6 +110,7 @@ def _cell(row: dict, col: str) -> str:
     return str(row.get(col) or "")
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -120,6 +122,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("history")
 @click.option("--limit", default=None, type=click.IntRange(min=1),
               help=f"Max rows. Default {DEFAULT_LIMIT}, or no cap with --since (pages back to the cutoff).")
@@ -196,6 +199,7 @@ def _sub_cell(row: dict, col: str) -> str:
     return truncate(row.get(col), 40)
 
 
+@effects("never")
 @group.command("subs")
 @json_flag
 @agent_output_options()
@@ -219,6 +223,7 @@ def _since_text(ctx: click.Context, param: click.Parameter, value: str | None) -
     return value
 
 
+@effects("never")
 @group.command("uploads")
 @click.option("--since", default=None, callback=_since_text, help="Only uploads newer than 48h / 3d / 1w or an ISO date.")
 @click.option("--limit", default=DEFAULT_LIMIT, show_default=True, type=click.IntRange(1, 500), help="Max videos.")
@@ -235,6 +240,7 @@ def uploads_cmd(since, limit, include_shorts, fmt, compact, select, quiet, as_cs
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("home")
 @click.option("--limit", default=DEFAULT_LIMIT, show_default=True, type=click.IntRange(1, 500), help="Max videos.")
 @click.option("--include-shorts", is_flag=True, help="Keep Shorts and Shorts shelves (dropped by default).")
@@ -255,6 +261,7 @@ def playlist_group() -> None:
     """Create a playlist (a dry run unless --confirm)."""
 
 
+@effects("with_flag", via=("confirm",))
 @playlist_group.command("create")
 @click.argument("videos", nargs=-1, required=True, metavar="VIDEO...")
 @click.option("--title", required=True, help="The playlist's title.")

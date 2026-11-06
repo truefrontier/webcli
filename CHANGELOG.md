@@ -1,8 +1,44 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc2 / llmcli 0.9.0rc2 (2026-11-06)
+
+Second release candidate. Every command now says what it can do besides read, so a program deciding what an agent
+may run (a policy wrapper) can read the facts instead of keeping its own list. Still a **pre-release**:
+`pip install --pre truefrontier-webcli==1.0.0rc2`. Everything is additive; older readers ignore the new keys.
+
+### Added
+
+- **Command effects (`effectsApi: 1`)** in `agent-help --format json` for webcli, llmcli, chromecli, and every
+  site's own agent-help. Each command has `effects`: `writes` (`never`, `with_flag`, `always`), `writeFlags`
+  (every spelling, aliases included), `sendsToPeople`, `humanOnly`, `opensWindow`, and `changesLocalSetup`.
+  Built-ins declare them next to each command (`@effects`). A community tool's come from its manifest, never its
+  code. A command that declares nothing reports the worst case (`writes: "always"`, everything true,
+  `undeclared: true`), never `never`. Logins, `serve`, `aa config set-key`, `new`, `dev`, `test`, `lint`,
+  `submit`, and the `tools` commands that change anything are `humanOnly`. `tools` changes and
+  `feed schedule install|remove` are `changesLocalSetup`. docs/adapter-api-v1.md has the contract.
+- **`webcli sites --format json` says where each site came from**: `source` (`builtin`, `installed`, `dev`, from
+  the folder core actually loaded), `verified` (only for an installed tool whose files still match the
+  library's verified pin), `commit`, `sha256`, `grants` (from grants.toml), `revoked`, and `disabled`. A new
+  `skipped` list shows the community tools core didn't load and why, read without importing their code.
+- **Built-in sites set `Site.writes` and `sends_to_people`** from the same review, so `webcli sites` and the
+  library's catalog of built-ins show which verbs write (gsc `submit_sitemap`/`request_indexing`, notebooklm
+  `add_sources`/`ask`/`create`/`generate`, and so on) instead of `writes: false` everywhere.
 
 ### Changed
+
+- `notebooklm ask` (webcli and llmcli) is declared a write (`always`): NotebookLM keeps the question and answer in
+  the notebook's chat history. The chat sites' `ask`/`-p` are writes too, and Muse's sends to people (it's an agent).
+
+### Fixed
+
+- **chromecli's version check no longer reports a mismatch forever on a release candidate.** Chrome only takes a
+  numeric extension `version`, so it stays 0.18.3 (same key, same extension ID). The manifest now also has
+  `version_name` set to webcli's version, and the extension reports that, so `chromecli status` and `doctor` match
+  once the extension is reloaded.
+- webcli 1.0.0rc1 refused the library's current index (it lists the built-ins) and kept its old cache, so the
+  revoked list stopped refreshing. 1.0.0rc2 reads it, and a test pins that against a copy of the live index.
+
+### Changed (the library catalog)
 
 - **`webcli tools search` lists the official built-ins.** The library's `index.json` now catalogs webcli's
   18 official data sites (loom, gmail, amazon, ...) as `tier: "official"`, `builtin: true` entries, so

@@ -41,4 +41,6 @@ ADAPTER = Site(
            "posts read": Strategy.COOKIE},
     login=_login,
     status_op="status",
+    writes=frozenset({"messages send", "post create"}),
+    sends_to_people=frozenset({"messages send", "post create"}),
 )

@@ -41,6 +41,7 @@ from webcli.core.output import (
     agent_output_options,
     confirm_write,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -304,6 +305,7 @@ def group() -> None:
     output.env_format()
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -338,6 +340,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--active", is_flag=True, help="Only the active tab of the last-focused window (if shared).")
 @click.option("--all", "all_", is_flag=True, help="Also unshared tabs, as metadata only (share null); denied origins "
@@ -352,6 +355,7 @@ def list_cmd(active, all_, fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("show")
 @tab_options
 @agent_output_options(rows=False)
@@ -365,6 +369,7 @@ def show_cmd(tab, active, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("read")
 @tab_options
 @click.option("--as", "as_", type=click.Choice(["text", "md"]), default="text", show_default=True,
@@ -426,6 +431,7 @@ def _write_image(path: Path, data) -> int:
 STALE_FRAME_MS = 2000  # an older stream frame means Chrome stopped painting the tab (its window is minimized)
 
 
+@effects("never")
 @group.command("screenshot")
 @tab_options
 @click.option("-o", "--output", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
@@ -582,6 +588,7 @@ def _by(value: str | None) -> str | int | None:
     return int(v)
 
 
+@effects("never")
 @group.command("scroll")
 @tab_options
 @click.option("--by", "by", default=None, help="page (the target's height minus 40px; the default) or N pixels.")
@@ -629,6 +636,7 @@ def _since_ms(value: str | None) -> int | None:
     return int(when.timestamp() * 1000)
 
 
+@effects("never")
 @group.command("history")
 @click.option("--query", "query", default="", help="Text to match in titles and URLs.")
 @click.option("--limit", type=click.IntRange(1, 1000), default=50, show_default=True)
@@ -821,6 +829,7 @@ def _probe(op: str, args: dict) -> dict:
     return res
 
 
+@effects("with_flag", via=("confirm",), window=True)
 @group.command("open")
 @click.argument("url")
 @click.option("--active", is_flag=True, help="Open in the foreground (default: a background tab).")
@@ -835,6 +844,7 @@ def open_cmd(url, active, window, dry_run, confirm) -> None:
              dry_run, confirm)
 
 
+@effects("with_flag", via=("confirm",), window=True)
 @group.command("focus")
 @click.argument("tab", type=int)
 @write_options
@@ -844,6 +854,7 @@ def focus_cmd(tab, dry_run, confirm) -> None:
     _execute("tab.focus", {"tab": tab}, {"op": "focus", "tab": tab, "needs": "Share-act or bot-opened"}, dry_run, confirm)
 
 
+@effects("with_flag", via=("confirm",))
 @group.command("close")
 @click.argument("tab", type=int)
 @write_options
@@ -852,6 +863,7 @@ def close_cmd(tab, dry_run, confirm) -> None:
     _execute("tab.close", {"tab": tab}, {"op": "close", "tab": tab, "needs": "Share-act or bot-opened"}, dry_run, confirm)
 
 
+@effects("with_flag", via=("confirm",))
 @group.command("navigate")
 @click.argument("tab", type=int)
 @click.argument("url")
@@ -872,6 +884,7 @@ def navigate_cmd(tab, url, expect_origin, expect_url, dry_run, confirm) -> None:
              dry_run, confirm)
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("click")
 @page_options
 @write_options
@@ -883,6 +896,7 @@ def click_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, e
           verify_text, dry_run, confirm)
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("fill")
 @page_options
 @click.option("--value", default=None, help="The new value (replaces the field's content).")
@@ -899,6 +913,7 @@ def fill_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, ex
           verify_text, dry_run, confirm, value=v, plan_extra={"value": _digest(v)})
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("type")
 @page_options
 @click.option("--value", default=None, help="Text to type (appended, key by key).")
@@ -914,6 +929,7 @@ def type_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, ex
           verify_text, dry_run, confirm, value=v, plan_extra={"value": _digest(v)})
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("select")
 @page_options
 @click.option("--value", required=True, help="The option's value, or its visible label.")
@@ -925,6 +941,7 @@ def select_cmd(tab, selector, ref, target_text, role, find, jev, expect_origin, 
           verify_text, dry_run, confirm, value=value, plan_extra={"value": _digest(value)})
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("press")
 @click.argument("key")
 @page_options
@@ -937,6 +954,7 @@ def press_cmd(key, tab, selector, ref, target_text, role, find, jev, expect_orig
           verify_text, dry_run, confirm, optional_target=True, key=key, plan_extra={"key": key})
 
 
+@effects("never")
 @group.command("wait")
 @click.option("--tab", type=int, required=True, help="Chrome tab id (Share-read is enough).")
 @click.option("--selector", default=None, help="Wait for a visible element matching this CSS selector.")
@@ -965,6 +983,7 @@ def wait_cmd(tab, selector, text, url_prefix, timeout, expect_origin, expect_url
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("find")
 @click.option("--tab", type=int, required=True, help="Chrome tab id (Share-read is enough).")
 @click.argument("intent")
@@ -988,6 +1007,7 @@ def find_cmd(tab, intent, jev, limit, fmt, compact, select, as_csv, quiet) -> No
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("eval")
 @click.option("--tab", type=int, required=True, help="Chrome tab id.")
 @click.option("--code", default=None, help="JavaScript to run.")
@@ -1127,6 +1147,7 @@ _TAB_HELP = ("0.11.5: the tab the grant is for (shared or bot-opened, on --origi
              "chromecli-visible tab on that origin, if any.")
 
 
+@effects("with_flag", via=("confirm",), local_setup=True)
 @grant_group.command("add")
 @click.option("--op", "op", type=click.Choice(GRANT_OPS), required=True, help="The action Kevin approved.")
 @click.option("--origin", required=True, help="The site, e.g. https://admin.shopify.com (exact origin).")
@@ -1200,6 +1221,7 @@ def _batch_spec(raw, where: str, defaults: dict) -> dict:
     return kw
 
 
+@effects("with_flag", via=("confirm",), local_setup=True)
 @grant_group.command("add-batch")
 @click.option("--file", "file", type=click.Path(path_type=Path, dir_okay=False, allow_dash=True), default=None,
               help="JSON list of grants ('-' = stdin), e.g. [{\"target-text\": \"Install\", \"role\": \"button\"}, "
@@ -1267,6 +1289,7 @@ def grant_add_batch_cmd(file, grant_specs, op, origin, frame_origin, tab, partia
     _execute("grant.add_batch", args, plan, dry_run, confirm, timeout=max(bridge.timeout_seconds(), 60))
 
 
+@effects("never")
 @grant_group.command("list")
 @agent_output_options(rows=False)
 def grant_list_cmd(fmt, quiet) -> None:
@@ -1290,6 +1313,7 @@ def grant_list_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",), local_setup=True)
 @grant_group.command("revoke")
 @click.argument("grant_id", required=False)
 @click.option("--all", "all_", is_flag=True, help="Revoke every pre-approval.")
@@ -1303,6 +1327,7 @@ def grant_revoke_cmd(grant_id, all_, dry_run, confirm) -> None:
              timeout=min(bridge.timeout_seconds(), 15))
 
 
+@effects("with_flag", via=("confirm",), local_setup=True)
 @group.command("install-host")
 @click.option("--extension-id", default=EXTENSION_ID, show_default=True, help="The extension ID to allow.")
 @write_options
@@ -1329,6 +1354,7 @@ def install_host_cmd(extension_id, dry_run, confirm) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",), local_setup=True)
 @group.command("uninstall-host")
 @write_options
 def uninstall_host_cmd(dry_run, confirm) -> None:
@@ -1449,6 +1475,7 @@ def record_group() -> None:
     `record status` lists them. While a recording runs, `screenshot` works even when the tab is covered."""
 
 
+@effects("with_flag", via=("confirm",), window=True)
 @record_group.command("start")
 @click.argument("tab", type=int)
 @click.option("--out", "out", type=click.Path(path_type=Path, dir_okay=False), default=None,
@@ -1528,6 +1555,7 @@ def _await_popup(res: dict, wait_sec: int) -> dict:
         protocol.exit_code("confirm_timeout"), RECORD_CATCH, error="confirm_timeout", recId=rec_id)
 
 
+@effects("never")
 @record_group.command("stop")
 @click.argument("tab", type=int, required=False)
 @click.option("--all", "all_", is_flag=True, help="Stop every recording.")
@@ -1566,6 +1594,7 @@ def record_stop_cmd(tab, all_, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @record_group.command("status")
 @click.argument("tab", type=int, required=False)
 @agent_output_options()
@@ -1590,6 +1619,7 @@ def record_status_cmd(tab, fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("doctor")
 def doctor_cmd() -> None:
     """chromecli health (JSON): host manifest present + ID match, chromecli-host path, socket, extension connected."""

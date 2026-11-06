@@ -15,6 +15,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_rows,
     note,
     warn,
@@ -138,6 +139,7 @@ def _query_arg(ctx: click.Context, param: click.Parameter, value: str) -> str:
     return value.strip()
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -150,6 +152,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after this many conversations.")
 @agent_output_options()
@@ -163,6 +166,7 @@ def list_cmd(limit, **opts) -> None:
 group.add_command(list_cmd, "threads")
 
 
+@effects("never")
 @group.command("read")
 @click.argument("query", callback=_query_arg)
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Only the last N messages.")
@@ -195,6 +199,7 @@ def read_cmd(query, limit, image_out, pages, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query", callback=_query_arg)
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="Stop after this many rows.")
@@ -219,6 +224,7 @@ def search_cmd(query, limit, pages, no_numbers, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("new_ok", "confirm"), sends=True)
 @group.command("send")
 @click.option("--to", "to", required=True, multiple=True, metavar="QUERY",
               help="The conversation (its id, a name, or a number); with --new-ok, a recipient (a number or a "

@@ -36,6 +36,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     note,
@@ -44,7 +45,7 @@ from webcli.core.output import (
 )
 from webcli.sites.base import NO_IDENTITY
 
-RECORD = ".installed.json"
+RECORD = tools_registry.INSTALLED
 UPDATE_WEBCLI = "pip install --pre -U truefrontier-webcli"
 WARNING = ("A community tool is Python code that runs as you, next to your signed-in sessions. webcli holds it to the "
            "hosts, identity, and writes above, but that doesn't make a stranger's code safe: read it first.")
@@ -74,11 +75,7 @@ def _installed_names() -> list[str]:
 
 
 def _record(folder: Path) -> dict:
-    try:
-        data = json.loads((folder / RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return tools_registry.installed_record(folder)
 
 
 def _manifest(folder: Path) -> Manifest | None:
@@ -264,6 +261,7 @@ def group() -> None:
     library pins, after its files match the library's sha256 and you've seen its hosts, identity, and writes."""
 
 
+@effects("never")
 @group.command("search")
 @click.argument("query", required=False, default="")
 @agent_output_options()
@@ -290,6 +288,7 @@ def search_cmd(query: str, fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("info")
 @click.argument("name")
 @agent_output_options(formats=("text", "json"), rows=False)
@@ -319,6 +318,7 @@ def info_cmd(name: str, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("install")
 @click.argument("name")
 @click.option("--yes", "-y", "yes", is_flag=True, help="Install without asking (the manifest is still shown).")
@@ -394,6 +394,7 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     return out
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("update")
 @click.argument("name", required=False)
 @click.option("--all", "all_", is_flag=True, help="Update every installed tool; reports each one's status, exit 0.")
@@ -422,6 +423,7 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("list")
 @agent_output_options()
 def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
@@ -447,6 +449,7 @@ def list_cmd(fmt, compact, select, as_csv, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("remove")
 @click.argument("name")
 def remove_cmd(name: str) -> None:
@@ -464,6 +467,7 @@ def remove_cmd(name: str) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("grant")
 @click.argument("name")
 @click.argument("identity")
@@ -487,6 +491,7 @@ def grant_cmd(name: str, identity: str) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("revoke-grant")
 @click.argument("name")
 @click.argument("identity")
@@ -510,6 +515,7 @@ def _toggle(name: str, on: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("disable")
 @click.argument("name")
 def disable_cmd(name: str) -> None:
@@ -517,6 +523,7 @@ def disable_cmd(name: str) -> None:
     _toggle(name, False)
 
 
+@effects("always", human=True, local_setup=True)
 @group.command("enable")
 @click.argument("name")
 def enable_cmd(name: str) -> None:

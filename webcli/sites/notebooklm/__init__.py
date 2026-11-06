@@ -40,4 +40,5 @@ ADAPTER = Site(
            "add_sources": Strategy.COOKIE},
     status_op="status",
     llm_cli=_llm_cli,
+    writes=frozenset({"add_sources", "ask", "create", "generate"}),
 )

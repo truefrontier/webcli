@@ -21,6 +21,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -144,6 +145,7 @@ timeout_option = click.option("--timeout", default=TIMEOUT, show_default=True, t
                               help="Seconds to wait for the answer.")
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt: str | None, quiet: bool) -> None:
@@ -162,6 +164,7 @@ def status_cmd(fmt: str | None, quiet: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("notebooks")
 @agent_output_options()
 def notebooks_cmd(**opts) -> None:
@@ -174,6 +177,7 @@ def notebooks_cmd(**opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always")
 @group.command("ask")
 @click.argument("prompt", callback=llm.prompt_arg)
 @notebook_option
@@ -202,6 +206,7 @@ def ask_cmd(prompt, notebook, sources, chat_id, model, timeout, as_json, fmt, qu
     raise SystemExit(EXIT_OK)
 
 
+@effects("always")
 @group.command("-p")
 @click.argument("words", metavar="[PROMPT]...", nargs=-1)
 @notebook_option
@@ -236,6 +241,7 @@ def print_cmd(words, notebook, sources, chat_id, resume, timeout, prompt_file, o
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("models")
 @agent_output_options()
 def models_cmd(fmt, compact, select, as_csv, quiet) -> None:

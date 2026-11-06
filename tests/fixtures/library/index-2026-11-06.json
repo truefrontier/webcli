@@ -1,0 +1,814 @@
+{
+  "repo": "https://github.com/truefrontier/webcli-tools",
+  "archive": "https://codeload.github.com/truefrontier/webcli-tools/tar.gz/{commit}",
+  "tools": [
+    {
+      "name": "aa",
+      "version": "1.0.0rc1",
+      "summary": "Artificial Analysis LLM and TTS leaderboards: models, digest, tts, config (aanalysis parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "none",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "models",
+          "strategy": "public",
+          "writes": false
+        },
+        {
+          "name": "digest",
+          "strategy": "public",
+          "writes": false
+        },
+        {
+          "name": "tts",
+          "strategy": "public",
+          "writes": false
+        }
+      ]
+    },
+    {
+      "name": "amazon",
+      "version": "1.0.0rc1",
+      "summary": "Amazon.com, read-only: orders, order, transactions (card charges with order ids), match AMOUNT, track, wishlists, wishlist, status",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "amazon",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "orders",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "order",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "transactions",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "match",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "track",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "wishlists",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "wishlist",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "ui",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/amazon-site.md"
+    },
+    {
+      "name": "contacts",
+      "version": "1.0.0rc1",
+      "summary": "Google Contacts: list, get, search, other, labels, export, status; label add|remove (dry run unless --confirm) (gcontacts parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "get",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "other",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "labels",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "export",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "label add",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "label remove",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    },
+    {
+      "name": "facebook",
+      "version": "1.0.0rc1",
+      "summary": "Facebook friends, read-only: sync, search, about, enrich, export, status (fbc parity; local cache)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "facebook",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "sync",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "about",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "enrich",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "ui",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md"
+    },
+    {
+      "name": "gmail",
+      "version": "1.0.0rc1",
+      "summary": "Gmail filters: list, create, delete (create/delete dry run unless --confirm), status (google-gmail-cli parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "filters list",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "filters create",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "filters delete",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    },
+    {
+      "name": "gnews",
+      "version": "1.0.0rc1",
+      "summary": "Google News \"For you\", read-only: foryou (stories, by section), status",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "foryou",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/feed.md"
+    },
+    {
+      "name": "gsc",
+      "version": "1.0.0rc1",
+      "summary": "Google Search Console: properties, pages (indexing), inspect, performance, sitemaps; sitemaps submit / inspect --request-indexing only with --yes",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "properties",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "pages",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "inspect",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "performance",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "sitemaps",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "submit_sitemap",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "request_indexing",
+          "strategy": "ui",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/gsc-site.md"
+    },
+    {
+      "name": "httpbin",
+      "version": "0.1.0",
+      "summary": "httpbin.org, read-only demo: your public IP, the headers it sees, a fresh UUID. No sign-in, no browser",
+      "commit": "a16894641522657ac7ecb003abce04c3b820bfc1",
+      "sha256": "7aec67175855a0582f9f2a4dbe2deb74eeefd10c52cf81cefe0ecf4b406ff650",
+      "path": "tools/httpbin",
+      "tier": "community",
+      "verified": false
+    },
+    {
+      "name": "keep",
+      "version": "1.0.0rc1",
+      "summary": "Google Keep notes, read-only: list, get, info, search, status (google-keep-cli parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "get",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "info",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    },
+    {
+      "name": "linkedin",
+      "version": "1.0.0rc1",
+      "summary": "LinkedIn: messages list/history/read, activity, feed, posts search/from/read, boost stats, status; messages send and post create (dry run unless --confirm, and only as the expected author) (limsg parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "linkedin",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "messages list",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "messages history",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "messages read",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "messages send",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "activity comments",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "activity reactions",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "activity posts",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "activity export",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "boost list",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "boost stats",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "post create",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "feed",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "posts search",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "posts from",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "posts read",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md"
+    },
+    {
+      "name": "loom",
+      "version": "1.0.0rc1",
+      "summary": "Loom, read-only: list, info, transcript (official transcripts), status (loom-cli parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "loom",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "info",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "transcript",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/social-data-sites.md"
+    },
+    {
+      "name": "messages",
+      "version": "1.0.0rc1",
+      "summary": "Google Messages for web: list (alias threads), read, search (past the newest, by contact or number), status; send to a conversation, or a new one with --new-ok (dry run unless --confirm)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "messages",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "threads",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "read",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "send",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "ui",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/messages-site.md"
+    },
+    {
+      "name": "notebooklm",
+      "version": "1.0.0rc1",
+      "summary": "notebooklm.google.com: notebooks, sources, source text / guide, notes, ask (citations), Studio artifacts, generate (audio, video, reports, quiz, flashcards, mind map, infographic, slides, data table), download, create notebook, add sources (URLs, text, .md/.txt/.pdf files)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "notebooks",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "sources",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "source",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "notes",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "artifacts",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "ask",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "generate",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "download",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "create",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "add_sources",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/notebooklm-site.md"
+    },
+    {
+      "name": "perplexity",
+      "version": "1.0.0rc1",
+      "summary": "Perplexity Discover, read-only, signed in first (else public): discover (cards by topic), status, login",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "perplexity",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "discover",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/feed.md"
+    },
+    {
+      "name": "photos",
+      "version": "1.0.0rc1",
+      "summary": "Google Photos, read-only: list, search, info, albums, download (the original file), status (google-photos-cli parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "info",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "albums",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "download",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    },
+    {
+      "name": "recorder",
+      "version": "1.0.0rc1",
+      "summary": "Google Recorder (Pixel) recordings, read-only: list, info, search, transcript, download (audio), sync, status (google-recorder-cli parity, no MCP)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "list",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "info",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "transcript",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "download",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "sync",
+          "strategy": "intercept",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    },
+    {
+      "name": "walkie",
+      "version": "1.0.0rc1",
+      "summary": "Walkie.app meetings, transcripts, and dictations from its local SQLite: meetings, dictations, status (walkie-cli parity)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "none",
+      "hosts": [],
+      "commands": []
+    },
+    {
+      "name": "whatsapp",
+      "version": "1.0.0rc1",
+      "summary": "WhatsApp Web: chats, read, search, status, login; send (dry run unless --confirm and --expect-chat)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "whatsapp",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "chats",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "read",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "search",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "send",
+          "strategy": "ui",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "ui",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/whatsapp-site.md"
+    },
+    {
+      "name": "youtube",
+      "version": "1.0.0rc1",
+      "summary": "YouTube watch history, read-only: history (My Activity's exact times, else YouTube's day precision), subs, uploads, home (recommendations; no Shorts by default), status (ytcli parity); playlist create (dry run unless --confirm)",
+      "tier": "official",
+      "builtin": true,
+      "verified": true,
+      "requires_webcli": ">=1.0.0rc1,<2",
+      "source": "core",
+      "identity": "google",
+      "hosts": [],
+      "commands": [
+        {
+          "name": "history",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "subs",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "uploads",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "home",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "status",
+          "strategy": "cookie",
+          "writes": false
+        },
+        {
+          "name": "playlist create",
+          "strategy": "cookie",
+          "writes": false
+        }
+      ],
+      "docs": "https://github.com/truefrontier/webcli/blob/main/docs/google-data-sites.md"
+    }
+  ],
+  "revoked": []
+}

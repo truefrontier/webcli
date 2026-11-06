@@ -16,6 +16,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_json,
     note,
 )
@@ -34,6 +35,7 @@ def dev_site(name: str) -> Site:
     return registry[name]
 
 
+@effects("always", sends=True, human=True, window=True, local_setup=True)
 @click.command("dev", options_metavar="", short_help="Run a tool you're writing, as if it were installed.",
                context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
 @click.argument("name")
@@ -60,6 +62,7 @@ def _emit(record: dict, lines: list[str], fmt: str | None) -> None:
         click.echo("\n".join(lines))
 
 
+@effects("always", sends=True, human=True, window=True, local_setup=True)
 @click.command("test", options_metavar="[--format F]", short_help="Run a tool's offline tests.")
 @click.argument("name")
 @agent_output_options(rows=False)
@@ -82,6 +85,7 @@ def test_cmd(name, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("always", sends=True, human=True, window=True, local_setup=True)
 @click.command("lint", options_metavar="[--format F]", short_help="Run the library's checks on a tool.")
 @click.argument("name")
 @agent_output_options(rows=False)

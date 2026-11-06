@@ -15,7 +15,7 @@ from webcli import scaffold, sites
 from webcli.core import browser, capture, identities, manifest_schema, output
 from webcli.core.errors import UsageError
 from webcli.core.guard import host_matches
-from webcli.core.output import EXIT_API, EXIT_OK, EXIT_USAGE, agent_output_options, die, emit_json, warn
+from webcli.core.output import EXIT_API, EXIT_OK, EXIT_USAGE, agent_output_options, die, effects, emit_json, warn
 from webcli.sites.base import NO_IDENTITY
 
 CAPTURE_TIMEOUT = 600
@@ -111,6 +111,7 @@ def report(result: dict, fmt: str | None) -> None:
     click.echo("Next:\n" + "\n".join(f"  {step}" for step in result["next"]))
 
 
+@effects("always", human=True, window=True, local_setup=True)
 @click.command("new", options_metavar="[--url URL] [--identity ID] [--capture]",
                short_help="Make a new tool for a site you use.")
 @click.argument("name")

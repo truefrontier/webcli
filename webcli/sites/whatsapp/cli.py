@@ -17,6 +17,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_rows,
     note,
     warn,
@@ -126,6 +127,7 @@ LIMIT = click.option("--limit", type=click.IntRange(min=1, max=MAX_LIMIT), defau
                      help=f"Stop after this many rows (at most {MAX_LIMIT}).")
 
 
+@effects("always", human=True, window=True, local_setup=True)
 @group.command("login")
 @click.option("--timeout", default=600, show_default=True, type=click.IntRange(min=10), help="Seconds to wait.")
 def login_cmd(timeout: int) -> None:
@@ -137,6 +139,7 @@ def login_cmd(timeout: int) -> None:
     login_and_report(data.identity(), timeout)
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt, quiet) -> None:
@@ -150,6 +153,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("chats")
 @LIMIT
 @click.option("--unread", is_flag=True, help="Only chats with unread messages.")
@@ -164,6 +168,7 @@ def chats_cmd(limit, unread, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("read")
 @click.argument("chat", callback=_name_arg)
 @LIMIT
@@ -185,6 +190,7 @@ def read_cmd(chat, limit, since, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("search")
 @click.argument("text", callback=_name_arg)
 @LIMIT
@@ -199,6 +205,7 @@ def search_cmd(text, limit, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",), sends=True)
 @group.command("send")
 @click.argument("chat", callback=_name_arg)
 @click.option("--text", required=True, help=f"The message (text only, at most {MAX_TEXT} characters).")

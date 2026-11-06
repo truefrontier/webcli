@@ -27,4 +27,5 @@ ADAPTER = Site(
     ops=("status", "models", "chats", "chat", "ask"),
     verbs={"ask": Strategy.UI, "chats": Strategy.COOKIE, "models": Strategy.COOKIE, "status": Strategy.COOKIE},
     login=_login,
+    writes=frozenset({"ask"}),
 )

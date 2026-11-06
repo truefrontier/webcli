@@ -19,6 +19,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     kv_table,
@@ -86,6 +87,7 @@ def _record(title: str, data: dict, fmt: str | None) -> None:
         kv_table(title, data, out)
 
 
+@effects("never")
 @group.command("status")
 @db_options
 @agent_output_options(rows=False)
@@ -100,6 +102,7 @@ def meetings_group() -> None:
     """Meetings: list, show (alias get), transcript (aliases history, read)."""
 
 
+@effects("never")
 @meetings_group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many meetings.")
 @db_options
@@ -112,6 +115,7 @@ def meetings_list(limit, db_path, account, **opts) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @meetings_group.command("show")
 @click.argument("meeting_id", metavar="MEETING")
 @db_options
@@ -125,6 +129,7 @@ def meetings_show(meeting_id, db_path, account, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @meetings_group.command("transcript")
 @click.argument("meeting_id", metavar="MEETING")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many segments.")
@@ -156,6 +161,7 @@ def dictations_group() -> None:
     """Dictations: list."""
 
 
+@effects("never")
 @dictations_group.command("list")
 @click.option("--limit", type=click.IntRange(min=1), default=None, help="At most this many dictations.")
 @db_options

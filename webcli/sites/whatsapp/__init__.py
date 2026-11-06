@@ -35,4 +35,6 @@ ADAPTER = Site(
            "status": Strategy.UI},
     login=_login,
     status_op="status",
+    writes=frozenset({"send"}),
+    sends_to_people=frozenset({"send"}),
 )

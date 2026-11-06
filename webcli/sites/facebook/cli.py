@@ -20,6 +20,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     note,
@@ -130,6 +131,7 @@ def _enrich_person(who: Person, *, refresh: bool, web: bool) -> dict:
     return store.save_enrich(row["key"], enrich.build(row, row["about"], web=web))
 
 
+@effects("never")
 @group.command("status")
 @agent_output_options(rows=False)
 def status_cmd(fmt: str | None, quiet: bool) -> None:
@@ -141,6 +143,7 @@ def status_cmd(fmt: str | None, quiet: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("sync")
 @click.option("--limit", default=None, type=click.IntRange(min=1), help="Stop after N friends (default: all).")
 @agent_output_options(rows=False)
@@ -162,6 +165,7 @@ def sync_cmd(limit: int | None, fmt: str | None, quiet: bool) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("about")
 @click.argument("profile", metavar="ID|URL", callback=_person_arg)
 @click.option("--cached", is_flag=True, help="Print the cached About record; don't open Chrome (exit 3 if none).")
@@ -183,6 +187,7 @@ def about_cmd(profile: Person, cached: bool, fmt: str | None, quiet: bool) -> No
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("enrich")
 @click.argument("profile", metavar="ID|URL", callback=_person_arg)
 @click.option("--refresh", is_flag=True, help="Re-read the About tab from Facebook even if it's cached.")
@@ -220,6 +225,7 @@ def _enrich_hits(hits: list[dict], *, web: bool, quiet: bool) -> list[dict]:
     return [fresh.get(k, p) for k, p in zip(keys, hits)]
 
 
+@effects("never")
 @group.command("search")
 @click.option("--name", default=None, help="Name contains this (case- and accent-insensitive).")
 @click.option("--city", default=None, help="Current city, hometown, or Friends-tab line contains this.")
@@ -247,6 +253,7 @@ def search_cmd(name, city, employer, keyword, limit, do_enrich, no_web, fmt, com
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("export")
 @click.option("--format", "fmt", type=click.Choice(["json", "csv"]), default="json", show_default=True,
               help="File format.")

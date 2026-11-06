@@ -20,6 +20,7 @@ from webcli.core.output import (
     EXIT_USAGE,
     agent_output_options,
     die,
+    effects,
     emit_json,
     emit_rows,
     json_flag,
@@ -181,6 +182,7 @@ def _request_indexing(url: str, prop: str | None, plan: dict, fmt) -> None:
     die(message, EXIT_API)
 
 
+@effects("never")
 @group.command("status")
 @json_flag
 @agent_output_options(rows=False)
@@ -193,6 +195,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("properties")
 @json_flag
 @agent_output_options()
@@ -208,6 +211,7 @@ def properties_cmd(fmt, compact, select, quiet, as_csv) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("pages")
 @click.argument("prop", metavar="PROPERTY")
 @click.option("--examples", default=DEFAULT_EXAMPLES, show_default=True, type=click.IntRange(0, MAX_EXAMPLES),
@@ -252,6 +256,7 @@ def pages_cmd(prop, examples, sitemap, indexed, fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("request_indexing", "confirm"))
 @group.command("inspect")
 @click.argument("url")
 @click.option("--property", "prop", default=None, help=f"The property: {PROPERTY_HELP} Default: the one that "
@@ -297,6 +302,7 @@ def inspect_cmd(url, prop, check_live_sitemap, no_live_sitemap, request_indexing
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("performance")
 @click.argument("prop", metavar="PROPERTY")
 @click.option("--start", default=None, help="YYYY-MM-DD (default: 28 days before --end).")
@@ -341,6 +347,7 @@ def performance_cmd(prop, start, end, dimension, limit, fmt, compact, select, qu
     raise SystemExit(EXIT_OK)
 
 
+@effects("with_flag", via=("confirm",))
 @group.command("sitemaps")
 @click.argument("args", nargs=-1, metavar="PROPERTY | submit PROPERTY SITEMAP_URL")
 @click.option("--yes", "--confirm", "confirm", is_flag=True, help="Do the `submit` write.")

@@ -10,6 +10,7 @@ from webcli.core.output import (
     EXIT_OK,
     agent_output_options,
     die,
+    effects,
     emit_csv,
     emit_json,
     emit_md,
@@ -60,6 +61,7 @@ def _cell(row: dict, col: str) -> str:
     return str(row.get(col) or "")
 
 
+@effects("never")
 @group.command("status")
 @json_flag
 @agent_output_options(rows=False)
@@ -72,6 +74,7 @@ def status_cmd(fmt, quiet) -> None:
     raise SystemExit(EXIT_OK)
 
 
+@effects("never")
 @group.command("foryou")
 @click.option("--section", type=click.Choice(list(SECTIONS)), default="foryou", show_default=True,
               help="For you, or one of the page's sections.")

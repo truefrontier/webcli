@@ -236,14 +236,18 @@ def _age(path: Path) -> str:
     return f"{hours:.0f} hours ago" if hours >= 1 else "less than an hour ago"
 
 
-def tree_sha256(folder: Path) -> str:
+def tree_sha256(folder: Path, *, added: tuple[str, ...] = ()) -> str:
     """sha256 over "<path>\\0<sha256 of its bytes>\\n" for every file under `folder`, sorted by path ("/"-separated,
-    relative to folder). Links and other special files are refused: an installed tool is regular files only."""
+    relative to folder). Links and other special files are refused: an installed tool is regular files only.
+    With `added` (the top-level files install puts in a tool's folder), it hashes an installed tool as it was
+    downloaded: without those, and without the __pycache__/ folders Python adds."""
     files = []
     for path in folder.rglob("*"):
         rel = path.relative_to(folder).as_posix()
         if path.is_symlink() or not (path.is_file() or path.is_dir()):
             raise LibraryError(f"{folder}: {rel} is a link or special file; a tool holds regular files only.")
+        if added and (rel in added or "__pycache__" in path.relative_to(folder).parts):
+            continue
         if path.is_file():
             files.append((rel, path))
     digest = hashlib.sha256()

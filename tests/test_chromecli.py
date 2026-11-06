@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import struct
@@ -473,7 +474,10 @@ def test_extension_id_matches_the_committed_key():
     digest = hashlib.sha256(base64.b64decode(pub)).hexdigest()[:32]
     assert "".join(chr(ord("a") + int(c, 16)) for c in digest) == EXTENSION_ID
     assert (EXT / "EXTENSION_ID").read_text().strip() == EXTENSION_ID
-    assert manifest["version"] == __import__("webcli").__version__
+    # Chrome's `version` is 1-4 numbers, so a pre-release (1.0.0rc2) rides in `version_name`, which the extension
+    # reports as its version (background.js); a release can drop version_name and put the number in `version`.
+    assert manifest.get("version_name", manifest["version"]) == __import__("webcli").__version__
+    assert re.fullmatch(r"\d+(\.\d+){0,3}", manifest["version"])
 
 
 def test_extension_is_not_in_the_wheel():

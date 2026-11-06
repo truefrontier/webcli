@@ -24,4 +24,5 @@ ADAPTER = Site(
     verbs={"filters list": Strategy.UI, "filters create": Strategy.UI, "filters delete": Strategy.UI,
            "status": Strategy.COOKIE},
     status_op="status",
+    writes=frozenset({"filters create", "filters delete"}),
 )

@@ -8,9 +8,9 @@ import click
 from webcli import __version__, sites
 from webcli.apps import devtools_new, devtools_run, submit_cmd, tools_cmd
 from webcli.apps.common import doctor_command, identity_group, serve_command
-from webcli.core import output
+from webcli.core import grants, output
 from webcli.feed.cli import group as feed_group
-from webcli.core.output import EXIT_OK, agent_output_options, emit_json, emit_rows, resolve_format
+from webcli.core.output import EXIT_OK, agent_output_options, effects, emit_json, emit_rows, resolve_format
 from webcli.sites.llm import env_help
 
 NOTES = [
@@ -50,16 +50,21 @@ def build() -> click.Group:
         """Data sites from your own signed-in Chrome, hidden. Data home: ~/.webcli/"""
         output.env_format()
 
+    @effects("never")
     @main.command("sites")
     @agent_output_options()
     def sites_cmd(fmt, compact, select, as_csv, quiet) -> None:
         """Installed site adapters: chat AIs under llmcli, data sites under webcli; tier official (built in) or
-        community (a tool from ~/.webcli/tools)."""
-        rows = [{**site.describe(), "tier": sites.tier_of(site.name)} for site in sites.registry().values()]
+        community (a tool from ~/.webcli/tools), and where each came from (source builtin, installed, or dev;
+        verified, commit, sha256, grants, revoked). JSON adds `skipped`: community tools core didn't load, and why."""
+        granted = grants.list_grants()  # a damaged grants.toml exits 7, as the daemon does: no grant is assumed
+        rows = [{**site.describe(), "tier": sites.tier_of(site.name), **sites.provenance(site.name, granted)}
+                for site in sites.registry().values()]
         out = "csv" if as_csv else resolve_format(fmt)
         if out == "json" and not (select or compact):
             emit_json({"llmcli": [r for r in rows if r["kind"] == "llm"],
-                       "webcli": [r for r in rows if r["kind"] == "data"]})
+                       "webcli": [r for r in rows if r["kind"] == "data"],
+                       "skipped": sites.skipped_tools(granted)})
         else:
             emit_rows(rows, title="Sites", fields=["name", "binary", "tier", "provider", "defaultIdentity", "summary"],
                       compact_fields=("name", "binary"), columns=["name", "binary", "tier", "provider", "defaultIdentity"],

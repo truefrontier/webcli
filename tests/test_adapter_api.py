@@ -66,9 +66,11 @@ def test_registry_still_loads_every_built_in_with_the_new_fields_at_their_defaul
     sites = registry()
     assert set(sites) == set(BUILTIN)
     for site in sites.values():
-        assert (site.adapter_api, site.hosts, site.version, site.writes, site.sends_to_people) == \
-            (1, (), "", frozenset(), frozenset())
+        assert (site.adapter_api, site.hosts, site.version) == (1, (), "")
+        # Since 1.0.0rc2 a built-in that writes names its writing verbs (test_effects checks them against effects).
+        assert site.sends_to_people <= site.writes <= set(site.verbs)
         assert not hasattr(site, "tier")
+    assert (sites["loom"].writes, sites["gsc"].writes) == (frozenset(), {"submit_sitemap", "request_indexing"})
 
 
 def test_describe_adds_the_api_always_and_the_rest_only_when_set():
