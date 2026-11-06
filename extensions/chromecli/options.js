@@ -19,7 +19,8 @@ function renderState() {
 }
 
 async function load() {
-  $("version").textContent = `v${chrome.runtime.getManifest().version}`;
+  const { version, version_name: versionName } = chrome.runtime.getManifest();
+  $("version").textContent = `v${versionName || version}`;
   // Read presence only; the saved key is never put back into the page.
   const st = await chrome.storage.local.get(["typesafeApiKey", "jevModel", "jevFloor", "jevActSafeFloor"]);
   hasKey = typeof st.typesafeApiKey === "string" && !!st.typesafeApiKey.trim();

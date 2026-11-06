@@ -7,7 +7,7 @@ webcli lets an AI agent use websites you're already signed in to, as you, from y
 webcli 1.0 lets you build a small tool for a site you use, keep it on your machine, and optionally share it.
 
 ```sh
-pip install --pre 'truefrontier-webcli==1.0.0rc1'   # pre-release; stable stays 0.18.x without --pre
+pip install --pre 'truefrontier-webcli==1.0.0rc2'   # pre-release; stable stays 0.18.x without --pre
 webcli new mysite --url https://example.com         # scaffold a read-only tool
 webcli lint mysite && webcli test mysite
 webcli tools search                                 # the library: community tools + official built-ins

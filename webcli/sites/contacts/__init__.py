@@ -26,4 +26,5 @@ ADAPTER = Site(
            "labels": Strategy.COOKIE, "export": Strategy.COOKIE, "status": Strategy.COOKIE,
            "label add": Strategy.COOKIE, "label remove": Strategy.COOKIE},
     status_op="status",
+    writes=frozenset({"label add", "label remove"}),
 )

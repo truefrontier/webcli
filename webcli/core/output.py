@@ -478,6 +478,7 @@ def confirm_write(confirm: bool, plan: dict, *, dry_run: bool = False) -> bool:
 EFFECTS_API = 1
 WRITE_KINDS = ("never", "with_flag", "always")
 _EFFECTS_ATTR = "webcli_effects"
+CORE_AGENT_HELP = "_webcli_core_agent_help"  # set only on the agent-help commands core builds
 
 
 @dataclass(frozen=True)
@@ -540,12 +541,17 @@ def command_effects(command: click.Command) -> dict[str, Any]:
         option = next((p for p in command.params if p.name == name and isinstance(p, click.Option)), None)
         if option is None or not option.is_bool_flag:
             return dict(UNDECLARED)
-        if option.envvar or command.context_settings.get("auto_envvar_prefix") \
-                or option.get_default(click.Context(command), call=True):
+        if option.envvar or implicit(command) or option.get_default(click.Context(command), call=True):
             writes = "always"
         flags += [flag for flag in option.opts if flag not in flags]
     return {"writes": writes, "writeFlags": flags if writes == "with_flag" else [], "sendsToPeople": declared.sends,
             "humanOnly": declared.human, "opensWindow": declared.window, "changesLocalSetup": declared.local_setup}
+
+
+def implicit(command: click.Command) -> bool:
+    """Whether `command`'s context settings can turn an option on without it being typed (an env var prefix, or a
+    default_map), for it and every command under it."""
+    return any(command.context_settings.get(key) for key in ("auto_envvar_prefix", "default_map"))
 
 
 def leaves(group: click.Group, path: tuple[str, ...] = (), *, hidden: bool = False):
@@ -644,6 +650,7 @@ def agent_help_command(group: click.Group, *, version: str, env: Callable[[], di
             click.echo(reference_markdown(ref))
         raise SystemExit(EXIT_OK)
 
+    setattr(agent_help_cmd, CORE_AGENT_HELP, True)
     return agent_help_cmd
 
 

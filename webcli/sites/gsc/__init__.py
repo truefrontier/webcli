@@ -28,4 +28,5 @@ ADAPTER = Site(
            "inspect": Strategy.COOKIE, "performance": Strategy.COOKIE, "sitemaps": Strategy.COOKIE,
            "submit_sitemap": Strategy.COOKIE, "request_indexing": Strategy.UI},
     status_op="status",
+    writes=frozenset({"request_indexing", "submit_sitemap"}),
 )

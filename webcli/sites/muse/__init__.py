@@ -33,4 +33,6 @@ ADAPTER = Site(
     ops=("status", "chats", "chat", "ask"),
     verbs={"ask": Strategy.UI, "chats": Strategy.UI, "status": Strategy.COOKIE},
     login=_login,
+    writes=frozenset({"ask"}),
+    sends_to_people=frozenset({"ask"}),
 )

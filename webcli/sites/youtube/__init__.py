@@ -24,4 +24,5 @@ ADAPTER = Site(
     ops=("status", "history", "create_playlist", "subs", "uploads", "home"),
     verbs={"history": Strategy.COOKIE, "subs": Strategy.COOKIE, "uploads": Strategy.COOKIE, "home": Strategy.COOKIE, "status": Strategy.COOKIE, "playlist create": Strategy.COOKIE},
     status_op="status",
+    writes=frozenset({"playlist create"}),
 )

@@ -215,18 +215,29 @@ def guarded_cli(site: Site) -> Callable[[], click.Command]:
 def _declare_effects(group: click.Group, site: Site) -> None:
     """Each command's effects, from the manifest (site's verbs, writes, and sends_to_people match it by now), over
     whatever the tool's code set: a write is a dry run unless --confirm (_gate), a read never writes, core's
-    agent-help reads. Any other command the manifest doesn't name is UNDECLARED, the worst case."""
+    agent-help reads. Any other command the manifest doesn't name is UNDECLARED, the worst case. A tool whose groups
+    can turn --confirm on without it being typed (an env var prefix, a default_map) writes "always"."""
+    implicit = any(output.implicit(g) for g in (group, *_subgroups(group)))
     for path, _aliases, command in output.leaves(group, hidden=True):
         verb = " ".join(path)
         if verb in site.writes and getattr(command, "_webcli_gated", False):
-            declared = output.Effects("with_flag", via=("confirm",), sends=verb in site.sends_to_people)
+            sends = verb in site.sends_to_people
+            declared = output.Effects("always", sends=sends) if implicit else \
+                output.Effects("with_flag", via=("confirm",), sends=sends)
         elif verb in site.verbs and verb not in site.writes:
             declared = output.Effects()
-        elif verb == "agent-help" and output.command_effects(command)["writes"] == "never":
+        elif verb == "agent-help" and getattr(command, output.CORE_AGENT_HELP, False):
             declared = output.Effects()
         else:
             declared = None
         output.set_effects(command, declared)
+
+
+def _subgroups(group: click.Group):
+    for command in group.commands.values():
+        if isinstance(command, click.Group):
+            yield command
+            yield from _subgroups(command)
 
 
 def _broken(name: str, exc: Exception) -> click.Command:
