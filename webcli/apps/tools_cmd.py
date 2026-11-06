@@ -359,7 +359,7 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     entry = index.tools.get(name)
     if entry is None:
         return {"name": name, "status": "not in library"}
-    if entry.builtin:  # a leftover folder under a built-in's name; core never loads it
+    if entry.builtin or name in _reserved():  # a leftover folder under a built-in's name; core never loads it
         return {"name": name, "status": "built in"}
     why = revoked.reason(name, entry.version)
     if why:
@@ -408,7 +408,7 @@ def update_cmd(name: str | None, all_: bool, yes: bool) -> None:
     index = index_client.fetch(cached_ok=False)
     results = [_update(index, n, yes) for n in names]
     sites.reload()
-    status = results[0]["status"]
+    status = None if all_ else results[0]["status"]
     if not all_ and status == "declined":
         die(f"{name} was not updated.", EXIT_USAGE, hint="Pass --yes to update without asking.")
     if not all_ and status == "revoked":

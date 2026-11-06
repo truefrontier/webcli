@@ -284,12 +284,18 @@ def test_managing_a_built_in_is_a_usage_error(library, tools, command):
     assert result.exit_code == 2 and "loom is built into webcli; it isn't an installed tool" in result.stderr
 
 
-def test_update_all_skips_a_leftover_folder_with_a_built_ins_name(library, tools, no_download):
-    library.builtin("loom")
+@pytest.mark.parametrize("listed", ["builtin", "publish"])  # the catalog entry, or a community entry with its name
+def test_update_never_downloads_over_a_leftover_folder_with_a_built_ins_name(library, tools, no_download, listed):
+    getattr(library, listed)("loom")
     (tools / "loom").mkdir(parents=True)
     assert ok("tools", "update", "--all") == [{"name": "loom", "status": "built in"}]
     result = run("tools", "update", "loom")
     assert result.exit_code == 2 and "no tool to update" in result.stderr
+
+
+def test_update_all_with_nothing_installed(library, tools):
+    library.builtin("loom")
+    assert ok("tools", "update", "--all") == []
 
 
 def test_list_shows_installed_tools_then_the_official_data_built_ins(library, tools):
