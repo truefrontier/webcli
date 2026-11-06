@@ -181,25 +181,25 @@ def kv_table(title: str, data: dict, fmt: str = "table") -> None:
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title=title)
+    table = Table(title=_cell(title))  # a title is site text too: "[/b]" must not parse as markup
     table.add_column("field")
     table.add_column("value")
     for key, value in data.items():
         table.add_row(key, _cell(value))
-    Console().print(table)
+    Console(emoji=False).print(table)  # ":smile:" in a title or cell prints as written
 
 
 def rows_table(title: str, rows: list[dict], columns: list[str]) -> None:
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title=title)
+    table = Table(title=_cell(title))
     for col in columns:
         table.add_column(col)
     for row in rows:
         table.add_row(*[_cell(truncate(str(row.get(c) or ""), 60) if c in ("title", "description") else row.get(c))
                         for c in columns])
-    Console().print(table)
+    Console(emoji=False).print(table)
 
 
 def emit_rows(rows, *, title, fields, compact_fields, columns, noun, fmt, compact, select, quiet, as_csv) -> None:

@@ -11,7 +11,9 @@ from webcli.core.guard import host_matches
 from webcli.sites.loom.endpoints import HOSTS, QUERIES, SHARE_URL, SIGNED_IN_PATHS, SIGNED_OUT_MARKS
 
 ID_RE = re.compile(r"[0-9a-f]{32}")
-NOT_A_VIDEO = {"GenericError", "UserNotAuthorizedError"}
+# The query types the bundled documents select fields on. Any other __typename (GenericError, UserNotAuthorizedError,
+# ...) carries none of them.
+LIBRARY_TYPE, VIDEO_TYPE = "GetLoomsPayload", "RegularUserVideo"
 
 
 def video_id(value: str) -> str:
@@ -36,9 +38,22 @@ def fmt_duration(seconds) -> str:
     return f"{hours}h {mins}m {secs}s" if hours else f"{mins}m {secs}s"
 
 
+def _data(body) -> dict:
+    data = body.get("data") if isinstance(body, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def looms(body) -> dict | None:
+    """GetLoomsForLibrary's getLooms when it is a library (an empty one counts); None when it is null or an error
+    type. A getLooms without __typename counts as a library."""
+    found = _data(body).get("getLooms")
+    return found if isinstance(found, dict) and found.get("__typename", LIBRARY_TYPE) == LIBRARY_TYPE else None
+
+
 def videos_page(body: dict) -> tuple[list[dict], str | None]:
-    """GetLoomsForLibrary's answer: ([{id, title, visibility}], the next cursor or None)."""
-    connection = (((body or {}).get("data") or {}).get("getLooms") or {}).get("videos") or {}
+    """GetLoomsForLibrary's answer: ([{id, title, visibility}], the next cursor or None). fetch.library has already
+    checked that it holds a library."""
+    connection = (looms(body) or {}).get("videos") or {}
     rows = []
     for edge in connection.get("edges") or []:
         node = (edge or {}).get("node") or {}
@@ -51,8 +66,8 @@ def videos_page(body: dict) -> tuple[list[dict], str | None]:
 def video(body: dict, vid: str) -> dict | None:
     """GetVideoCardDetails' answer as {id, title, created_at, duration_seconds, views, owner, complete, archived,
     url}; None when Loom says there is no such video (or not one you may see)."""
-    found = ((body or {}).get("data") or {}).get("video") or {}
-    if not found or found.get("__typename") in NOT_A_VIDEO:
+    found = _data(body).get("video")
+    if not isinstance(found, dict) or found.get("__typename") != VIDEO_TYPE:
         return None
     owner = found.get("owner") or {}
     name = owner.get("display_name") or " ".join(x for x in (owner.get("first_name"), owner.get("last_name")) if x)
@@ -62,13 +77,13 @@ def video(body: dict, vid: str) -> dict | None:
             "url": SHARE_URL.format(id=vid)}
 
 
-def phrases(data: dict) -> list[dict]:
-    """The transcript file's phrases as [{ts, text}], empty ones dropped."""
+def phrases(data) -> list[dict]:
+    """The transcript file's phrases as [{ts, text}]; empty phrases and anything not shaped like one dropped."""
     out = []
-    for item in (data or {}).get("phrases") or []:
-        text = ((item or {}).get("value") or "").strip()
-        if text:
-            out.append({"ts": item.get("ts"), "text": text})
+    for item in (data.get("phrases") if isinstance(data, dict) else None) or []:
+        text = item.get("value") if isinstance(item, dict) else None
+        if isinstance(text, str) and text.strip():
+            out.append({"ts": item.get("ts"), "text": text.strip()})
     return out
 
 
