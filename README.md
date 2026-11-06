@@ -10,7 +10,7 @@ webcli 1.0 lets you build a small tool for a site you use, keep it on your machi
 pip install --pre 'truefrontier-webcli==1.0.0rc1'   # pre-release; stable stays 0.18.x without --pre
 webcli new mysite --url https://example.com         # scaffold a read-only tool
 webcli lint mysite && webcli test mysite
-webcli tools search                                 # community library: truefrontier/webcli-tools
+webcli tools search                                 # the library: community tools + official built-ins
 webcli tools install httpbin --yes                  # demo tool; pinned commit + hash check
 webcli submit mysite                                # dry-run; add --confirm to open a PR
 ```
