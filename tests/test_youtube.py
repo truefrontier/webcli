@@ -335,3 +335,30 @@ def test_playlist_create_confirm_exits_0_or_8(calls):
     calls.answer["confirmed"] = False
     result = run("playlist", "create", "--title", "Pieces", "--yes", *IDS)
     assert result.exit_code == 8 and json.loads(result.stderr.splitlines()[-1])["error"] == "sent_unverified"
+
+
+def table(*args) -> str:
+    """A command's table, as a terminal would show it (wide enough that no header wraps)."""
+    return CliRunner().invoke(webcli_app.build(), ["youtube", *args, "--format", "table"],
+                              env={"COLUMNS": "200"}).stdout
+
+
+def test_compact_narrows_the_history_table(calls):
+    full, compact = table("history"), table("history", "--compact")
+    assert "duration" in full and "short" in full
+    assert "duration" not in compact and "short" not in compact
+    assert "Me at the zoo" in compact and "jNQXAC9IVRw" in compact and "2026-10-14 22:46" in compact
+
+
+def test_compact_narrows_the_feed_tables(monkeypatch):
+    video = {"source": "home", "id": "jNQXAC9IVRw", "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+             "title": "Me at the zoo", "author": "jawed", "publishedText": "19 years ago", "metrics": {"views": 1234}}
+
+    async def call(ident, site, op, *args, **kwargs):
+        return [video]
+
+    monkeypatch.setattr(daemon, "call", call)
+    full, compact = table("home"), table("home", "--compact")
+    assert "views" in full and "1,234" in full and "watch?v=" not in full
+    assert "views" not in compact and "1,234" not in compact
+    assert "19 years ago" in compact and "jawed" in compact and "watch?v=jNQXAC9IVRw" in compact
