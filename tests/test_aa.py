@@ -125,9 +125,25 @@ def test_open_digest_and_picks():
 
 def test_open_weight_guess():
     assert digest.is_open_weight({"name": "gpt-oss-120b", "model_creator_name": "OpenAI"}) is True
-    assert digest.is_open_weight({"name": "Gemini-Pro 2", "model_creator_name": "Google"}) is False
+    for name in ("Gemini-Pro 2", "Gemini 2.5 Pro", "Gemini 3 Flash", "Gemini 2.0 Flash-Lite"):
+        assert digest.is_open_weight({"name": name, "model_creator_name": "Google"}) is False, name
     assert digest.is_open_weight({"name": "Gemma 3", "model_creator_name": "Google"}) is True
     assert digest.is_open_weight({"name": None, "model_creator_name": "Anthropic"}) is False
+
+
+def test_local_pick_and_open_digest_leave_out_gemini():
+    google = [digest.normalize({"name": name, "model_creator": {"name": "Google"},
+                                "evaluations": {"artificial_analysis_intelligence_index": score}})
+              for name, score in [("Gemini 3 Flash", 90.0), ("Gemini 2.5 Pro", 85.0), ("Gemma 3", 60.0),
+                                  ("Gemma 2", 40.0)]]
+    local = digest.pick(google, "local")
+    assert local["recommendation"]["name"] == "Gemma 3" and names(local["runners_up"]) == ["Gemma 2"]
+    only_gemini = digest.pick(google[:2], "local")
+    assert only_gemini["recommendation"] is None and only_gemini["runners_up"] == []
+    opened = digest.open_digest(google)
+    assert names(opened["open_models"]) == ["Gemma 3", "Gemma 2"]
+    assert names(opened["proprietary_comparison"]) == ["Gemini 3 Flash", "Gemini 2.5 Pro"]
+    assert opened["intelligence_gap"] == 30.0
 
 
 def test_tts_rankings():
