@@ -138,15 +138,23 @@ def test_find_matches_the_exact_id_only():
 
 
 def test_create_plans_need_a_criterion_and_an_action():
-    plan = parse.create_plan({"from": "a@example.com", "to": "", "subject": None, "hasAttachment": False},
+    plan = parse.create_plan({"from": "a@example.com", "to": None, "subject": None, "hasAttachment": False},
                              ["star", "skipInbox", "bogus"])
     assert plan == {"criteria": {"from": "a@example.com"}, "actions": ["skipInbox", "star"]}
     assert parse.needles(plan) == ("a@example.com",)
     assert parse.needles(parse.create_plan({"hasAttachment": True}, ["star"])) == ()
     with pytest.raises(ValueError, match="criterion"):
-        parse.create_plan({"to": " "}, ["star"])
+        parse.create_plan({"to": None}, ["star"])
     with pytest.raises(ValueError, match="action"):
         parse.create_plan({"from": "a@example.com"}, [])
+
+
+def test_a_blank_criterion_is_refused_not_dropped():
+    # Dropping it widened the filter: --from "$BOSS" with $BOSS unset made "Subject: urgent -> Delete it" for everyone.
+    with pytest.raises(ValueError, match="^Blank criterion: --from. Give it a value or leave the option out.$"):
+        parse.create_plan({"from": "", "subject": "urgent"}, ["delete"])
+    with pytest.raises(ValueError, match="^Blank criterion: --to, --negated-query. "):
+        parse.create_plan({"from": "a@example.com", "to": " ", "negatedQuery": "\t"}, ["star"])
 
 
 # The filters page, scripted.
@@ -367,6 +375,7 @@ def test_only_confirm_deletes(calls):
     ("filters", "create", "--from", "a@example.com", "--star", "--dry-run", "--confirm"),
     ("filters", "delete", "1234567890123", "--dry-run", "--confirm"),
     ("filters", "create", "--star"),  # no criterion
+    ("filters", "create", "--from", "", "--subject", "urgent", "--delete-it", "--confirm"),  # a blank criterion
     ("filters", "create", "--from", "a@example.com"),  # no action
     ("filters", "create", "--from", "a@example.com", "--forward", "x@example.com"),  # dropped: never worked
     ("filters", "create", "--from", "a@example.com", "--add-label", "Label_1"),
