@@ -294,6 +294,15 @@ def test_create_stops_when_two_labels_share_one_box(pages):
     assert ("text", "Create filter") not in page.clicked and ("text", "Delete it") not in page.clicked
 
 
+def test_create_wont_guess_when_several_rows_are_new(pages):
+    _, install = pages
+    new = {"id": "z0000001790000000000*1", "criteria": "from:(new@example.com)", "actionText": "Do this: Star it"}
+    install(FiltersPage([RAW[0]], [RAW[0], new, RAW[1]]))  # the first read missed RAW[1]
+    says = r"^2 filters look new \(z0000001790000000000\*1, 1234567890123\), so webcli can't tell which one it made"
+    with pytest.raises(RuntimeError, match=says):
+        asyncio.run(fetch.create_filter(parse.create_plan({"from": "new@example.com"}, ["star"]), confirm=True))
+
+
 # The commands, over a faked daemon.
 
 @pytest.fixture

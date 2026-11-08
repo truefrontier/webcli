@@ -165,7 +165,7 @@ async def _click(page: "Page", text: str, *, last: bool = False, dom: bool = Tru
 async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = False) -> dict:
     """Create a filter through the create dialogs: `plan` is parse.create_plan's {criteria, actions}. A WRITE: runs
     only with confirm=True. Returns the new filter's row; an error when it doesn't appear (nothing was created, or
-    the guard blocked the write: the message names it)."""
+    the guard blocked the write: the message names it) or when more than one row is new."""
     if not confirm:
         raise UsageError("create_filter writes: it runs only with confirm=True.")
     plan = parse.create_plan(plan.get("criteria") or {}, plan.get("actions") or [])
@@ -213,7 +213,10 @@ async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = Fal
         created = [r for r in await _rows(page) if r["id"] not in before]
         if not created:
             raise RuntimeError(f"The new filter didn't appear in the list.{google.blocked()} {SNIFF_HINT}")
-        return created[-1]
+        if len(created) > 1:  # the first read missed rows: one of these already existed
+            raise RuntimeError(f"{len(created)} filters look new ({', '.join(r['id'] for r in created)}), so webcli "
+                               "can't tell which one it made. Check Gmail's Filters settings.")
+        return created[0]
 
 
 async def delete_filter(filter_id: str, *, confirm: bool = False, headed: bool = False) -> dict:
