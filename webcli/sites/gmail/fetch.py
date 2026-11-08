@@ -88,17 +88,19 @@ HAS_LABEL_JS = r"""
 (text) => Array.from(document.querySelectorAll('label, td, span, div'))
   .some(e => (e.innerText || '').trim().toLowerCase() === text.toLowerCase())
 """
-# The text box on the same line as a dialog label (the create dialog's fields have no names): its center.
+# The text box nearest the line of a dialog label (the create dialog's fields have no names): its center. Nearest,
+# not first: with rows under 30 px apart, the first box in range can be the row above's.
 FIELD_JS = r"""
 (text) => {
   const lab = Array.from(document.querySelectorAll('label, td, span, div'))
     .find(e => (e.innerText || '').trim().toLowerCase() === text.toLowerCase());
   if (!lab) return null;
   const ly = lab.getBoundingClientRect().y;
-  const input = Array.from(document.querySelectorAll('input[type=text], textarea')).find(i => {
+  const dist = (i) => Math.abs(i.getBoundingClientRect().y - ly);
+  const input = Array.from(document.querySelectorAll('input[type=text], textarea')).filter(i => {
     const r = i.getBoundingClientRect();
-    return r.width > 10 && Math.abs(r.y - ly) < 30 && r.y > 40 && r.y < 800;
-  });
+    return r.width > 10 && dist(i) < 30 && r.y > 40 && r.y < 800;
+  }).sort((a, b) => dist(a) - dist(b))[0];
   if (!input) return null;
   input.focus();
   input.value = '';
@@ -163,7 +165,7 @@ async def _click(page: "Page", text: str, *, last: bool = False, dom: bool = Tru
 async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = False) -> dict:
     """Create a filter through the create dialogs: `plan` is parse.create_plan's {criteria, actions}. A WRITE: runs
     only with confirm=True. Returns the new filter's row; an error when it doesn't appear (nothing was created, or
-    the guard blocked the write: the message names it)."""
+    the guard blocked the write: the message names it) or when more than one row is new."""
     if not confirm:
         raise UsageError("create_filter writes: it runs only with confirm=True.")
     plan = parse.create_plan(plan.get("criteria") or {}, plan.get("actions") or [])
@@ -179,11 +181,16 @@ async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = Fal
             await page.wait_for_timeout(500)
         else:
             raise RuntimeError(f"The create-filter dialog didn't open. {SNIFF_HINT}")
-        filled = []
+        filled, boxes = [], {}  # boxes: each filled box's center -> its label
         for key, label in CRITERIA_LABELS.items():
             value = plan["criteria"].get(key)
             box = await page.evaluate(FIELD_JS, label) if value else None
             if box:
+                spot = (box["x"], box["y"])
+                if spot in boxes:  # typing here would overwrite, or move, the other label's value
+                    raise RuntimeError(f"The dialog's {boxes[spot]} and {label} share one text box; nothing was "
+                                       f"created. {SNIFF_HINT}")
+                boxes[spot] = label
                 await page.mouse.click(box["x"], box["y"])
                 await page.keyboard.type(value, delay=15)
                 filled.append(key)
@@ -206,7 +213,10 @@ async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = Fal
         created = [r for r in await _rows(page) if r["id"] not in before]
         if not created:
             raise RuntimeError(f"The new filter didn't appear in the list.{google.blocked()} {SNIFF_HINT}")
-        return created[-1]
+        if len(created) > 1:  # the first read missed rows: one of these already existed
+            raise RuntimeError(f"{len(created)} filters look new ({', '.join(r['id'] for r in created)}), so webcli "
+                               "can't tell which one it made. Check Gmail's Filters settings.")
+        return created[0]
 
 
 async def delete_filter(filter_id: str, *, confirm: bool = False, headed: bool = False) -> dict:

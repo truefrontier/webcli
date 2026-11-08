@@ -49,7 +49,7 @@ The dry run does every read (labels, the selection, each contact's labels) on a 
 
 **`webcli gmail filters create|delete`:**
 
-- `create` needs at least one criterion (`--from`, `--to`, `--subject`, `--query`, `--negated-query`, `--has-attachment`) and one action (`--skip-inbox`, `--mark-as-read`, `--star`, `--delete-it`, `--never-spam`). Its dry run is offline: it checks the plan and prints it.
+- `create` needs at least one criterion (`--from`, `--to`, `--subject`, `--query`, `--negated-query`, `--has-attachment`) and one action (`--skip-inbox`, `--mark-as-read`, `--star`, `--delete-it`, `--never-spam`). Its dry run is offline: it checks the plan and prints it. A blank criterion, such as `--from "$BOSS"` with `$BOSS` unset, exits 2. Dropping it would widen the filter to every sender.
 - `delete FILTER_ID`'s dry run reads the filter list and prints the filter it would delete. An unknown id exits 3.
 - google-gmail-cli had no dry run: create and delete wrote at once. webcli adds the dry-run default and `--confirm`, as the build spec requires.
 
