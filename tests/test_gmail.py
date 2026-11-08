@@ -283,6 +283,17 @@ def test_create_that_never_shows_up_is_an_error_naming_what_the_guard_blocked(pa
         asyncio.run(fetch.create_filter(parse.create_plan({"from": "x@example.com"}, ["star"]), confirm=True))
 
 
+def test_create_stops_when_two_labels_share_one_box(pages):
+    _, install = pages
+    new = {"id": "z0000001790000000000*1", "criteria": "from:(boss@example.com)", "actionText": "Do this: Delete it"}
+    page = install(FiltersPage(RAW, [*RAW, new]))  # FiltersPage answers every FIELD_JS with the same spot
+    plan = parse.create_plan({"from": "boss@example.com", "negatedQuery": "urgent"}, ["delete"])
+    with pytest.raises(RuntimeError, match="From and Doesn't have share one text box; nothing was created"):
+        asyncio.run(fetch.create_filter(plan, confirm=True))
+    assert page.typed == ["boss@example.com"]  # "urgent" never typed
+    assert ("text", "Create filter") not in page.clicked and ("text", "Delete it") not in page.clicked
+
+
 # The commands, over a faked daemon.
 
 @pytest.fixture

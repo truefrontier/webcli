@@ -88,17 +88,19 @@ HAS_LABEL_JS = r"""
 (text) => Array.from(document.querySelectorAll('label, td, span, div'))
   .some(e => (e.innerText || '').trim().toLowerCase() === text.toLowerCase())
 """
-# The text box on the same line as a dialog label (the create dialog's fields have no names): its center.
+# The text box nearest the line of a dialog label (the create dialog's fields have no names): its center. Nearest,
+# not first: with rows under 30 px apart, the first box in range can be the row above's.
 FIELD_JS = r"""
 (text) => {
   const lab = Array.from(document.querySelectorAll('label, td, span, div'))
     .find(e => (e.innerText || '').trim().toLowerCase() === text.toLowerCase());
   if (!lab) return null;
   const ly = lab.getBoundingClientRect().y;
-  const input = Array.from(document.querySelectorAll('input[type=text], textarea')).find(i => {
+  const dist = (i) => Math.abs(i.getBoundingClientRect().y - ly);
+  const input = Array.from(document.querySelectorAll('input[type=text], textarea')).filter(i => {
     const r = i.getBoundingClientRect();
-    return r.width > 10 && Math.abs(r.y - ly) < 30 && r.y > 40 && r.y < 800;
-  });
+    return r.width > 10 && dist(i) < 30 && r.y > 40 && r.y < 800;
+  }).sort((a, b) => dist(a) - dist(b))[0];
   if (!input) return null;
   input.focus();
   input.value = '';
@@ -179,11 +181,16 @@ async def create_filter(plan: dict, *, confirm: bool = False, headed: bool = Fal
             await page.wait_for_timeout(500)
         else:
             raise RuntimeError(f"The create-filter dialog didn't open. {SNIFF_HINT}")
-        filled = []
+        filled, boxes = [], {}  # boxes: each filled box's center -> its label
         for key, label in CRITERIA_LABELS.items():
             value = plan["criteria"].get(key)
             box = await page.evaluate(FIELD_JS, label) if value else None
             if box:
+                spot = (box["x"], box["y"])
+                if spot in boxes:  # typing here would overwrite, or move, the other label's value
+                    raise RuntimeError(f"The dialog's {boxes[spot]} and {label} share one text box; nothing was "
+                                       f"created. {SNIFF_HINT}")
+                boxes[spot] = label
                 await page.mouse.click(box["x"], box["y"])
                 await page.keyboard.type(value, delay=15)
                 filled.append(key)
