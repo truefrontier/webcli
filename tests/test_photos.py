@@ -100,6 +100,24 @@ def test_ids_from_keys_and_urls():
         parse.photo_id("hello")
 
 
+@pytest.mark.parametrize("bad", ["AF1Qip", "AF1QipX/../../x", "AF1QipX/y", "AF1Qip?x=1", "AF1Qip key"])
+def test_a_bare_id_is_a_whole_key(bad):
+    """A bare id only had to start with AF1Qip. Ported from google-photos-cli's overflow/gphotostests (2a975b4)."""
+    with pytest.raises(ValueError, match="expected a photo id or URL"):
+        parse.photo_id(bad)
+    with pytest.raises(ValueError, match="expected an album id or URL"):
+        parse.album_id(bad)
+
+
+def test_the_not_found_check_matches_a_whole_path_segment(monkeypatch):
+    """Photos showing another photo (its path only contains the asked-for id) is not that photo."""
+    shown = {"title": "Photo", "aria": "Photo - Landscape - Oct 3, 2026", "image": True,
+             "url": f"https://photos.google.com/photo/{KEY}"}
+    install(monkeypatch, ScriptedPage(answers={"labelledSel": shown}))
+    with pytest.raises(NotFound, match=f"No photo {KEY[:-2]}"):
+        asyncio.run(fetch.info(KEY[:-2]))
+
+
 def test_labels_titles_and_download_names():
     assert parse.described("Photo - Portrait - Nov 10, 2016, 11:22:34 AM") == {
         "kind": "Photo", "taken_at": "Nov 10, 2016, 11:22:34 AM"}

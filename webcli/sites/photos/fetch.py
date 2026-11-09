@@ -126,7 +126,7 @@ async def _photo_page(page: "Page", media_id: str) -> dict:
     await google.open_app(page, PHOTO_URL.format(id=quote(media_id, safe="")))
     await page.wait_for_timeout(INFO_MS)
     shown = await page.evaluate(INFO_JS, [sel.PHOTO_IMAGE, sel.LABELLED])
-    if media_id not in urlsplit(shown["url"]).path or not (shown["aria"] or shown["image"]):
+    if media_id not in urlsplit(shown["url"]).path.split("/") or not (shown["aria"] or shown["image"]):
         raise NotFound(f"No photo {media_id}.", hint="See `webcli photos list --id-only`.")
     return shown
 
