@@ -35,12 +35,8 @@ FB_SUFFIXES = ("facebook.com", "facebook.net", "fbcdn.net", "fbsbx.com", "messen
 GRAPHQL_PATHS = frozenset({"/api/graphql/", "/api/graphql", "/graphql", "/graphql/", "/api/graphqlbatch/",
                            "/api/graphqlbatch"})
 
-# GETs with side effects. The guard aborts them even though they are GETs.
-SIDE_EFFECT_GETS = (
-    ("www.facebook.com", "/logout.php"),
-    ("www.facebook.com", "/logout"),
-    ("m.facebook.com", "/logout.php"),
-)
+# GETs with side effects (sign-out). The guard aborts them on every Facebook host, even though they are GETs.
+SIDE_EFFECT_GETS = ("/logout.php", "/logout")
 
 # Read-only GraphQL queries, per command. The guard allows a POST /api/graphql/ only when its operation is in the
 # running command's set AND its name ends in "Query" (never "Mutation" or "Subscription"). Everything the page sends

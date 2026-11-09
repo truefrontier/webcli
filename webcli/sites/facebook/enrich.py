@@ -45,6 +45,7 @@ COMPANY_NOISE = {"the", "inc", "llc", "ltd", "co", "corp", "corporation", "compa
                  "plc", "gmbh", "and", "of"}
 SUBTITLE_WORK = re.compile(r"^(?:Works at (?P<employer>.+)|(?P<role>[^·]+?) at (?P<employer2>[^·]+))$")
 SUBTITLE_CITY = re.compile(r"^Lives in (?P<city>.+)$")
+SUBTITLE_PAST = re.compile(r"^(?:Worked at|Former|Previously)\b")  # a past job is not the current company
 
 
 def field(value: str | None, source: str, confidence: str) -> dict | None:
@@ -230,7 +231,7 @@ def _subtitle(person: dict) -> tuple[str | None, str | None, str | None]:
         part = part.strip()
         if m := SUBTITLE_CITY.match(part):
             city = city or m["city"]
-        elif (m := SUBTITLE_WORK.match(part)) and not parse._EDU.match(part):
+        elif (m := SUBTITLE_WORK.match(part)) and not parse._EDU.match(part) and not SUBTITLE_PAST.match(part):
             employer = employer or (m["employer"] or m["employer2"]).strip()
             role = role or (m["role"].strip() if m["role"] else None)
     return role, employer, city
