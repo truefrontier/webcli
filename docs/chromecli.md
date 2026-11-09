@@ -660,7 +660,8 @@ frame_act_allow = []      # 0.11.3: exact https origins whose iframes can be act
 ```
 
 Patterns: `host`, `*.host` (includes the bare host), `scheme://host[:port]`, `host/path` (path prefix),
-`path:/prefix` (any origin whose path contains `/prefix`). A known key with an invalid value: every op but `status` exits 7
+`path:/prefix` (any origin whose path contains `/prefix`). A URL's host matches with or without one trailing dot
+(`www.chase.com.` is `www.chase.com`). A known key with an invalid value: every op but `status` exits 7
 (`configError` in `status`). An unknown key (0.11.4; a typo, or a key from a newer chromecli) is ignored with a warning:
 the host logs `event=config_warning` and `status` lists it in `configWarnings` (key names only, never values).
 Ignoring is always safe: the policy is built from the known keys only, so an unknown key never loosens anything.
