@@ -158,7 +158,10 @@ def iso_time(stamp: Any) -> str | None:
     seconds = stamp[0] if isinstance(stamp, list) and stamp else stamp
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
         return None
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):  # milliseconds, or garbage: no time, not a failed list
+        return None
 
 
 def _bare_id(cid: Any) -> str | None:

@@ -208,7 +208,10 @@ def _ms_to_iso(value: Any) -> str:
     # Heuristic: seconds vs milliseconds
     if ms < 1e12:
         ms *= 1000.0
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):  # out of datetime's range: no time, not a failed list
+        return ""
 
 
 def normalize_conversation_urn(conversation_id_or_urn: str) -> tuple[str, str]:

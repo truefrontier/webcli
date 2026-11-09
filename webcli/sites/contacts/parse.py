@@ -224,7 +224,12 @@ def _iso_ms(value: Any) -> str | None:
         ms = int(value)
     except (TypeError, ValueError):
         return None
-    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ms > 0 else None
+    if ms <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):  # out of datetime's range: no time, not a failed list
+        return None
 
 
 def is_empty(row: list) -> bool:
