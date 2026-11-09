@@ -231,7 +231,7 @@ def person_from_arg(value: str) -> Person:
     value = (value or "").strip()
     if _NUMERIC.match(value):
         return Person(value, numeric_id=value)
-    if "/" in value or "." in value and value.lower().startswith(("facebook.", "www.", "m.")):
+    if "/" in value or value.lower() in FB_HOSTS:  # a URL; "m.jones" is a username, not m.facebook.com
         url = value if re.match(r"^https?://", value, re.I) else "https://" + value.lstrip("/")
         person = person_from_url(url)
         if person:
@@ -413,7 +413,7 @@ def friends(html: str, page_url: str) -> list[dict]:
 # --- About sections ------------------------------------------------------------------------------
 
 _EDU = re.compile(r"^(?:Studie[sd]|Went to|Goes to|Attend(?:s|ed))\b", re.I)
-_STUDIED_AT = re.compile(r"^Studie[sd] (?P<field>.+?) at (?P<school>.+)$", re.I)
+_STUDIED_AT = re.compile(r"^Studie[sd] (?!at )(?P<field>.+?) at (?P<school>.+)$", re.I)  # not "Studied at X at Y"
 _SCHOOL = re.compile(r"^(?:Studie[sd] at|Went to|Goes to|Attend(?:s|ed)) (?P<school>.+)$", re.I)
 _WORKS_AT = re.compile(r"^(?P<verb>Works|Worked) at (?P<employer>.+)$", re.I)
 _FORMER = re.compile(r"^(?:Former|Previously) (?P<role>.+?) at (?P<employer>.+)$", re.I)
@@ -432,11 +432,16 @@ def _employer_page(line: Line) -> str | None:
     return next((u for u in map(fb_page_url, line.links) if u and not u.endswith("/about")), None)
 
 
+def _dates_line(text: str) -> bool:
+    """A job's own dates ("2012 - 2016"), not the next item that happens to hold a year ("Married ... since 2010")."""
+    return bool(_DATES.search(text)) and not (_NOT_WORK.match(text) or _EDU.match(text) or " at " in text)
+
+
 def _work(line: Line, nxt: str | None) -> dict | None:
     text = line.text
     if len(text) > 160 or _EDU.match(text) or _NOT_WORK.match(text):
         return None
-    ended = bool(nxt and _DATES.search(nxt) and "present" not in nxt.lower())
+    ended = bool(nxt and _dates_line(nxt) and "present" not in nxt.lower())
     if m := _WORKS_AT.match(text):
         role, employer, current = None, m["employer"], m["verb"].lower() == "works" and not ended
     elif m := _FORMER.match(text):
@@ -455,6 +460,17 @@ def _school(line: Line) -> dict | None:
     if m := _SCHOOL.match(line.text):
         return {"school": m["school"].strip(), "field": None, "raw": line.text}
     return None
+
+
+def _add_school(education: list[dict], school: dict) -> None:
+    """Add a school, merging it with the same school seen in another section: the overview can say
+    "Studied at MSU", the education tab "Studied Computer Science at MSU". The entry with a field wins."""
+    for i, seen in enumerate(education):
+        if seen["school"].lower() == school["school"].lower():
+            if school["field"] and not seen["field"]:
+                education[i] = school
+            return
+    education.append(school)
 
 
 def _add_job(work: list[dict], job: dict) -> None:
@@ -503,8 +519,7 @@ def about(sections: dict[str, str | None], page_url: str, title: str | None = No
                 places["hometown"] = places["hometown"] or m["city"].strip()
                 continue
             if school := _school(line):
-                if school["school"] not in {e["school"] for e in education}:
-                    education.append(school)
+                _add_school(education, school)
                 continue
             for url in filter(None, map(external_url, line.links)):
                 if url not in {link["url"] for link in links}:

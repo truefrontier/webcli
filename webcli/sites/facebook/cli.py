@@ -220,9 +220,8 @@ def _enrich_hits(hits: list[dict], *, web: bool, quiet: bool) -> list[dict]:
         row = store.get(p["key"], p.get("username"), p.get("numeric_id"))
         if row and row.get("about"):
             store.save_enrich(row["key"], enrich.build(row, row["about"], web=web))
-    keys = [p["key"] for p in hits]
-    fresh = {p["key"]: p for p in store.people() if p["key"] in keys}
-    return [fresh.get(k, p) for k, p in zip(keys, hits)]
+    # By every id: reading About can re-key a row cached by numeric id to the username it revealed.
+    return [store.get(p["key"], p.get("username"), p.get("numeric_id")) or p for p in hits]
 
 
 @effects("never")
