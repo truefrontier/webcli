@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -966,6 +967,8 @@ def press_cmd(key, tab, selector, ref, target_text, role, find, jev, expect_orig
 @agent_output_options(rows=False)
 def wait_cmd(tab, selector, text, url_prefix, timeout, expect_origin, expect_url, fmt, quiet) -> None:
     """Wait until a selector / text / URL prefix shows up in a shared tab (read-only). Exit 5 timeout if it doesn't."""
+    if math.isnan(timeout):  # FloatRange lets nan through: every comparison with it is false
+        die("--timeout must be a number of seconds from 0.1 to 120.", EXIT_USAGE, error="bad_request")
     given = [x for x in (selector, text, url_prefix) if x not in (None, "")]
     if len(given) != 1:
         die("Give exactly one of --selector, --text, --url-prefix.", EXIT_USAGE, error="bad_target")
@@ -1105,6 +1108,8 @@ def _grant_args(op, origin, target_text=None, role=None, selector=None, value=No
             max_amount = -1.0
         if not max_amount >= 0:
             die(f"{w}--max-amount must be 0 or more.", EXIT_USAGE, error="bad_request")
+        if not math.isfinite(max_amount):  # inf passes FloatRange(min=0), and isn't JSON
+            die(f"{w}--max-amount must be a finite amount.", EXIT_USAGE, error="bad_request")
     try:
         uses = int(uses)
     except (TypeError, ValueError):

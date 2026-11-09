@@ -108,6 +108,7 @@ def test_add_batch_repeated_grant_specs_and_shorthand(ext, home):
     (["--grant", '{"target-text": "Undo", "times": 3}'], "unknown key 'times'"),
     (["--grant", '{"target-text": "Undo", "uses": 21}'], "grant 1: --uses must be 1-20"),
     (["--grant", '{"target-text": "Approve", "max-amount": -1}'], "grant 1: --max-amount must be 0 or more"),
+    (["--grant", '{"target-text": "Approve", "max-amount": 1e999}'], "grant 1: --max-amount must be a finite amount"),
     (["--grant", '{"target-text": "Undo", "frame-origin": "http://x.example"}'], "must be an exact https origin"),
     (["--grant", '{"op": "navigate", "target-text": "Undo"}'], "match on --origin"),
     (["--grant", '{"op": "eval", "target-text": "x"}'], "op must be one of"),
