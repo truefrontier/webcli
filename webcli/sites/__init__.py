@@ -3,9 +3,9 @@
 (identities.login_site), the official one does.
 
 A community tool is skipped, with a warning on stderr and a line in `webcli doctor`, never an error for the whole
-CLI, when: its name is a built-in site, a built-in site's provider (google, meta), a webcli command, or already taken;
-it is revoked; or anything about it is broken. A disabled tool is skipped quietly. A site's tier comes from where it
-was loaded, never from the site itself.
+CLI, when: its name is a built-in site, a built-in site's provider (google, meta), "none", a webcli command (the one
+list is manifest_schema._reserved), or already taken; it is revoked; or anything about it is broken. A disabled tool
+is skipped quietly. A site's tier comes from where it was loaded, never from the site itself.
 
 The "webcli.sites" entry points are webcli's own built-ins. Another package's entry point isn't loaded: community
 tools come with a webcli-tool.toml manifest, through `webcli tools install` or `webcli new`.
