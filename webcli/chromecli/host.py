@@ -58,18 +58,22 @@ def socket_path() -> Path:
 
 
 def listen(path: Path) -> socket.socket:
-    """The unix socket, created 0600 (umask 0177) in its 0700 directory (core/daemon.listen's pattern)."""
-    if len(str(path).encode()) >= SUN_PATH_MAX:
+    """The unix socket, created 0600 (umask 0177) in its 0700 directory (core/daemon.listen's pattern). It binds and
+    listens under a temporary name, then moves to `path`: a client that finds `path` can always connect. (bind makes
+    the file, so binding `path` itself left a moment when a client got "connection refused".)"""
+    temp = path.with_name(path.name + "~")
+    if len(str(temp).encode()) >= SUN_PATH_MAX:
         raise OSError(f"Socket path too long for macOS ({len(str(path))} bytes): {path}")
-    path.unlink(missing_ok=True)
+    temp.unlink(missing_ok=True)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o177)
     try:
-        server.bind(str(path))
+        server.bind(str(temp))
     finally:
         os.umask(old)
-    path.chmod(0o600)
+    temp.chmod(0o600)
     server.listen(16)
+    os.replace(temp, path)  # also replaces a socket a crashed host left behind
     return server
 
 
