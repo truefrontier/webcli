@@ -200,7 +200,7 @@ export function fallbackReasons(el) {
   if (tag === "button" || role === "button" || (tag === "input" && ["button", "submit", "image"].includes(type)) || el.inForm) {
     return ["jev_unavailable"];
   }
-  return [];
+  return el.activates ? fallbackReasons(el.activates) : []; // a label: the control its click also clicks
 }
 
 // Add Jev's reasons to the heuristic ones; never removes any.

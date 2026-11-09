@@ -444,3 +444,9 @@ test("find/locate keeps the 0.9 confidence floor on act tabs", async () => {
   const r = await h.call("page.find", { tab: 1, intent: "the email field" }, { confirm: false });
   assert.equal(r.result.pick, null); // 0.8 < 0.9
 });
+
+test("the stricter fallback counts the control a label's click also clicks", () => {
+  const label = (activates) => ({ tag: "label", name: "Go", inForm: false, activates });
+  assert.deepEqual(fallbackReasons(label({ tag: "button", type: "submit", inForm: true })), ["jev_unavailable"]);
+  assert.deepEqual(fallbackReasons(label({ tag: "input", type: "checkbox", inForm: false })), []);
+});

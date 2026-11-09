@@ -92,3 +92,17 @@ test("reason labels read well", () => {
   assert.match(reasonLabel("password_field"), /Password/);
   assert.match(reasonLabel("jev:purchase"), /Jev/);
 });
+
+test("a click on a label is gated as the control it also clicks (page/actions.js activates)", () => {
+  const label = (activates) => ({ tag: "label", role: null, name: "Continue", type: "", inForm: true, activates });
+  // <label for=place>Continue</label> over a hidden <input type=submit id=place>: clicking the label submits.
+  assert.deepEqual(gateReasons("click", label({ tag: "input", type: "submit", value: "Place order", inForm: true })),
+    ["submit_input", "submit_word:order"]);
+  assert.deepEqual(gateReasons("click", label({ tag: "button", type: "submit", name: "Go", inForm: true, defaultSubmit: true })),
+    ["submit_button"]);
+  // Enter / Space on a label that acts as a button reaches the same control.
+  assert.deepEqual(gateReasons("press", label({ tag: "input", type: "submit", inForm: true }), { key: "Enter" }), ["submit_input"]);
+  // A checkbox's label, or none at all, adds nothing.
+  assert.deepEqual(gateReasons("click", label({ tag: "input", type: "checkbox", name: "Email me tips", inForm: true })), []);
+  assert.deepEqual(gateReasons("click", label(undefined)), []);
+});
