@@ -77,3 +77,11 @@ If `index-cache.json` or `revoked.json` exists but can't be read, no community t
 ## What core can't do
 
 A tool's Python can still do anything your user account can: read files, start processes, or skip these checks. The checks catch honest mistakes and hold well-behaved tools to their manifest. They don't make a stranger's code safe. A tool updated while its daemon runs keeps its old code until the daemon restarts.
+
+## Who can reach the sockets
+
+The daemon (`run/<identity>.sock`) and chromecli-host (`run/chromecli.sock`) listen on unix sockets in `~/.webcli/run/`, which is mode 0700. The sockets are 0600. No other account on the Mac can open them. Any program running as you can.
+
+A request on the socket names a site, an op, and its arguments, and the daemon runs it. A write op's `confirm` is one of those arguments, so a client that opens the socket sets it itself, the same way `--confirm` would. The dry-run default lives in the CLI, not behind the socket. chromecli-host is the same, except the extension still asks in the browser before a risky action.
+
+So a policy that decides which webcli commands an agent may run, from `agent-help` effects or a wrapper like webcli-guard, holds only if that agent also can't open `~/.webcli/run/`. Run the agent under a sandbox profile that denies that folder, or as a separate macOS user.
