@@ -117,11 +117,12 @@ def _policy(name: str, *, ask: bool = False, generate: bool = False) -> Policy:
     return Policy(name, allowed, describe_request)
 
 
-def write_key(url: str, body: str | None) -> str | None:
-    """The budget a request spends: UPLOAD for an upload POST, the rpcid for a WRITE_RPCIDS call, None for reads."""
+def write_key(method: str, url: str, body: str | None) -> str | None:
+    """The budget a request spends: UPLOAD for an upload POST on a NotebookLM host, the rpcid for a WRITE_RPCIDS
+    call, None for reads. A GET to the upload path is a page load: it spends nothing, so the real upload still can."""
     parts = urlsplit(url)
     if parts.path == UPLOAD_PATH:
-        return UPLOAD
+        return UPLOAD if method.upper() == "POST" and parts.hostname in APP_HOSTS else None
     if parts.path == BATCH_PATH:
         ids = freq_rpcids(body)
         if len(ids) == 1 and ids[0] in WRITE_RPCIDS:
@@ -139,7 +140,7 @@ def write_policy(budget: dict[str, int]) -> Policy:
         body = _body(request)
         if not request_allowed(request.method, request.url, body, writes=writes, upload=left.get(UPLOAD, 0) > 0):
             return False
-        key = write_key(request.url, body)
+        key = write_key(request.method, request.url, body)
         if key is None:
             return True
         if left.get(key, 0) <= 0:
