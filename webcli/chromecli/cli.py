@@ -633,7 +633,10 @@ def _since_ms(value: str | None) -> int | None:
         when = datetime.fromisoformat(value.replace("Z", "+00:00"))  # Python 3.10 reads no "Z"
     except ValueError:
         die(f"--since {value!r} is not a date (YYYY-MM-DD or ISO 8601).", EXIT_USAGE, error="bad_request")
-    return int(when.timestamp() * 1000)
+    try:
+        return int(when.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):  # 0001-01-01 local: the time zone math leaves year 1
+        die(f"--since {value!r} is too far back to be a date.", EXIT_USAGE, error="bad_request")
 
 
 @effects("never")
