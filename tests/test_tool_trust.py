@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import stat
 import textwrap
 from pathlib import Path
@@ -255,6 +256,18 @@ def test_the_daemon_refuses_a_tool_revoked_after_it_loaded(tools):
     assert sites.tier_of("toyhttp") == "community"
     (tools / "revoked.json").write_text(json.dumps({"revoked": ["toyhttp"]}))
     with pytest.raises(ConfigError, match="revoked"):
+        daemon.site_op(Identity("toyhttp:default"), "toyhttp", "get")
+
+
+@pytest.mark.parametrize("off", ["disable", "remove"])
+def test_the_daemon_refuses_a_tool_disabled_or_removed_after_it_loaded(tools, off):
+    folder = make_tool(tools)
+    assert sites.tier_of("toyhttp") == "community"  # the daemon's registry, loaded before the change
+    if off == "disable":
+        (folder / tools_registry.DISABLED).touch()
+    else:
+        shutil.rmtree(folder)
+    with pytest.raises(ConfigError, match="disabled" if off == "disable" else "removed"):
         daemon.site_op(Identity("toyhttp:default"), "toyhttp", "get")
 
 

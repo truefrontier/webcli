@@ -104,10 +104,11 @@ def log(message: str) -> None:
 
 
 def site_op(ident: Identity, site_name: str, op: str) -> Callable[..., Awaitable[Any]]:
-    """<site>.fetch.<op>, if this identity's daemon may run it. A community tool also must not be revoked, may use
-    only its own identities (<tool>:...) or ones granted to it, and runs held to its manifest's hosts."""
+    """<site>.fetch.<op>, if this identity's daemon may run it. A community tool also must not be revoked, disabled,
+    or removed, may use only its own identities (<tool>:...) or ones granted to it, and runs held to its manifest's
+    hosts."""
     from webcli import sites
-    from webcli.core import grants, guard, revoked
+    from webcli.core import grants, guard, revoked, tools_registry
 
     try:
         site = sites.get(site_name)
@@ -125,6 +126,12 @@ def site_op(ident: Identity, site_name: str, op: str) -> Callable[..., Awaitable
     if why:
         raise ConfigError(f"The {site.name} tool is revoked, so it won't run: {why}",
                           hint=f"Remove it: webcli tools remove {site.name}")
+    folder = sites.loaded().candidates[site.name].folder  # and `tools disable` / `tools remove`, like a new process
+    if not folder.is_dir():
+        raise ConfigError(f"The {site.name} tool was removed, so it won't run.")
+    if tools_registry.is_disabled(folder):
+        raise ConfigError(f"The {site.name} tool is disabled, so it won't run.",
+                          hint=f"Turn it back on: webcli tools enable {site.name}")
     if ident.provider != site.name and not grants.is_granted(site.name, ident.id):
         raise ConfigError(f"{site.name} is a community tool, and it may use {ident.id} only if you grant it.",
                           hint=f"To let it run with that session: webcli tools grant {site.name} {ident.id}")
