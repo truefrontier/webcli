@@ -4,7 +4,9 @@ runs against a fake page)."""
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+import py_compile
 import sys
 from pathlib import Path
 
@@ -213,6 +215,25 @@ def test_lint_catches_imports_from_webcli_internals(workdir):
     assert errors(findings) == [
         "imports: webcli_tool_toyhttp/parse.py:6: imports webcli.core; a tool may import only webcli.adapter from webcli",
         "imports: webcli_tool_toyhttp/parse.py:7: imports webcli.sites; a tool may import only webcli.adapter from webcli"]
+
+
+def test_lint_catches_compiled_code_a_reviewer_cant_read(workdir):
+    folder = make()
+    package = folder / "webcli_tool_toyhttp"
+    py_compile.compile(str(package / "__init__.py"), doraise=True)  # Python's own cache: checked against the source
+    unchecked = Path(importlib.util.cache_from_source(str(package / "parse.py")))  # runs instead of parse.py
+    py_compile.compile(str(package / "parse.py"), cfile=str(unchecked), doraise=True,
+                       invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+    (package / "helper.pyc").write_bytes(b"\x00" * 16)  # sourceless: `from . import helper` runs it
+    (package / "fast.abi3.so").write_bytes(b"\x7fELF")  # a native module
+    code, findings = lint("toyhttp")
+    assert code == 7
+    why = "compiled code a reviewer can't read; a tool ships source only"
+    assert [e for e in errors(findings) if e.startswith("compiled")] == [
+        f"compiled: {unchecked.relative_to(folder).as_posix()}: {why} (Python runs this cache without checking it "
+        "against the source)",
+        f"compiled: webcli_tool_toyhttp/fast.abi3.so: {why}",
+        f"compiled: webcli_tool_toyhttp/helper.pyc: {why}"]
 
 
 def test_lint_catches_secrets_and_personal_details_in_fixtures(workdir):
