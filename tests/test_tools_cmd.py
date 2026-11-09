@@ -35,8 +35,10 @@ class Library:
         self.save()
 
     def publish(self, name: str = "toyhttp", *, hosts: tuple[str, ...] = ("httpbin.org",), version: str = "0.1.0",
-                requires: str = "", extra_file: tuple[str, str] | None = None, symlink: bool = False, **kw) -> dict:
-        commit = hashlib.sha1(f"{name}{version}{hosts}{requires}{len(self.tools)}{extra_file}".encode()).hexdigest()
+                requires: str = "", extra_file: tuple[str, str] | None = None, symlink: bool = False,
+                compiled: str | None = None, **kw) -> dict:
+        commit = hashlib.sha1(f"{name}{version}{hosts}{requires}{len(self.tools)}{extra_file}{compiled}"
+                              .encode()).hexdigest()
         src = make_tool(self.root / "src" / commit / "tools", name, version=version,
                         adapter_hosts=repr(tuple(hosts)), **kw)
         toml = src / "webcli-tool.toml"
@@ -45,6 +47,9 @@ class Library:
                         if requires else text)
         if extra_file:
             (src / extra_file[0]).write_text(extra_file[1])
+        if compiled:  # a .pyc or .so at this path, compiled from code nobody reviewed
+            (src / compiled).parent.mkdir(parents=True, exist_ok=True)
+            (src / compiled).write_bytes(b"\x00compiled")
         entry = {"name": name, "version": version, "summary": "a toy tool", "commit": commit,
                  "sha256": index_client.tree_sha256(src), "verified": False}
         if symlink:
@@ -201,6 +206,20 @@ def test_a_link_in_the_tool_is_refused(library, tools):
     library.publish(symlink=True)
     result = run("tools", "install", "toyhttp", "--yes")
     assert result.exit_code == 7 and "link or special file" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+@pytest.mark.parametrize("compiled", [
+    "webcli_tool_toyhttp/__pycache__/__init__.cpython-312.pyc",  # an unchecked-hash .pyc runs instead of the .py
+    "webcli_tool_toyhttp/helper.pyc",  # sourceless: `from . import helper` runs it
+    "webcli_tool_toyhttp/fast.cpython-312-darwin.so",  # a native extension module
+    "webcli_tool_toyhttp/fast.abi3.so",
+    "webcli_tool_toyhttp/fast.pyd",
+])
+def test_compiled_code_in_the_tool_is_refused(library, tools, compiled):
+    library.publish(compiled=compiled)  # the index's sha256 covers it: the pin alone doesn't catch it
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "compiled code" in result.stderr
     assert not (tools / "toyhttp").exists() and leftovers(tools) == []
 
 
