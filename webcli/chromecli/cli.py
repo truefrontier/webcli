@@ -280,7 +280,7 @@ def chromecli_exit_codes() -> dict[int, str]:
 def _env() -> dict[str, str]:
     return {
         output.FORMAT_ENV: "json | table | text | md. Default output when --format is not given.",
-        TIMEOUT_ENV: "Seconds to wait for the extension (default 30).",
+        TIMEOUT_ENV: "Seconds to wait for the extension (default 30; anything but a positive number uses it).",
         config.HOME_ENV: "The data home (default ~/.webcli): config.toml [chromecli], run/chromecli.sock, "
                          "logs/chromecli.log.",
     }

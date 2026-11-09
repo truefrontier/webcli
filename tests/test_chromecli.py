@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from webcli.chromecli import EXTENSION_ID, extension_origin, host, install, policy, protocol
+from webcli.chromecli import EXTENSION_ID, bridge, extension_origin, host, install, policy, protocol
 from webcli.chromecli.cli import group
 from webcli.core import config
 from webcli.core.errors import ConfigError
@@ -365,6 +365,25 @@ def test_host_timeout(ext, monkeypatch):
     monkeypatch.setenv("CHROMECLI_TIMEOUT", "1")
     result = run("list")
     assert result.exit_code == 5 and err(result)["error"] == "timeout"
+
+
+@pytest.mark.parametrize(("value", "seconds"), [
+    ("", 30.0), ("12", 12.0), ("0.5", 0.5), ("abc", 30.0), ("nan", 30.0), ("inf", 30.0), ("-inf", 30.0),
+    ("0", 30.0), ("-5", 30.0),
+])
+def test_timeout_env(monkeypatch, value, seconds):
+    """NaN or infinity crashed every command at int(secs * 1000); a negative value broke the socket's timeout.
+    Like a typo, they get the default (the same bug as WEBCLI_SERVE_RECYCLE_HOURS=nan, #90)."""
+    monkeypatch.setenv("CHROMECLI_TIMEOUT", value)
+    assert bridge.timeout_seconds() == seconds
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-10"])
+def test_a_bad_timeout_env_still_runs_the_command(ext, monkeypatch, value):
+    ext(fake_tabs).start()
+    monkeypatch.setenv("CHROMECLI_TIMEOUT", value)
+    result = run("list")
+    assert result.exit_code == 0, result.stderr
 
 
 def test_config_error_blocks_ops_but_not_status(ext, home):
