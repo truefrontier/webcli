@@ -137,6 +137,13 @@ def test_a_cap_notice_as_the_answer_exits_6_with_resets_at(monkeypatch):
     assert error["resets_at"].endswith(("-05:00", "-06:00"))
 
 
+def test_an_answer_that_talks_about_limits_prints_and_exits_0(monkeypatch):
+    answer = "A rate limit caps how many requests a client may send per minute; HTTP 429 means Too Many Requests."
+    stub(monkeypatch, "ask", {**ANSWER, "answer": answer})
+    result = run("ask", "What is a rate limit?", "--format", "text")
+    assert (result.exit_code, result.stdout) == (0, answer + "\n")
+
+
 def test_a_refusal_raised_by_fetch_exits_6(monkeypatch):
     stub(monkeypatch, "ask", cli.fetch.RateLimited("You've reached our limit of messages per hour.", sent=True,
                                                    resets_at="2026-10-18T15:00:00-05:00"))

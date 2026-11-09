@@ -188,6 +188,32 @@ def test_normal_reply_is_not_rate_limited(text):
     assert not parse.limit_reply(text)
 
 
+@pytest.mark.parametrize("text", [
+    "A rate limit is a cap on how many requests a client can send in a time window.",
+    "HTTP 429 means Too Many Requests: the server is rate limiting you.",
+    "Quota is the share of a resource you're allowed to use.",
+    "Here is how to handle a rate-limited API in Python: retry with exponential backoff.",
+    "The limit was reached at 50 messages in the study.",
+    "Rate limiting is a technique that controls how often a client may call an API.",
+    "Too many requests to one endpoint usually means a retry loop without backoff. " + "Here is why. " * 40,
+])
+def test_an_answer_about_limits_is_not_a_cap_notice(text):
+    """Every answer is checked: a reply that explains rate limits must print, not exit 6 with the answer hidden.
+    Page banners (limit_notice) stay broad: they are never the answer. Ported from chatgpt-web-cli's
+    overflow/chatgptwebclitests (471b06d)."""
+    assert not parse.limit_reply(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Sorry, you've hit your limit for GPT-6 Thinking.", "It looks like you've reached your usage cap.",
+    "Rate limit exceeded.", "Message cap reached. Try again later.", "Daily usage limit reached.",
+    "Your limit resets at 1:53 PM.", "Sorry, rate limit exceeded.", "Oops! Too many requests. Try again later.",
+    "Uh-oh, usage cap reached for GPT-6.",
+])
+def test_short_cap_notices_in_the_answer_still_count(text):
+    assert parse.limit_reply(text)
+
+
 @pytest.mark.parametrize(("text", "now", "expected"), [
     ("You can create more images when the limit resets in 23 hours and 52 minutes.",
      "2026-10-18T13:00:00-05:00", "2026-10-19T12:52:00-05:00"),

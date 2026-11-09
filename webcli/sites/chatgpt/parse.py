@@ -360,9 +360,13 @@ _LIMIT_NOTICE = re.compile(
     r"|\b(?:exceeded|exhausted|used up|out of) (?:your |the )?" + _WORDS + r"quotas?\b"
     r"|\btoo many requests\b|\b(?:usage|message|image generation) caps?\b|\brate.limit(?:ed)?\b",
     re.IGNORECASE)
-_LIMIT_REPLY = re.compile(
-    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _YOU_HIT + "|" + _YOUR_RESETS + ")",
-    re.IGNORECASE)
+# An answer that is a notice: an optional apology, then a notice, at the very start.
+_LIMIT_ANSWER = re.compile(
+    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _LIMIT_NOTICE.pattern
+    + r"|(?:(?:daily|weekly|monthly)\s+)?(?:usage limit|usage cap|too many requests)\b)", re.IGNORECASE)
+# ponytail: a cap notice is a sentence or two (the longest seen is ~140 characters); an answer longer than this is
+# an answer. Raise it if ChatGPT starts appending long upsell text to the notice.
+NOTICE_CHARS = 500
 
 
 def _flat(text: str | None) -> str:
@@ -376,12 +380,12 @@ def limit_notice(text: str | None) -> bool:
 
 
 def limit_reply(answer: str | None) -> bool:
-    """Whether the answer contains Gemini's usage-limit notice, such as "You've reached your
-    limit..." or "Your limit resets...". Explicit quota/usage-limit notices count as well."""
+    """Whether the answer is ChatGPT's usage-limit notice in place of a reply: at most NOTICE_CHARS long and starting
+    like one ("You've reached your limit...", "Your limit resets...", "Usage limit reached", "Rate limit exceeded",
+    "Too many requests..."). Every answer goes through this, so an answer that explains rate limits, quotas, or caps
+    stays an answer; only page notices (limit_notice) are matched anywhere in their text."""
     text = _flat(answer)
-    return bool(text) and (bool(_LIMIT_REPLY.match(text)) or bool(re.match(
-        r"(?:(?:sorry|oops)[,!.]?\s+)?(?:(?:daily|weekly|monthly)\s+)?(?:usage limit|usage cap|quota|too many requests)\b",
-        text, re.IGNORECASE)) or bool(_LIMIT_NOTICE.search(text)))
+    return 0 < len(text) <= NOTICE_CHARS and bool(_LIMIT_ANSWER.match(text))
 
 
 # Reset timestamps always use the owner's America/Chicago time zone.
