@@ -171,3 +171,16 @@ def test_a_failed_replys_error_fields_on_stdout_are_redacted(monkeypatch, site):
     printed = json.loads(result.stdout)
     assert printed["error"] == "rate_limited" and JWT not in printed["message"] and JWT not in result.stderr
     assert printed["answer"] == notice  # the answer itself is the site's content, kept as it came
+
+
+@pytest.mark.parametrize(("text", "secret"), [
+    ('{"auth": {"password": "hunter2"}}', "hunter2"),
+    ('{"tokens": ["short1", "short2"]}', "short2"),
+    ('{"session": {"user": "u1", "expires": 5}, "ok": true}', "u1"),
+    ("{'cookies': [{'name': 'x', 'value': 'v9'}]}", "v9"),
+])
+def test_a_secret_fields_object_or_array_value_is_redacted_whole(text, secret):
+    """The bare-value branch stopped at whitespace, so it ate '{"password":' and left "hunter2"; short or letter-only
+    values slip past the token pass. Ported from chatgpt-web-cli's overflow/chatgptwebclitests (9068726)."""
+    out = redact_text(text)
+    assert secret not in out and REDACTED in out

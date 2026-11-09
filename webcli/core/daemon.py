@@ -26,6 +26,7 @@ import contextvars
 import fcntl
 import importlib
 import json
+import math
 import os
 import plistlib
 import signal
@@ -82,6 +83,8 @@ def recycle_seconds() -> float:
     try:
         hours = float(os.environ.get(RECYCLE_ENV, "") or 6)
     except ValueError:
+        hours = 6
+    if not math.isfinite(hours):  # NaN would relaunch Chrome for every command; neither NaN nor inf is JSON
         hours = 6
     return max(hours, 0.1) * 3600
 

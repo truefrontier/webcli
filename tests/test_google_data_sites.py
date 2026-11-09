@@ -380,8 +380,17 @@ def test_save_file_is_private_atomic_and_never_follows_a_symlink(tmp_path):
 
 
 @pytest.mark.parametrize(("text", "expected"), [
-    ("Team standup 10/19", "Team standup 10_19"), ("../../etc/passwd", ".._.._etc_passwd"), ("..", "fallback"),
+    ("Team standup 10/19", "Team standup 10_19"), ("../../etc/passwd", "_.._etc_passwd"), ("..", "fallback"),
     ("", "fallback"), (None, "fallback"), ("Café über", "Café über"),
 ])
 def test_safe_name(text, expected):
+    assert google.safe_name(text, "fallback") == expected
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    (".zshrc", "zshrc"), (" ..hidden.jpg", "hidden.jpg"), ("../../etc/passwd", "_.._etc_passwd"), (". .", "fallback"),
+])
+def test_safe_name_never_makes_a_hidden_file(text, expected):
+    """Photos saves the server's file name as is, into the current folder: a shared file named .zshrc, downloaded
+    from ~, would replace ~/.zshrc."""
     assert google.safe_name(text, "fallback") == expected

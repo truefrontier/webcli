@@ -13,7 +13,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -89,8 +89,8 @@ def resets_at(retry_after: str | None, now: datetime | None = None) -> str | Non
     """A Retry-After header (seconds, or an HTTP date) as ISO 8601 in America/Chicago; None when absent or odd."""
     value = (retry_after or "").strip()
     try:
-        when = ((now or datetime.now(RESET_TZ)) + timedelta(seconds=int(value)) if value.isdigit()
-                else parsedate_to_datetime(value))
+        when = ((now or datetime.now(RESET_TZ)).astimezone(timezone.utc) + timedelta(seconds=int(value))
+                if value.isdigit() else parsedate_to_datetime(value))  # elapsed time: add in UTC, not on the clock
     except (TypeError, ValueError, OverflowError):
         return None
     return when.astimezone(RESET_TZ).isoformat(timespec="seconds")

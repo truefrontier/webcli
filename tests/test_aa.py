@@ -226,6 +226,16 @@ def test_resets_at_reads_retry_after():
     assert api.resets_at(None) is None and api.resets_at("soon") is None
 
 
+@pytest.mark.parametrize(("now", "expected"), [
+    (datetime(2026, 11, 1, 0, 30, tzinfo=api.RESET_TZ), "2026-11-01T02:30:00-06:00"),  # across the fall-back hour
+    (datetime(2026, 3, 8, 1, 30, tzinfo=api.RESET_TZ), "2026-03-08T05:30:00-05:00"),  # across the skipped hour
+])
+def test_retry_after_counts_elapsed_time_across_dst(now, expected):
+    """Adding seconds to a zoned time is wall-clock math, an hour off on DST days. The same bug as ChatGPT's
+    resets_after (chatgpt-web-cli's overflow/chatgptwebclitests, 471b06d)."""
+    assert api.resets_at("10800", now) == expected
+
+
 # The CLI.
 
 def test_help_lists_every_verb():

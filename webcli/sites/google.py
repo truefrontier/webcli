@@ -111,10 +111,10 @@ async def fetch_file(page: "Page", url: str, ok: Callable[[str], bool], *, what:
 
 
 def safe_name(text: str | None, fallback: str) -> str:
-    """A bare file name from a title: letters, digits, space, . - _ (everything else becomes _); `fallback` when
-    nothing usable is left."""
-    name = "".join(c if c.isalnum() or c in " .-_" else "_" for c in (text or "")).strip()
-    return fallback if not name.strip(".") else name
+    """A bare file name from a title: letters, digits, space, . - _ (everything else becomes _), never hidden (leading
+    dots and spaces go: a download named .zshrc must not replace ~/.zshrc); `fallback` when nothing is left."""
+    name = "".join(c if c.isalnum() or c in " .-_" else "_" for c in (text or "")).strip().lstrip(". ")
+    return name or fallback
 
 
 def save_file(directory: str | Path, name: str, data: bytes) -> Path:
