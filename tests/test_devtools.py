@@ -240,6 +240,20 @@ def test_lint_catches_an_adapter_that_disagrees_with_its_manifest(workdir):
                                 "['httpbin.org'], the manifest ['cdn.httpbin.org', 'httpbin.org']"]
 
 
+@pytest.mark.parametrize("name", ["google", "meta", "none"])
+def test_lint_refuses_a_tool_named_for_a_provider_or_none(workdir, name):
+    # `new` refuses these names, so make toyhttp and rename it throughout: a tool that is right in every other way.
+    # The library's CI lints tools/<name>/ by path. Lint has to refuse it there: core would never load it.
+    folder = make()
+    (folder / "webcli_tool_toyhttp").rename(folder / f"webcli_tool_{name}")
+    for path in [p for p in folder.rglob("*") if p.is_file()]:
+        path.write_text(path.read_text().replace("toyhttp", name))
+    result = run("lint", str(folder), "--format", "json")
+    assert result.exit_code == 7
+    assert errors(out(result)["findings"]) == [
+        f"manifest: name: {name!r} is a built-in site, provider, or webcli command; pick another name"]
+
+
 def test_lint_lists_every_manifest_problem(workdir):
     folder = make()
     edit(folder / "webcli-tool.toml", 'version = "0.1.0"', 'version = "one"\nwrite = true')

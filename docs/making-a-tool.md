@@ -23,7 +23,7 @@ It makes `./webcli-tool-NAME/` and lists it in `~/.webcli/tools/dev.toml`, so th
 | `--identity ID` | The provider the tool signs in as. It defaults to the tool's own name, so the tool gets its own identity, `NAME:default`. Naming another provider, like `google`, prints a warning: webcli won't let the tool use `google:default` until you run `webcli tools grant NAME google:default`. |
 | `--capture` | Before writing anything, opens a visible Chrome on the URL for you to click around in. See [Guided capture](#guided-capture). |
 
-The name is 2 to 32 lowercase letters and digits, starting with a letter. It can't have hyphens, because it's also the identity's name. `new` refuses a built-in site's name (`gmail`), a built-in provider's (`google`), a `webcli` command's (`lint`), and a name the library already has (when `webcli tools` has cached its index). It never overwrites a folder.
+The name is 2 to 32 lowercase letters and digits, starting with a letter. It can't have hyphens, because it's also the identity's name. `new` refuses a built-in site's name (`gmail`), a built-in provider's (`google`), `none`, a `webcli` command's (`lint`), and a name the library already has (when `webcli tools` has cached its index). `lint` refuses the same names, apart from the library's, because webcli won't load a tool by one. It never overwrites a folder.
 
 The tool it makes reads one page: `page` lists the page's headings and links, and `status` says whether the page shows a sign-in form. It has its own guard: GET and HEAD only, to the tool's hosts only. Its tests run offline against `tests/fixtures/`.
 
