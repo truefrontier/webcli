@@ -104,7 +104,12 @@ def elements(data: Any) -> list[dict]:
 
 def ms_to_dt(ms: Any) -> datetime | None:
     n = _num(ms)
-    return None if n is None else datetime.fromtimestamp(n / 1000, tz=timezone.utc)
+    if n is None:
+        return None
+    try:
+        return datetime.fromtimestamp(n / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):  # out of datetime's range: no time
+        return None
 
 
 def campaign_start(campaign: dict) -> datetime | None:

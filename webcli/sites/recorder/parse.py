@@ -26,7 +26,7 @@ def recordings(data: Any, tz: tzinfo | None = None) -> list[dict]:
                 "has_transcript": bool(item[10]),
                 "audio_id": str(item[13]) if item[13] else "",
             })
-        except (IndexError, TypeError, ValueError):
+        except (IndexError, TypeError, ValueError, OverflowError, OSError):  # the last two: a time out of range
             continue
     return rows
 
