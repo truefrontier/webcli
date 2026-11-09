@@ -380,6 +380,13 @@ def limit_notice(text: str | None) -> bool:
     return bool(_LIMIT_NOTICE.search(flat) or re.search(r"\busage (?:limit|cap)\b|\bquota\b", flat, re.IGNORECASE))
 
 
+def refused_for_a_cap(status: int, message: str | None, code: Any) -> bool:
+    """Whether ChatGPT refused a prompt (an HTTP error on the conversation POST, with stream_error's message and code)
+    for a usage cap: a 429, a limit notice, or an error code with a "cap" word in it (model_cap_exceeded; not
+    unsupported_capability)."""
+    return status == 429 or limit_notice(message) or "cap" in re.split(r"[^a-z]+", str(code or "").lower())
+
+
 def limit_reply(answer: str | None) -> bool:
     """Whether the answer is ChatGPT's usage-limit notice in place of a reply: at most NOTICE_CHARS long and starting
     like one ("You've reached your limit...", "Your limit resets...", "Usage limit reached", "Rate limit exceeded",

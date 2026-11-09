@@ -620,7 +620,7 @@ async def _ask_steps(page: "Page", prompt: str, *, model: str | None, chat_id: s
             body = ""
         error = parse.stream_error(body) or {"message": f"HTTP {response.status}", "code": None, "clearsIn": None}
         message = " ".join(str(error["message"]).split())
-        if response.status == 429 or parse.limit_notice(message) or "cap" in str(error.get("code") or ""):
+        if parse.refused_for_a_cap(response.status, message, error.get("code")):
             resets = parse.resets_after(error["clearsIn"]) if error.get("clearsIn") is not None \
                 else parse.resets_at(message)
             raise RateLimited(message, sent=True, resets_at=resets)

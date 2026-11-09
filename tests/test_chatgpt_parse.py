@@ -167,6 +167,19 @@ def test_stream_error(body, expected):
     assert parse.stream_error(body) == expected
 
 
+@pytest.mark.parametrize(("status", "message", "code", "capped"), [
+    (400, "Unsupported capability", "unsupported_capability", False),  # "cap" inside a word isn't a cap
+    (413, "HTTP 413", "content_too_large", False), (500, "HTTP 500", None, False),
+    (400, "You've reached our limit of messages per hour.", "model_cap_exceeded", True),
+    (400, "Something", "model_cap_exceeded", True), (400, "Something", "CAP", True),
+    (429, "HTTP 429", None, True), (403, "Too many requests in 1 hour. Try again later.", None, True),
+])
+def test_refused_for_a_cap(status, message, code, capped):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (0f03cd1): HTTP 400 unsupported_capability exited 6
+    as rate_limited ("don't retry before then") instead of 5."""
+    assert parse.refused_for_a_cap(status, message, code) is capped
+
+
 @pytest.mark.parametrize("text", [
     "You've reached our limit of messages per hour. Please try again later.",
     "You've hit the Plus plan limit for image generations requests. You can create more images when the limit "
