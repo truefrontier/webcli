@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import struct
 import tempfile
@@ -121,6 +122,26 @@ def ext(home):
 
 
 # framing
+
+def test_the_socket_appears_only_once_it_listens(home, monkeypatch):
+    path, real = host.socket_path(), socket.socket
+    seen = []
+
+    class Spy(real):
+        def listen(self, *args):
+            seen.append(path.exists())  # what a client looking for the socket finds right now
+            return super().listen(*args)
+
+    monkeypatch.setattr(host.socket, "socket", Spy)
+    server = host.listen(path)
+    try:
+        assert seen == [False], "the socket path existed before it listened: a client got connection refused"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600 and not path.with_name(path.name + "~").exists()
+        with real(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(path))
+    finally:
+        server.close()
+
 
 def test_frame_round_trip():
     msg = {"v": 1, "op": "tabs.read", "args": {"text": "héllo ✓"}}
