@@ -4,6 +4,7 @@ onto die(message, exit, error=code)."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 from typing import Any
@@ -20,9 +21,11 @@ def timeout_seconds(override: float | None = None) -> float:
     if override:
         return float(override)
     try:
-        return float(os.environ.get(TIMEOUT_ENV, "") or DEFAULT_TIMEOUT)
+        secs = float(os.environ.get(TIMEOUT_ENV, "") or DEFAULT_TIMEOUT)
     except ValueError:
         return DEFAULT_TIMEOUT
+    # NaN and infinity can't become timeoutMs, and a socket timeout can't be negative: like a typo, the default.
+    return secs if math.isfinite(secs) and secs > 0 else DEFAULT_TIMEOUT
 
 
 def socket_path():
