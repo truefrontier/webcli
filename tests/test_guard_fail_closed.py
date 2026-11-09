@@ -105,6 +105,21 @@ def test_a_policy_that_raises_fails_closed():
     assert guard.state.blocked == ["x"]
 
 
+def test_a_request_the_guard_cannot_even_read_is_blocked_and_recorded():
+    """Ported from gemini-web-cli's overflow/geminiwebclitests (f6b500c): a request whose URL raises (its page just
+    closed) fails closed, and the blocked list still says what it was, without the URL."""
+    class Unreadable:
+        method, post_data = "POST", None
+
+        @property
+        def url(self):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    for policy in (GEMINI, CHATGPT, GSC):
+        assert not allowed(policy, Unreadable(), send=True)
+        assert guard.state.blocked == ["POST <unreadable request>"]
+
+
 def test_quiet_requests_are_aborted_but_not_listed():
     log = Request("POST", "https://play.google.com/log?format=json")
     assert not allowed(GSC, log)
