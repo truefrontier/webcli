@@ -144,6 +144,13 @@ def test_an_answer_that_talks_about_limits_prints_and_exits_0(monkeypatch):
     assert (result.exit_code, result.stdout) == (0, answer + "\n")
 
 
+def test_an_answer_that_starts_with_an_error_phrase_prints_and_exits_0(monkeypatch):
+    answer = "An error occurred. That's the generic message Windows shows when an installer fails."
+    stub(monkeypatch, "ask", {**ANSWER, "answer": answer})
+    result = run("ask", "What does this installer message mean?", "--format", "text")
+    assert (result.exit_code, result.stdout) == (0, answer + "\n")
+
+
 def test_a_refusal_raised_by_fetch_exits_6(monkeypatch):
     stub(monkeypatch, "ask", cli.fetch.RateLimited("You've reached our limit of messages per hour.", sent=True,
                                                    resets_at="2026-10-18T15:00:00-05:00"))

@@ -335,7 +335,8 @@ def stream_error(body: str | None) -> dict | None:
 _ERROR_REPLY = re.compile(
     r"(?:something went wrong(?: while generating the response)?(?:\. if this issue persists.*)?"
     r"|hmm\.*\s*something seems to have gone wrong"
-    r"|an error occurred(?:\..*)?|network error|error in message stream|conversation not found)[\s.!]*",
+    r"|an error occurred(?:\. (?:either the engine you requested does not exist|if this issue persists).*)?"
+    r"|network error|error in message stream|conversation not found)[\s.!]*",
     re.IGNORECASE | re.DOTALL)
 
 

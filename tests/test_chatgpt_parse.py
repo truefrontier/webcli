@@ -247,6 +247,28 @@ def test_error_reply(answer, is_error):
     assert parse.error_reply(answer) is is_error
 
 
+@pytest.mark.parametrize("answer", [
+    "An error occurred. That's the generic message Windows shows when an installer fails; here is what to check.",
+    "An error occurred while parsing is what Python prints here: the fix is to quote the key.",
+])
+def test_an_answer_that_starts_with_an_error_phrase_is_still_an_answer(answer):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (471b06d): the (?:\\..*)? tail took any answer that
+    starts "An error occurred." as ChatGPT's own error (exit 5, answer hidden)."""
+    assert not parse.error_reply(answer)
+
+
+@pytest.mark.parametrize("answer", [
+    "An error occurred.", "An error occurred",
+    "An error occurred. Either the engine you requested does not exist or there was another issue processing your "
+    "request. If this issue persists please contact us through our help center at help.openai.com.",
+    "An error occurred. If this issue persists please contact us through our help center at help.openai.com.",
+    "Something went wrong while generating the response. If this issue persists please contact us.",
+    "Hmm...something seems to have gone wrong.", "Network error", "Conversation not found",
+])
+def test_chatgpts_error_messages_are_still_error_replies(answer):
+    assert parse.error_reply(answer)
+
+
 def test_done_waits_for_a_settled_turn_and_gives_images_a_grace_period():
     import time
 
