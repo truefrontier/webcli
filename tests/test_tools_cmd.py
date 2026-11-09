@@ -481,6 +481,22 @@ def test_install_drops_grants_left_under_its_name(library, tools):
         daemon.site_op(Identity("google:default"), "toyhttp", "get")
 
 
+def test_an_install_that_cant_drop_the_old_grants_installs_nothing(library, tools, monkeypatch):
+    # The grants go before the folder goes in place, so a grants.toml that can't be written never leaves the new
+    # tool installed with the old tool's grants.
+    grants.grant("toyhttp", "google:default")
+    library.publish(identity="google")
+
+    def full_disk(_grants):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(grants, "_save", full_disk)
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+    assert grants.list_grants() == {"toyhttp": ["google:default"]}  # untouched, and no tool by that name to use them
+    assert result.exit_code == 7 and "Can't drop the grants left under the name toyhttp" in result.stderr
+
+
 def test_grant_needs_an_installed_tool_and_its_own_identity_needs_none(library, tools):
     assert run("tools", "grant", "toyhttp", "google:default").exit_code == 3
     library.publish()
