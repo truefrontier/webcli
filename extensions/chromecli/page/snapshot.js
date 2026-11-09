@@ -116,6 +116,8 @@ export function pageSnapshot(opts) {
     // for the heuristics only (stripped before anything goes to Jev)
     if (el.getAttribute("name")) item.nameAttr = el.getAttribute("name").slice(0, 60);
     if (el.id) item.idAttr = el.id.slice(0, 60);
+    // A page can make any attribute huge: no field goes back longer than this (name and outerHTML are shorter still).
+    for (const k in item) if (typeof item[k] === "string" && item[k].length > 500) item[k] = item[k].slice(0, 500) + "…";
     out.push(item);
   }
   return { ok: true, url: location.href, title: document.title, elements: out };
