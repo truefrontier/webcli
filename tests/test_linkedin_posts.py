@@ -664,7 +664,7 @@ def test_posts_search_reads_urns_from_the_pages_own_stream_responses(monkeypatch
 def test_card_time_lines(line, minutes):
     now = datetime(2026, 10, 23, 17, 0, tzinfo=timezone.utc)
     row = posts.card_row({**CARD, "actorLines": ["Jane Doe", "Builder", line]}, now=now)
-    assert datetime.fromisoformat(row["posted_at"]) == now - timedelta(minutes=minutes)
+    assert datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")) == now - timedelta(minutes=minutes)
     assert row["author_headline"] == "Builder"
 
 
