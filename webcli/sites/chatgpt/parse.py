@@ -443,7 +443,7 @@ def resets_after(seconds: float | None, now: datetime | None = None) -> str | No
     if seconds is None or seconds < 0:
         return None
     now = now or datetime.now(RESET_TZ)
-    when = now.astimezone(RESET_TZ) + timedelta(seconds=round(seconds))
+    when = (now.astimezone(timezone.utc) + timedelta(seconds=round(seconds))).astimezone(RESET_TZ)  # elapsed time
     return when.replace(microsecond=0).isoformat()
 
 

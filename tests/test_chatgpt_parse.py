@@ -238,6 +238,18 @@ def test_resets_after_seconds():
     assert parse.resets_after(None, now) is None and parse.resets_after(-1, now) is None
 
 
+@pytest.mark.parametrize(("now", "expected"), [
+    ("2026-11-01T00:30:00-05:00", "2026-11-01T02:30:00-06:00"),  # 3 real hours across the fall-back hour
+    ("2026-03-08T01:30:00-06:00", "2026-03-08T05:30:00-05:00"),  # and across the skipped spring hour
+    ("2026-10-18T13:00:00-05:00", "2026-10-18T16:00:00-05:00"),
+])
+def test_relative_resets_count_elapsed_time_across_dst(now, expected):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (471b06d): adding seconds to a zoned time is
+    wall-clock math, an hour off on DST days."""
+    assert parse.resets_after(3 * 3600, datetime.fromisoformat(now)) == expected
+    assert parse.resets_at("Your limit resets in 3 hours.", datetime.fromisoformat(now)) == expected
+
+
 @pytest.mark.parametrize(("answer", "is_error"), [
     ("Something went wrong while generating the response. If this issue persists please contact us.", True),
     ("Hmm...something seems to have gone wrong.", True), ("Network error", True),
