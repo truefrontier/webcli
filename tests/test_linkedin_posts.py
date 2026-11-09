@@ -120,7 +120,8 @@ def test_hidden_counts_are_null_and_pulse_links_make_an_article():
 def test_urn_time_reads_the_id_and_refuses_implausible_ones():
     assert posts.urn_time(A1) == iso(T1)
     assert posts.urn_time("urn:li:activity:12345678") is None  # 1970: not a time-based id
-    assert posts.urn_time(f"urn:li:activity:{sid(NOW + timedelta(days=400))}") is None
+    future = datetime.now(timezone.utc) + timedelta(days=400)  # urn_time checks the real clock, not NOW
+    assert posts.urn_time(f"urn:li:activity:{sid(future)}") is None
     assert posts.urn_time("urn:li:fsd_profile:x") is None
 
 
