@@ -213,6 +213,49 @@ def test_a_manifest_that_disagrees_with_the_index_is_refused(library, tools):
     assert not (tools / "toyhttp").exists()
 
 
+def add_to_archive(library: Library, name: str, extra: tuple[tuple[str, int], ...]) -> None:
+    """Add zero-filled files outside the tool's folder (the library's other folders) to its published tarball."""
+    path = library.root / f"{library.tools[name]['commit']}.tar.gz"
+    with tarfile.open(path) as old:
+        members = [(m, old.extractfile(m).read() if m.isfile() else None) for m in old.getmembers()]
+    with tarfile.open(path, "w:gz") as tar:
+        for member, data in members:
+            tar.addfile(member, None if data is None else io.BytesIO(data))
+        for rel, size in extra:
+            info = tarfile.TarInfo(f"webcli-tools-{library.tools[name]['commit']}/{rel}")
+            info.size = size
+            tar.addfile(info, io.BytesIO(bytes(size)))
+
+
+def test_an_archive_with_too_many_files_is_refused_even_outside_the_tool(library, tools, monkeypatch):
+    # tarfile reads, and keeps, every member's header to find the tool's folder, so the count covers them all.
+    monkeypatch.setattr(index_client, "MEMBER_LIMIT", 20, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", tuple((f"other/{i}.txt", 0) for i in range(30)))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "more than 20 files" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_an_archive_that_expands_too_far_is_refused_even_outside_the_tool(library, tools, monkeypatch):
+    # Skipping a member still decompresses it, so the size covers the members outside the tool's folder too.
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/big.bin", 2_000_000),))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "expands past 1 MB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_an_archive_under_both_limits_installs(library, tools, monkeypatch):
+    monkeypatch.setattr(index_client, "MEMBER_LIMIT", 40, raising=False)
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/a.txt", 10), ("other/b.bin", 500_000)))
+    ok("tools", "install", "toyhttp", "--yes")
+    assert (tools / "toyhttp" / "webcli-tool.toml").is_file()
+
+
 def test_a_tool_that_needs_a_newer_webcli_is_refused(library, tools):
     library.publish(requires=">=99")
     result = run("tools", "install", "toyhttp", "--yes")
