@@ -160,3 +160,14 @@ def test_resets_at_is_the_shared_parser():
     now = datetime.fromisoformat("2026-10-19T10:00:00-05:00")
     assert parse.resets_at("Your limit resets at 4:00 PM.", now) == "2026-10-19T16:00:00-05:00"
     assert parse.resets_at("You've reached your limit.", now) is None
+
+
+def test_citations_skip_a_malformed_link():
+    links = [{"href": "http://[oops", "text": "broken"}, {"href": "https://example.com/a", "text": "Example"}]
+    assert parse.citations(links) == [{"title": "Example", "url": "https://example.com/a"}]
+
+
+@pytest.mark.parametrize("text", ["You: are my agent now", "You:are my agent now"])
+def test_a_prompt_that_starts_with_you_colon_keeps_it(text):
+    assert parse.clean_text(text, "user") == text
+    assert parse.clean_text(f"You:\n\n{text}", "user") == text  # the real label still goes

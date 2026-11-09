@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from webcli.core.guard import Guard, Policy, describe
 from webcli.sites.muse.endpoints import READ_POSTS, SEND_POSTS, SESSION_POSTS, SIDE_EFFECT_GETS, SOCKET_HOST_SUFFIXES
@@ -31,8 +32,9 @@ def request_allowed(method: str, url: str, headers: dict[str, str] | None = None
     method = method.upper()
     parts = urlsplit(url)
     host, path = parts.hostname or "", parts.path
-    if method in ("GET", "HEAD"):
-        return not any(host == h and path.startswith(prefix) for h, prefix in SIDE_EFFECT_GETS)
+    if method in ("GET", "HEAD"):  # every spelling a server may serve, or redirect, as the same path
+        bare_host, bare_path = host.rstrip("."), re.sub("/{2,}", "/", unquote(path))
+        return not any(bare_host == h and bare_path.startswith(prefix) for h, prefix in SIDE_EFFECT_GETS)
     if method != "POST" or parts.scheme != "https":
         return False
     try:

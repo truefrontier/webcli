@@ -130,11 +130,8 @@ def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, **k
     """fetch.ask (saving the reply's images under image_out), then remember its chat for `-p -c`."""
     _need_session()
     result = _call("ask", prompt, chat_id=chat_id, want_images=image_out is not None, **kwargs)
-    last = llm.last_chat_file(SITE)
-    if result["chatId"]:
-        _write(last, result["chatId"] + "\n", result["chatId"])
-    else:
-        last.unlink(missing_ok=True)  # so -c can't fall back to an older chat
+    chat = result["chatId"]
+    _write(llm.last_chat_file(SITE), f"{chat}\n" if chat else None, chat)  # None clears it: -c can't use an older chat
     _save_images(result, image_out, prompt)
     if image_out is None and result["imageCount"]:
         where = result["chatUrl"] or "the chat at chatgpt.com"
