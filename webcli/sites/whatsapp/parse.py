@@ -109,7 +109,10 @@ def parse_since(value: str, now: datetime) -> datetime:
     value = (value or "").strip()
     if m := RELATIVE.match(value):
         unit = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}[m[2].lower()]
-        return now - timedelta(**{unit: int(m[1])})
+        try:
+            return now - timedelta(**{unit: int(m[1])})
+        except OverflowError:  # before year 1, or more than timedelta holds
+            raise ValueError(f"{value!r} is too far back to be a date.") from None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:

@@ -401,8 +401,8 @@ def _card_time(lines: list[str], now: datetime) -> str | None:
             unit = found.group(2).lower()
             if unit in ("mo", "yr"):  # months and years: too coarse to compute; still a known-old post
                 days = int(found.group(1)) * (30 if unit == "mo" else 365)
-                return linkedin_time_to_iso(f"{days}d", now=now)
-            return linkedin_time_to_iso(f"{found.group(1)}{unit}", now=now)
+                return linkedin_time_to_iso(f"{days}d", now=now) or None
+            return linkedin_time_to_iso(f"{found.group(1)}{unit}", now=now) or None
     return None
 
 

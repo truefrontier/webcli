@@ -582,8 +582,11 @@ def parse_since(value: str | None, *, flag: str = "--since", now: datetime | Non
     raw = value.strip()
     rel = _RELATIVE_SINCE.fullmatch(raw)
     if rel:
-        amount = timedelta(**{_RELATIVE_UNIT[rel.group(2)[0].lower()]: int(rel.group(1))})
-        return (now or datetime.now(timezone.utc)) - amount
+        try:
+            return (now or datetime.now(timezone.utc)) - timedelta(
+                **{_RELATIVE_UNIT[rel.group(2)[0].lower()]: int(rel.group(1))})
+        except OverflowError:  # before year 1, or more than timedelta holds
+            raise ValueError(f"Invalid {flag}: {raw!r} is too far back to be a date.") from None
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     try:
@@ -605,19 +608,13 @@ def linkedin_time_to_iso(token: str, *, now: datetime | None = None) -> str:
     text = (token or "").replace("•", "").strip()
     rel = _REL_TIME.fullmatch(text)
     if rel:
-        n = int(rel.group(1))
-        unit = rel.group(2).lower()
-        delta = {
-            "s": timedelta(seconds=n),
-            "m": timedelta(minutes=n),
-            "h": timedelta(hours=n),
-            "d": timedelta(days=n),
-            "w": timedelta(weeks=n),
-            # ponytail: LinkedIn rounds months and years, so 30 and 365 days are as exact as the label (posts.py too).
-            "mo": timedelta(days=30 * n),
-            "yr": timedelta(days=365 * n),
-        }[unit]
-        return _iso(now - delta)
+        # ponytail: LinkedIn rounds months and years, so 30 and 365 days are as exact as the label (posts.py too).
+        unit, per = {"s": ("seconds", 1), "m": ("minutes", 1), "h": ("hours", 1), "d": ("days", 1),
+                     "w": ("weeks", 1), "mo": ("days", 30), "yr": ("days", 365)}[rel.group(2).lower()]
+        try:
+            return _iso(now - timedelta(**{unit: int(rel.group(1)) * per}))
+        except OverflowError:  # before year 1: no time, like a bad timestamp (_ms_to_iso)
+            return ""
     abs_m = _ABS_TIME.fullmatch(text)
     if abs_m:
         year = int(abs_m.group(3) or now.year)
