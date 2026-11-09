@@ -168,7 +168,10 @@ async def download(media_id: str, out_dir: str, *, headed: bool = False) -> dict
                                                             what="the original")
             if status in (401, 403):
                 raise AuthRequired(f"Google Photos refused the original of {media_id} (HTTP {status}).")
-            video = "video/" in headers.get("content-type", "") or len(body) > VIDEO_MIN_BYTES
+            ctype = headers.get("content-type", "").lower()
+            if "text/html" in ctype:  # a sign-in or error page, never the original
+                continue
+            video = "video/" in ctype or len(body) > VIDEO_MIN_BYTES
             if status == 200 and body and (suffix == "=d" or video):  # a small still from =dv is only a poster
                 chosen = (headers, body)
                 break

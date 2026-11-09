@@ -200,6 +200,18 @@ def test_download_never_replaces_a_dot_file(monkeypatch, tmp_path):
     assert saved["path"] == str(tmp_path / "zshrc") and (tmp_path / "zshrc").read_bytes() == b"jpeg!"
 
 
+def test_download_never_saves_an_html_page(monkeypatch, tmp_path):
+    """A 200 text/html answer is a sign-in or error page, never the original, even when it's as big as a video.
+    Ported from google-photos-cli's overflow/gphotostests (2a975b4)."""
+    install(monkeypatch, photo_page(
+        requests={f"https://photos.google.com/photo/{KEY}": [f"{BASE}=w800"]},
+        files={f"{BASE}=dv": APIResponse(200, b"<html>" + b" " * 60_000, {"content-type": "text/html; charset=utf-8"}),
+               f"{BASE}=d": APIResponse(200, b"<html>", {"content-type": "text/html"})}))
+    with pytest.raises(RuntimeError, match=f"^Google Photos answered no original for {KEY}.$"):
+        asyncio.run(fetch.download(KEY, str(tmp_path)))
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_poster_is_never_the_original_and_a_refusal_is_sign_in(monkeypatch, tmp_path):
     request = {f"https://photos.google.com/photo/{KEY}": [f"{BASE}=w800"]}
     install(monkeypatch, photo_page(requests=request, files={
