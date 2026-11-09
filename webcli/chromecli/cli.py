@@ -630,7 +630,7 @@ def _since_ms(value: str | None) -> int | None:
     if not value:
         return None
     try:
-        when = datetime.fromisoformat(value)
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))  # Python 3.10 reads no "Z"
     except ValueError:
         die(f"--since {value!r} is not a date (YYYY-MM-DD or ISO 8601).", EXIT_USAGE, error="bad_request")
     return int(when.timestamp() * 1000)

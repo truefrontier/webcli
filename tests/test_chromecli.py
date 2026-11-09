@@ -314,6 +314,13 @@ def test_status_list_read_history_screenshot(ext, home, tmp_path):
     assert pushed and pushed[0]["policy"]["deny"] == list(policy.DEFAULT_DENY)
 
 
+def test_history_since_reads_a_utc_z(ext):
+    fake = ext(fake_tabs).start()
+    assert run("history", "--since", "2026-10-01T00:00:00Z", "--format", "json").exit_code == 0
+    [sent] = [m for m in fake.received if m.get("op") == "history.search"]
+    assert sent["args"]["since"] == 1790812800000  # 2026-10-01T00:00:00Z, on Python 3.10 too
+
+
 def test_target_is_tab_or_active(ext):
     ext(fake_tabs).start()
     assert run("read").exit_code == 2
