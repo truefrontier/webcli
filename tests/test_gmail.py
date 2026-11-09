@@ -138,15 +138,23 @@ def test_find_matches_the_exact_id_only():
 
 
 def test_create_plans_need_a_criterion_and_an_action():
-    plan = parse.create_plan({"from": "a@example.com", "to": "", "subject": None, "hasAttachment": False},
+    plan = parse.create_plan({"from": "a@example.com", "to": None, "subject": None, "hasAttachment": False},
                              ["star", "skipInbox", "bogus"])
     assert plan == {"criteria": {"from": "a@example.com"}, "actions": ["skipInbox", "star"]}
     assert parse.needles(plan) == ("a@example.com",)
     assert parse.needles(parse.create_plan({"hasAttachment": True}, ["star"])) == ()
     with pytest.raises(ValueError, match="criterion"):
-        parse.create_plan({"to": " "}, ["star"])
+        parse.create_plan({"to": None}, ["star"])
     with pytest.raises(ValueError, match="action"):
         parse.create_plan({"from": "a@example.com"}, [])
+
+
+def test_a_blank_criterion_is_refused_not_dropped():
+    # Dropping it widened the filter: --from "$BOSS" with $BOSS unset made "Subject: urgent -> Delete it" for everyone.
+    with pytest.raises(ValueError, match="^Blank criterion: --from. Give it a value or leave the option out.$"):
+        parse.create_plan({"from": "", "subject": "urgent"}, ["delete"])
+    with pytest.raises(ValueError, match="^Blank criterion: --to, --negated-query. "):
+        parse.create_plan({"from": "a@example.com", "to": " ", "negatedQuery": "\t"}, ["star"])
 
 
 # The filters page, scripted.
@@ -283,6 +291,26 @@ def test_create_that_never_shows_up_is_an_error_naming_what_the_guard_blocked(pa
         asyncio.run(fetch.create_filter(parse.create_plan({"from": "x@example.com"}, ["star"]), confirm=True))
 
 
+def test_create_stops_when_two_labels_share_one_box(pages):
+    _, install = pages
+    new = {"id": "z0000001790000000000*1", "criteria": "from:(boss@example.com)", "actionText": "Do this: Delete it"}
+    page = install(FiltersPage(RAW, [*RAW, new]))  # FiltersPage answers every FIELD_JS with the same spot
+    plan = parse.create_plan({"from": "boss@example.com", "negatedQuery": "urgent"}, ["delete"])
+    with pytest.raises(RuntimeError, match="From and Doesn't have share one text box; nothing was created"):
+        asyncio.run(fetch.create_filter(plan, confirm=True))
+    assert page.typed == ["boss@example.com"]  # "urgent" never typed
+    assert ("text", "Create filter") not in page.clicked and ("text", "Delete it") not in page.clicked
+
+
+def test_create_wont_guess_when_several_rows_are_new(pages):
+    _, install = pages
+    new = {"id": "z0000001790000000000*1", "criteria": "from:(new@example.com)", "actionText": "Do this: Star it"}
+    install(FiltersPage([RAW[0]], [RAW[0], new, RAW[1]]))  # the first read missed RAW[1]
+    says = r"^2 filters look new \(z0000001790000000000\*1, 1234567890123\), so webcli can't tell which one it made"
+    with pytest.raises(RuntimeError, match=says):
+        asyncio.run(fetch.create_filter(parse.create_plan({"from": "new@example.com"}, ["star"]), confirm=True))
+
+
 # The commands, over a faked daemon.
 
 @pytest.fixture
@@ -347,6 +375,7 @@ def test_only_confirm_deletes(calls):
     ("filters", "create", "--from", "a@example.com", "--star", "--dry-run", "--confirm"),
     ("filters", "delete", "1234567890123", "--dry-run", "--confirm"),
     ("filters", "create", "--star"),  # no criterion
+    ("filters", "create", "--from", "", "--subject", "urgent", "--delete-it", "--confirm"),  # a blank criterion
     ("filters", "create", "--from", "a@example.com"),  # no action
     ("filters", "create", "--from", "a@example.com", "--forward", "x@example.com"),  # dropped: never worked
     ("filters", "create", "--from", "a@example.com", "--add-label", "Label_1"),

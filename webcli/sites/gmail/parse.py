@@ -43,7 +43,12 @@ def find(rows: list[dict], filter_id: str) -> dict | None:
 
 
 def create_plan(criteria: dict[str, Any], actions: list[str]) -> dict:
-    """{criteria, actions}: what `filters create` fills in and ticks. ValueError without a criterion or an action."""
+    """{criteria, actions}: what `filters create` fills in and ticks. ValueError without a criterion or an action, or
+    for a blank one: dropping it would widen the filter (`--from "$BOSS"` with $BOSS unset)."""
+    blank = ["--" + re.sub(r"([A-Z])", r"-\1", k).lower() for k, v in criteria.items()
+             if k in CRITERIA_LABELS and isinstance(v, str) and not v.strip()]
+    if blank:
+        raise ValueError(f"Blank criterion: {', '.join(blank)}. Give it a value or leave the option out.")
     criteria = {k: v for k, v in criteria.items()
                 if (k in CRITERIA_LABELS and isinstance(v, str) and v.strip()) or (k == "hasAttachment" and v is True)}
     actions = [a for a in ACTION_LABELS if a in actions]
