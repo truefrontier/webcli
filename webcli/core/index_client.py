@@ -48,6 +48,8 @@ CACHE = "index-cache.json"
 INDEX_LIMIT = 5_000_000
 ARCHIVE_LIMIT = 50_000_000  # the download, and separately what one tool's files expand to
 TIMEOUT = 30
+# What Python imports with no source next to it (an unchecked-hash .pyc even wins over the .py beside it).
+COMPILED = (".pyc", ".pyo", ".pyd", ".so")
 _HEX = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -276,6 +278,9 @@ def download(entry: Entry, dest: Path) -> None:
                 if not member.isfile() or ".." in rel or rel[0].startswith("/"):
                     raise LibraryError(f"{entry.path}/{'/'.join(rel)} in {target} is a link or special file; "
                                       "not installing it.")
+                if "__pycache__" in rel or rel[-1].endswith(COMPILED):
+                    raise LibraryError(f"{entry.path}/{'/'.join(rel)} in {target} is compiled code; a tool ships "
+                                      "only source a reviewer can read. Not installing it.")
                 size += member.size
                 if size > ARCHIVE_LIMIT:
                     raise LibraryError(f"{entry.path}/ in {target} expands past {ARCHIVE_LIMIT // 1_000_000} MB; "
