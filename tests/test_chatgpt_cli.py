@@ -184,6 +184,21 @@ def test_a_challenge_with_headed_exits_4_as_cloudflare_challenge(monkeypatch):
     assert calls[0][1]["headed"] is True
 
 
+@pytest.mark.parametrize("command", [("models",), ("ask", "q")])
+def test_a_challenge_the_api_sees_with_headed_is_still_cloudflare_challenge(monkeypatch, command):
+    """fetch.api_json and session_summary raise Challenged("page") when ChatGPT's API answers 403 cf-mitigated. In a
+    --headed run that is the visible window's check, not hidden Chrome's: the hint must not say no window is shown.
+    Ported from chatgpt-web-cli's overflow/chatgptwebclitests (68bd84c)."""
+    op = "models" if command == ("models",) else "ask"
+    stub(monkeypatch, op, Challenged("page"))
+    result = run(*command, "--headed")
+    error = json.loads(result.stderr)
+    assert (result.exit_code, error["error"]) == (4, "cloudflare_challenge")
+    assert "No window is ever shown" not in error["hint"]
+    result = run(*command)  # the same answer in hidden Chrome is hidden_browser_blocked
+    assert (result.exit_code, json.loads(result.stderr)["error"]) == (4, "hidden_browser_blocked")
+
+
 def test_image_out_saves_and_reports_original(monkeypatch, tmp_path):
     data = png(1254, 1254)
     stub(monkeypatch, "ask", {**ANSWER, "answer": "", "imageCount": 1,

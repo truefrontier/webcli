@@ -99,8 +99,9 @@ group = llm.site_group(SITE, "ChatGPT web CLI (unofficial; not OpenAI's API). Id
 _write = llm.writer("ChatGPT", "llmcli chatgpt chats show", "chatgpt.com")
 
 
-def _fail(exc: BaseException) -> None:
-    output.fail(exc, site="ChatGPT", login=llm.login_hint(SITE), chats=CHATS_CMD, challenge=CHALLENGE_HINT)
+def _fail(exc: BaseException, *, headed: bool = False) -> None:
+    output.fail(exc, site="ChatGPT", login=llm.login_hint(SITE), chats=CHATS_CMD, challenge=CHALLENGE_HINT,
+                headed=headed)
 
 
 def _call(op: str, *args, headed: bool = False, **kwargs) -> Any:
@@ -109,7 +110,7 @@ def _call(op: str, *args, headed: bool = False, **kwargs) -> Any:
     except SystemExit:
         raise
     except Exception as exc:
-        _fail(exc)
+        _fail(exc, headed=headed)
 
 
 def _id_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
