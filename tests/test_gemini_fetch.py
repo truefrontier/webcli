@@ -1327,3 +1327,94 @@ def test_only_login_and_headed_open_a_visible_chrome(monkeypatch):
     with pytest.raises(Stop):
         run(fetch.login(5))
     assert launches == [(False, False), (False, True)]
+
+
+# Error paths: a payload that isn't JSON, attaching without the file chooser, an image fetch that fails.
+# Ported from gemini-web-cli's overflow/geminiwebclitests (d693466).
+
+
+def test_an_rpc_payload_that_is_not_json_is_a_sniff_error(page):
+    frame = '[["wrb.fr","MaZiqc","not json"]]'
+    page({FIRST: (OK, f")]}}'\n\n{len(frame)}\n{frame}")})
+    with pytest.raises(RuntimeError, match="^MaZiqc answered something that isn't batchexecute JSON"):
+        run(fetch.chats(10))
+
+
+class _UploadLocator:
+    def __init__(self, page, selector):
+        self.page, self.selector = page, selector
+
+    first = property(lambda self: self)
+
+    async def click(self, **kwargs):
+        self.page.events.append(("click", self.selector))
+
+    async def set_input_files(self, files, **kwargs):
+        if not self.page.file_input:
+            raise PlaywrightTimeout("Timeout 5000ms exceeded.")
+        self.page.events.append(("input", tuple(files)))
+
+
+class _UploadPage:
+    """A page for _attach: whether the upload menu opens a file chooser, and whether a file input is on the page."""
+
+    def __init__(self, *, chooser, file_input):
+        self.chooser, self.file_input, self.events = chooser, file_input, []
+
+    def locator(self, selector):
+        return _UploadLocator(self, selector)
+
+    @asynccontextmanager
+    async def expect_file_chooser(self, timeout):
+        page = self
+
+        class Chooser:
+            async def set_files(self, files):
+                page.events.append(("chooser", tuple(files)))
+
+        class Pending:
+            @property
+            async def value(self):
+                if not page.chooser:
+                    raise PlaywrightTimeout("Timeout 10000ms exceeded while waiting for event \"filechooser\"")
+                return Chooser()
+
+        yield Pending()
+
+
+def test_attach_uses_the_file_chooser_then_a_file_input_then_gives_up():
+    files = ["/tmp/a.md", "/tmp/b.png"]
+    chooser = _UploadPage(chooser=True, file_input=True)
+    run(fetch._attach(chooser, files))
+    assert chooser.events == [("click", sel.UPLOAD_MENU_BUTTON), ("click", sel.UPLOAD_FILES_ITEM),
+                              ("chooser", tuple(files))]
+    fallback = _UploadPage(chooser=False, file_input=True)
+    run(fetch._attach(fallback, files))
+    assert fallback.events[-1] == ("input", tuple(files)) and ("chooser", tuple(files)) not in fallback.events
+    with pytest.raises(RuntimeError, match="^Couldn't attach 2 file\\(s\\) with Gemini's upload menu"):
+        run(fetch._attach(_UploadPage(chooser=False, file_input=False), files))
+
+
+def test_a_failed_image_fetch_names_only_the_host_and_path_shape():
+    signed = "https://lh3.googleusercontent.com/gg-dl/AOI_dSIGNEDGRANT0123456789abcdefSECRET=d-I?alr=yes"
+
+    class Broken:
+        async def get(self, url, **kwargs):
+            raise RuntimeError(f"net::ERR_CONNECTION_RESET at {url}")
+
+    with pytest.raises(RuntimeError) as caught:
+        run(fetch._get_image(type("Page", (), {"request": Broken()})(), signed))
+    assert str(caught.value) == "Fetching the image failed (GET lh3.googleusercontent.com/gg-dl/<redacted>)."
+    assert caught.value.__suppress_context__  # the original error, which holds the signed URL, isn't shown
+
+
+def test_model_menu_closes_without_a_click_when_nothing_matches_or_the_model_is_current(page):
+    """Ported from gemini-web-cli's overflow/geminiwebclitests (2cfef4b)."""
+    fake = page(answers=body("stream_generate.txt"), menu=MENU)
+    with pytest.raises(fetch.NotFound, match="^No model matches 'gpt'. Available: Fast, Thinking, Pro"):
+        run(fetch.ask("hi", model="gpt"))
+    assert ("key", "Escape") in fake.events and ("click", sel.SEND_BUTTON) not in fake.events
+    fake = page(answers=body("stream_generate.txt"), menu=MENU)
+    assert run(fetch.ask("hi", model="fast"))["model"] == "Fast"
+    assert ("key", "Escape") in fake.events and not any(e[0] == "nth" for e in fake.events)  # no row clicked
+
