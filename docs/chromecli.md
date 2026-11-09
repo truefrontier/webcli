@@ -183,6 +183,9 @@ Jev never removes a heuristic gate on any tab kind.
 - **Always gated** (`extensions/chromecli/gate.js`, spec 6.7): `eval`; clicks on submit-like elements (`button`
   default-submit in a form, `input[type=submit|image]`, or name/value/title matching
   `\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy|install|uninstall|authori[sz]e)\b`; install/uninstall/authorize are new in 0.11.3);
+  a click on a `<label>`, or on plain content inside one, is gated as a click on the control the label also clicks
+  (the element's `activates`; a styled `<label for=pay>` over a hidden submit submits the form, and the confirm
+  window shows it as *Also clicks*);
   Enter (or Space) on such a button; `press Enter` in a form field; `type`/`fill`/`select` into `input[type=password]`,
   `autocomplete` `cc-*` / `current-password` / `new-password` / `one-time-code`, or name/id/label matching
   `card|cvv|cvc|iban|routing|ssn`; `open`/`navigate` to an origin outside `read_allow ∪ act_allow` (since 0.9.1 a

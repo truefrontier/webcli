@@ -40,3 +40,11 @@ test("0.10.0: a grant that matched but failed its amount cap shows the quote, th
   const none = Object.fromEntries(detailRows({ op: "click", origin: "o", grant: { quote: "q", maxAmount: 5, currency: "USD", amount: null } }).map(([k, v]) => [k, v]));
   assert.equal(none.Amount, "couldn't read one (cap $5.00)");
 });
+
+test("the confirm window names the control a label's click also clicks", () => {
+  const rows = Object.fromEntries(detailRows({ op: "click", origin: "https://shop.example.com",
+    element: { tag: "label", name: "Continue", activates: { tag: "input", role: "button", type: "submit", name: "Place order" } } }));
+  assert.equal(rows.Element, "<label>");
+  assert.equal(rows["Also clicks"], "<input> · button · type=submit · “Place order”");
+  assert.equal(detailRows({ op: "click", origin: "o", element: { tag: "button", name: "Go" } }).some(([k]) => k === "Also clicks"), false);
+});
