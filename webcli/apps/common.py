@@ -188,7 +188,7 @@ def chrome_info() -> dict:
 def doctor_command() -> click.Command:
     """`doctor`: one health report over the shared data home. Registered on both webcli and llmcli."""
     from webcli.chromecli import doctor as chromecli_doctor
-    from webcli.core import config, hardening
+    from webcli.core import config, hardening, revoked
 
     @effects("with_flag", via=("fix",), local_setup=True)
     @click.command("doctor")
@@ -203,6 +203,7 @@ def doctor_command() -> click.Command:
         root = config.ensure_home()
         home = hardening.apply(root) if fix else hardening.check(root)
         known = identities.known(list(sites.registry().values()))
+        community = [n for n in sites.registry() if sites.tier_of(n) == sites.COMMUNITY]
         report = {
             "version": __version__,
             "home": home,
@@ -210,8 +211,8 @@ def doctor_command() -> click.Command:
             "identities": [identity_report(i, browser_check=not no_browser) for i in known],
             "sites": {"llmcli": [s.name for s in sites.of_kind("llm")],
                       "webcli": [s.name for s in sites.of_kind("data")]},
-            "tools": {"community": [n for n in sites.registry() if sites.tier_of(n) == sites.COMMUNITY],
-                      "skipped": sites.skipped()},
+            "tools": {"community": community, "skipped": sites.skipped(),
+                      "revocations": revoked.freshness(bool(community))},
             "chromecli": chromecli_doctor.report(),
         }
         report["ok"] = bool(home["ok"] and report["chrome"]["installed"])
