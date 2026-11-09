@@ -306,3 +306,26 @@ def test_done_waits_for_a_settled_turn_and_gives_images_a_grace_period():
     assert not _done(ended, True, time.monotonic())  # an image may still come
     assert _done(ended, True, time.monotonic() - IMAGE_GRACE - 1)
     assert _done({**ended, "images": [{"fileId": "f"}]}, True, time.monotonic())
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (1760814000, "2025-10-18T19:00:00Z"), (1760814000.5, "2025-10-18T19:00:00.500000Z"),
+    ("2025-10-18T19:00:00Z", "2025-10-18T19:00:00Z"), ("2025-10-18T14:00:00-05:00", "2025-10-18T19:00:00Z"),
+    ("not a date", "not a date"), ("", None), (0, None), (None, None),
+    (1760814000000, None), (1e300, None),  # epoch milliseconds or garbage: no time, not a failed chats list
+])
+def test_iso_time(value, expected):
+    assert parse.iso_time(value) == expected
+
+
+def test_chats_survive_a_bad_timestamp():
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (761ee2c): epoch milliseconds raised "year 57767 is
+    out of range" and failed the whole chats list."""
+    rows = parse.chats({"items": [{"id": "a", "update_time": 1760814000000, "create_time": "x"}]})
+    assert rows[0]["updated"] is None and rows[0]["created"] == "x"
+
+
+def test_an_absurd_reset_is_no_reset_time_not_a_crash():
+    now = datetime.fromisoformat("2026-10-18T13:00:00-05:00")
+    assert parse.resets_after(10**18, now) is None
+    assert parse.resets_at("Your limit resets in 99999999 days.", now) is None

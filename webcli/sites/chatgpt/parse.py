@@ -72,7 +72,10 @@ def cloudflare_challenge(state: dict) -> bool:
 def iso_time(value: Any) -> str | None:
     """An API timestamp (epoch seconds, or an ISO string) as ISO 8601 UTC."""
     if isinstance(value, (int, float)) and value > 0:
-        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        except (ValueError, OverflowError, OSError):  # epoch milliseconds, or garbage: no time, not a failed list
+            return None
     if isinstance(value, str) and value:
         try:
             when = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -450,7 +453,10 @@ def resets_after(seconds: float | None, now: datetime | None = None) -> str | No
     if seconds is None or seconds < 0:
         return None
     now = now or datetime.now(RESET_TZ)
-    when = (now.astimezone(timezone.utc) + timedelta(seconds=round(seconds))).astimezone(RESET_TZ)  # elapsed time
+    try:
+        when = (now.astimezone(timezone.utc) + timedelta(seconds=round(seconds))).astimezone(RESET_TZ)  # elapsed time
+    except OverflowError:  # "resets in 99999999 days": past datetime's range
+        return None
     return when.replace(microsecond=0).isoformat()
 
 
