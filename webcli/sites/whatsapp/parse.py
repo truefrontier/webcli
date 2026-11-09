@@ -118,7 +118,10 @@ def parse_since(value: str, now: datetime) -> datetime:
     except ValueError:
         raise ValueError(f"{value!r} isn't a date: use YYYY-MM-DD, an ISO 8601 time, or 48h / 2d / 1w.") from None
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
+        try:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        except (OverflowError, ValueError, OSError):  # before year 1 or past 9999 in local time
+            raise ValueError(f"{value!r} is outside the years 1 to 9999 in local time.") from None
     return parsed
 
 

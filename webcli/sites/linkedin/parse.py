@@ -596,7 +596,10 @@ def parse_since(value: str | None, *, flag: str = "--since", now: datetime | Non
                          "(30m, 48h, 2d, 1w).") from exc
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:  # an offset that moves it before year 1 or past 9999
+        raise ValueError(f"Invalid {flag}: {value.strip()!r} is outside the years 1 to 9999 in UTC.") from None
 
 
 def _iso(dt: datetime) -> str:

@@ -328,9 +328,12 @@ def parse_since(value: str | None, tz: tzinfo | None = None) -> datetime | None:
         dt = datetime.fromisoformat(raw)
     except ValueError:
         raise ValueError("Use YYYY-MM-DD or ISO-8601, e.g. 2026-10-01 or 2026-10-01T08:00:00-05:00.") from None
-    if dt.tzinfo is None:
-        return dt.astimezone() if tz is None else dt.replace(tzinfo=tz)
-    return dt.astimezone(tz)
+    try:
+        if dt.tzinfo is None:
+            return dt.astimezone() if tz is None else dt.replace(tzinfo=tz)
+        return dt.astimezone(tz)
+    except (OverflowError, ValueError, OSError):  # before year 1 or past 9999 in local time
+        raise ValueError(f"{value.strip()!r} is outside the years 1 to 9999 in local time.") from None
 
 
 def is_older(row: dict, cutoff: datetime) -> bool:
