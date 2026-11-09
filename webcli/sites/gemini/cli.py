@@ -81,8 +81,9 @@ AGENT_NOTES = [
     ("When Gemini's whole answer is its own error message (\"Something went wrong…\", "
      "\"I encountered an error…\"), `ask` and `-p` exit 5 with it on stderr. JSON output still prints first, with "
      "an `error` field; text output prints nothing."),
-    ("A usage-limit notice (\"You've reached your limit…\", \"Your limit resets at 1:53 PM\") as the answer, or in a "
-     "toast, dialog, or banner before or after sending, exits 6. The JSON error (and an answer's JSON output) has "
+    ("A usage-limit notice (\"You've reached your limit…\", \"Your limit resets at 1:53 PM\") that starts the "
+     "answer, or in a toast, dialog, or banner before or after sending, exits 6; an answer that only mentions limits "
+     "prints. The JSON error (and an answer's JSON output) has "
      "error \"rate_limited\", code 6, message (Gemini's text), and resets_at (ISO 8601, America/Chicago, or null). "
      "Don't retry before resets_at."),
     ("`--image-out DIR|PATH` (ask, -p) turns on Gemini's Create image tool, waits for the image reply, and saves each "

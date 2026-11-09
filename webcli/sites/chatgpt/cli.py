@@ -78,9 +78,9 @@ AGENT_NOTES = [
     ("Fallback: when servedModel isn't the requested model, JSON has fallback true, fallbackFrom, fallbackTo, a "
      "warning goes to stderr, and the exit is still 0. --strict-model makes it exit 6 with error \"model_fallback\" "
      "(JSON output still prints first)."),
-    ("A usage-cap refusal (HTTP 429, a stream error, a notice on the page, or a reply that is the cap notice) exits "
-     "6: JSON error \"rate_limited\", code 6, message (ChatGPT's text), resets_at (ISO 8601, America/Chicago, or "
-     "null)."),
+    ("A usage-cap refusal (HTTP 429, a stream error, a notice on the page, or a reply that is the cap notice: 500 "
+     "characters or less and starting like one) exits 6: JSON error \"rate_limited\", code 6, message (ChatGPT's "
+     "text), resets_at (ISO 8601, America/Chicago, or null). A reply that only explains limits is an answer."),
     ("`--image-out DIR|PATH` (ask, -p) waits for the reply's images and saves each one as ChatGPT stores it (the "
      "file the record's image pointer names, not a preview). DIR (existing, ending in /, or without an image suffix; "
      "created if needed) gets <prompt-slug>-N.<ext> and never overwrites; PATH is written exactly, more images go to "

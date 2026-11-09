@@ -141,8 +141,9 @@ async def info(media_id: str, *, headed: bool = False) -> dict:
 
 
 async def download(media_id: str, out_dir: str, *, headed: bool = False) -> dict:
-    """Save the original photo or video into `out_dir` (absolute) under the server's file name, else
-    <id>.<ext>; replaces a file of that name. {id, path, bytes, mime}."""
+    """Save the original photo or video into `out_dir` (absolute) under the server's file name made safe
+    (google.safe_name: never hidden, no folders), else <id>.<ext>; replaces a file of that name.
+    {id, path, bytes, mime}."""
     media: list[str] = []
 
     def on_request(request) -> None:
