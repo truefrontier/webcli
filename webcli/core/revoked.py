@@ -11,11 +11,13 @@ counts as revoked until it is fixed or removed, so a damaged cache never switche
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from webcli.core import config
 
 SOURCES = ("index-cache.json", "revoked.json")
+STALE_DAYS = 7
 
 
 def _entries(path: Path) -> list[dict] | None:
@@ -56,3 +58,17 @@ def reason(name: str, version: str | None = None) -> str | None:
 
 def is_revoked(name: str, version: str | None = None) -> bool:
     return reason(name, version) is not None
+
+
+def freshness(community: bool) -> dict:
+    """How old the cached library index is, for `webcli doctor`: the library's revocations arrive in it, and only
+    `webcli tools` commands refresh it. Stale: a community tool is installed and the list is missing or older than
+    STALE_DAYS."""
+    path = config.home() / "tools" / SOURCES[0]
+    try:
+        age = round((time.time() - path.stat().st_mtime) / 86400, 1)
+    except OSError:
+        age = None
+    stale = community and (age is None or age > STALE_DAYS)
+    return {"cache": str(path), "ageDays": age, "stale": stale,
+            "hint": "Refresh the library's revoked list: webcli tools search" if stale else None}
