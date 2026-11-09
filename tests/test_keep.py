@@ -217,6 +217,14 @@ def test_info_and_get_find_archived_notes_too(keep, tmp_path):
     assert missing.exit_code == 3 and "webcli keep list" in json.loads(missing.stderr)["hint"]
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_id_finds_no_note(keep, blank):
+    """Every id contains "", so `webcli keep get "$ID"` with $ID unset printed the newest note and exited 0."""
+    assert parse.find([parse.note(node("a1", "newest"))], blank) is None
+    result = run("get", blank)
+    assert result.exit_code == 3 and result.stdout == ""
+
+
 def test_an_incomplete_sync_warns_on_stderr(monkeypatch):
     async def call(*_args, **_kwargs):
         return {"notes": NOTES, "complete": False}
