@@ -43,7 +43,8 @@ const defaultPort = (scheme) => (scheme === "https" ? 443 : 80);
 function parse(url) {
   try {
     const u = new URL(url);
-    return { scheme: u.protocol.replace(/:$/, "").toLowerCase(), host: u.hostname.toLowerCase(),
+    // "www.chase.com." is the same site to Chrome: drop the one trailing dot, or every host pattern misses it.
+    return { scheme: u.protocol.replace(/:$/, "").toLowerCase(), host: u.hostname.toLowerCase().replace(/\.$/, ""),
       port: u.port ? Number(u.port) : null, path: (u.pathname || "/").toLowerCase() };
   } catch {
     return null;
