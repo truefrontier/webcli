@@ -10,7 +10,7 @@ Everything lives in `~/.webcli/tools/` (or `$WEBCLI_HOME/tools/`), mode 0700.
 |---|---|---|
 | `<name>/` | `webcli tools install` | One installed tool: its `webcli-tool.toml` and its package, `webcli_tool_<name>/`, whose `__init__.py` sets `ADAPTER = Site(...)`. |
 | `<name>/.disabled` | `webcli tools disable` | If present, the tool is off. Core never imports its code. |
-| `<name>/.installed.json` | `webcli tools install` | What the install pinned: version, commit, sha256, and the index it came from. Core doesn't read it. |
+| `<name>/.installed.json` | `webcli tools install` | What the install pinned: version, commit, sha256, and the index it came from. Loading never reads it; `webcli sites` does, to report `verified` only while the files still match that pin. |
 | `.<anything>/` | `webcli tools install` | Skipped. Use a dot name for an install in progress (`webcli tools` uses `.stage-<name>-…` and `.old-<name>-…`). |
 | `dev.toml` | `webcli new` | Tools you're still writing. One table per tool: `[toyhttp]` then `path = "/Users/you/webcli-tool-toyhttp"`. |
 | `grants.toml` | `webcli tools grant` | Which of your identities each tool may use besides its own. Mode 0600. One line per tool: `toyhttp = ["google:default"]`. |
