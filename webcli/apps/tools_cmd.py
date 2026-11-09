@@ -29,7 +29,7 @@ from webcli.core import grants, index_client, manifest_schema, revoked, tools_re
 from webcli.core.errors import ConfigError
 from webcli.core.identities import Identity
 from webcli.core.index_client import Entry
-from webcli.core.manifest_schema import _NAME, CORE_COMMANDS, Manifest
+from webcli.core.manifest_schema import _NAME, Manifest
 from webcli.core.output import (
     EXIT_NOT_FOUND,
     EXIT_OK,
@@ -85,17 +85,12 @@ def _manifest(folder: Path) -> Manifest | None:
         return None
 
 
-def _reserved() -> set[str]:
-    official = [site for name, site in sites.registry().items() if sites.tier_of(name) == sites.OFFICIAL]
-    return {s.name for s in official} | {s.provider for s in official} | {NO_IDENTITY} | CORE_COMMANDS
-
-
 def _entry(index: index_client.Index, name: str) -> Entry:
     entry = index.tools.get(name)
     if entry is None:
         die(f"The webcli-tools library has no tool named {name!r}.", EXIT_NOT_FOUND,
             hint="`webcli tools search` lists them.")
-    if name in _reserved():
+    if name in manifest_schema._reserved():
         die(f"{name!r} is a webcli built-in or command; a tool can't replace it.", EXIT_USAGE)
     why = revoked.reason(name, entry.version)
     if why:
@@ -359,7 +354,8 @@ def _update(index: index_client.Index, name: str, yes: bool) -> dict:
     entry = index.tools.get(name)
     if entry is None:
         return {"name": name, "status": "not in library"}
-    if entry.builtin or name in _reserved():  # a leftover folder under a built-in's name; core never loads it
+    # A leftover folder under a built-in's name, or a name webcli keeps: core never loads it.
+    if entry.builtin or name in manifest_schema._reserved():
         return {"name": name, "status": "built in"}
     why = revoked.reason(name, entry.version)
     if why:

@@ -219,7 +219,8 @@ def test_a_tool_that_needs_a_newer_webcli_is_refused(library, tools):
     assert result.exit_code == 2 and "needs webcli >=99" in result.stderr and not (tools / "toyhttp").exists()
 
 
-@pytest.mark.parametrize("name", ["google", "loom"])  # a provider; a built-in site listed as if it were community
+# Providers, a built-in site listed as if it were community, "none", and a webcli command.
+@pytest.mark.parametrize("name", ["google", "meta", "loom", "none", "tools"])
 def test_a_community_entry_with_a_built_in_name_is_refused_before_download(library, tools, name):
     library.publish(name)
     result = run("tools", "install", name, "--yes")

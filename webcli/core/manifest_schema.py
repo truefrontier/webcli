@@ -38,8 +38,8 @@ except ModuleNotFoundError:  # Python 3.10
 
 MANIFEST_NAME = "webcli-tool.toml"
 DOCS = "https://github.com/truefrontier/webcli/blob/main/docs/webcli-tool-manifest.md"
-# Top-level `webcli` commands a tool can't be named after (it would be hidden behind the command). Built-in site
-# names are refused too (see _reserved).
+# Top-level `webcli` commands a tool can't be named after (it would be hidden behind the command). Built-in sites,
+# the providers they sign in as, and "none" are refused too (see _reserved).
 CORE_COMMANDS = frozenset({"sites", "feed", "identity", "doctor", "serve", "agent-help",
                            "new", "dev", "test", "lint", "tools", "submit"})
 
@@ -108,10 +108,15 @@ class Manifest:
 
 
 def _reserved() -> frozenset[str]:
-    # Imported here, not at the top: the site registry may load manifests itself.
-    from webcli.sites import BUILTIN
+    """Every name a tool can't take: a webcli command, a built-in site, the provider a built-in signs in as (google,
+    meta), and "none". The one list this check (so `webcli lint`), the site loader, `webcli new`, and
+    `webcli tools install` all refuse."""
+    # Imported here, not at the top: the site registry may load manifests itself. The built-ins come from BUILTIN,
+    # never sites.registry(): the registry runs this check on each community tool while it loads.
+    from webcli import sites
 
-    return CORE_COMMANDS | frozenset(BUILTIN)
+    official = [sites._load(target) for target in sites.BUILTIN.values()]
+    return CORE_COMMANDS | frozenset(sites.BUILTIN) | {site.provider for site in official} | {NO_IDENTITY}
 
 
 def _text(data: dict, key: str, problems: list[str], where: str = "") -> str | None:
@@ -184,7 +189,7 @@ def validate(data: dict, source: str = MANIFEST_NAME) -> Manifest:
             problems.append("name: must be 2-32 lowercase letters and digits, starting with a letter (no hyphens: "
                             "it is also the tool's identity, <name>:default)")
         elif name in _reserved():
-            problems.append(f"name: {name!r} is a built-in site or a webcli command; pick another name")
+            problems.append(f"name: {name!r} is a built-in site, provider, or webcli command; pick another name")
     version = data.get("version")
     if "version" in data and (not isinstance(version, str) or not _VERSION.fullmatch(version)):
         problems.append("version: must be X.Y.Z (\"0.1.0\"), optionally with a pre-release (\"0.2.0rc1\")")

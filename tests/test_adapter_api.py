@@ -128,8 +128,12 @@ def test_writes_and_sends_and_no_identity():
 @pytest.mark.parametrize(("changes", "problem"), [
     ({"name": None}, "name: missing"),
     ({"name": "toy-http"}, "name: must be 2-32 lowercase"),
-    ({"name": "gmail"}, "is a built-in site or a webcli command"),
-    ({"name": "tools"}, "is a built-in site or a webcli command"),
+    ({"name": "gmail"}, "is a built-in site"),
+    ({"name": "tools"}, "is a built-in site"),
+    # The providers built-ins sign in as, and "none": the loader and `webcli tools install` refuse them, so lint must.
+    ({"name": "google"}, "is a built-in site"),
+    ({"name": "meta"}, "is a built-in site"),
+    ({"name": "none"}, "is a built-in site"),
     ({"version": "1.0"}, "version: must be X.Y.Z"),
     ({"adapter_api": 2}, "adapter_api: this webcli supports 1"),
     ({"adapter_api": True}, "adapter_api: this webcli supports 1"),
@@ -187,6 +191,18 @@ def test_an_escaped_newline_in_toml_does_not_slip_a_reserved_name_through():
         loads(MINIMAL.replace('name = "toyhttp"', 'name = "tools\\n"'))
     assert caught.value.problems == [("name: must be 2-32 lowercase letters and digits, starting with a letter (no "
                                       "hyphens: it is also the tool's identity, <name>:default)")]
+
+
+def test_every_name_a_built_in_keeps_from_tools_is_refused():
+    # Whatever the loader skips (a built-in's name, the provider it signs in as, "none", a command), lint refuses.
+    official = registry().values()
+    kept = {s.name for s in official} | {s.provider for s in official} | {NO_IDENTITY} | CORE_COMMANDS
+    assert {"gmail", "google", "meta", "none", "tools"} <= kept
+    for name in sorted(n for n in kept if manifest_schema._NAME.fullmatch(n)):
+        with pytest.raises(ManifestError) as caught:
+            validate(minimal(name=name))
+        assert caught.value.problems == [f"name: {name!r} is a built-in site, provider, or webcli command; "
+                                         "pick another name"]
 
 
 def test_bad_toml_is_a_manifest_error():
