@@ -50,6 +50,8 @@ A community tool may always use its own identities, `<tool>:<account>`. A tool c
 
 Any other identity needs a grant: `webcli tools grant <tool> <identity>`. A tool whose manifest says `identity = "google"` can't use `google:default` until you grant it. Each grant covers one identity. If `grants.toml` can't be read, core treats it as granting nothing.
 
+Grants are kept by tool name. `webcli tools remove` takes a tool's grants back, and `webcli tools install` drops any it finds left under the new tool's name (a dev tool's, say), so a tool you install starts with none.
+
 `webcli identity login` uses an official site's sign-in whenever one exists. A community tool signs in only its own identities.
 
 ## Hosts

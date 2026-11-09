@@ -335,6 +335,9 @@ def install_cmd(name: str, yes: bool) -> None:
                    "next": [f"webcli {name} --help"]})
         raise SystemExit(EXIT_OK)
     entry = _entry(index, name)
+    # Grants are kept by name. Nothing by this name is installed, so any left over (a dev tool's, or a remove that
+    # couldn't edit grants.toml) were for other code: this tool starts with none, as the manifest text says.
+    stale = grants.list_grants().get(name, [])
     with _staged(entry) as (stage, manifest):
         _check_requires(manifest)
         click.echo(_text(manifest, entry), err=True)
@@ -342,9 +345,14 @@ def install_cmd(name: str, yes: bool) -> None:
             die(f"{name} was not installed.", EXIT_USAGE, hint="Pass --yes to install without asking.")
         _write_record(stage, entry, index)
         stage.rename(folder)  # fails, rather than replacing, if a non-empty folder appeared meanwhile
+    if stale:
+        grants.revoke_grant(name)
+        warn(f"webcli: dropped the grants left under the name {name} ({', '.join(stale)}): they were for an earlier "
+             f"tool. Grant again only if you trust this one.")
     sites.reload()
     emit_json({"installed": name, "version": manifest.version, "commit": entry.commit, "path": str(folder),
-               **_state(name), "manifest": _describe(manifest, entry), "next": _next_steps(manifest)})
+               **_state(name), "manifest": _describe(manifest, entry), "next": _next_steps(manifest),
+               **({"grantsDropped": stale} if stale else {})})
     raise SystemExit(EXIT_OK)
 
 
