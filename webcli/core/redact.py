@@ -160,8 +160,10 @@ _FIELD = (r"__(?:secure|host)-[\w.-]+|oai-[\w-]+|openai-sentinel-[\w-]+|cf_clear
           r"|[\w.-]*(?:token|secret|passw(?:or)?d|cookie|auth|session|csrf|xsrf|api[_-]?key|sentinel|proof"
           r"|turnstile|sig)[\w.-]*")
 _PAIR = re.compile(r"(?<![\w.-])(" + _FIELD + r")(\s*=\s*)(?:\"[^\"]*\"|'[^']*'|[^&\s;,\"'<>]+)", re.I)
-_JSON_PAIR = re.compile(r"([\"'])(" + _FIELD + r")\1(\s*:\s*)(?:\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|[^,}\]\s]+)",
-                        re.I)
+# A secret field's value: a string, a flat object or array (redacted whole), or a bare value that doesn't open one;
+# a deeper object is left to the passes over its own keys.
+_JSON_PAIR = re.compile(r"([\"'])(" + _FIELD + r")\1(\s*:\s*)(?:\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'"
+                        r"|\{[^{}]*\}|\[[^\[\]]*\]|[^,}\]\s{\[][^,}\]\s]*)", re.I)
 _HEADER = re.compile(r"\b((?:proxy-)?authorization|set-cookie|cookie|openai-sentinel-[\w-]+|oai-[\w-]+"
                      r"|chatgpt-account-id|x-openai-[\w-]+|x-goog-[\w-]*auth[\w-]*|x-[\w-]*(?:token|lsd|dtsg)[\w-]*)"
                      r"(\s*:\s*)[^\r\n]*", re.I)
