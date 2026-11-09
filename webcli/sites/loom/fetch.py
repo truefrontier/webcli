@@ -84,13 +84,14 @@ def _unauthenticated(errors) -> bool:
                                             and e["extensions"].get("code") == "UNAUTHENTICATED" for e in errors)
 
 
-async def library(page: "Page") -> None:
-    """AuthRequired unless Loom's API answers the query `list` runs (GetLoomsForLibrary) with a library; an empty one
-    counts."""
-    body = await graphql(page, "GetLoomsForLibrary", dict(parse.query("GetLoomsForLibrary").get("variables") or {}))
-    data = body.get("data")
-    if not (isinstance(data, dict) and isinstance(data.get("getLooms"), dict)):
+async def library(page: "Page", cursor: str | None = None) -> dict:
+    """The library page at `cursor` (GetLoomsForLibrary's answer). AuthRequired unless Loom's API answers with a
+    library; an empty one counts. A null or error-type getLooms is not one."""
+    variables = {**(parse.query("GetLoomsForLibrary").get("variables") or {}), "cursor": cursor}
+    body = await graphql(page, "GetLoomsForLibrary", variables)
+    if parse.looms(body) is None:
         raise AuthRequired(f"GetLoomsForLibrary answered without a library. {EXPIRED}")
+    return body
 
 
 async def status(*, headed: bool = False) -> dict:
@@ -107,17 +108,22 @@ async def status(*, headed: bool = False) -> dict:
 
 
 async def videos(limit: int | None = None, *, headed: bool = False) -> list[dict]:
-    """Your library, newest first, following the cursor until `limit` videos or the end."""
-    base = dict(parse.query("GetLoomsForLibrary").get("variables") or {})
+    """Your library, newest first, following the cursor until `limit` videos or the end. A cursor Loom already gave,
+    or a page with no new video, is the end too: either would replay pages forever."""
     rows: list[dict] = []
+    ids: set[str] = set()
+    cursors: set[str] = set()
     cursor = None
     async with browser.site_page(POLICY) as page:
         await open_app(page)
         while True:
-            batch, cursor = parse.videos_page(await graphql(page, "GetLoomsForLibrary", {**base, "cursor": cursor}))
-            rows += batch
-            if (limit and len(rows) >= limit) or not cursor or not batch:
+            batch, cursor = parse.videos_page(await library(page, cursor))
+            fresh = [row for row in batch if row["id"] not in ids]
+            ids.update(row["id"] for row in fresh)
+            rows += fresh
+            if (limit and len(rows) >= limit) or not cursor or not fresh or cursor in cursors:
                 return rows[:limit] if limit else rows
+            cursors.add(cursor)
 
 
 async def video(vid: str, *, headed: bool = False) -> dict:
