@@ -277,6 +277,24 @@ def test_normal_reply_is_not_rate_limited(text):
     assert not parse.limit_reply(text)
 
 
+@pytest.mark.parametrize('text', [
+    "Quota is the share of a resource you're allowed to use.",
+    'The limit was reached at 50 messages in the study.',
+    "If you've used up your free quota, the API answers 429 until midnight Pacific.",
+    'Quotas exist so one client cannot starve the rest.',
+])
+def test_an_answer_about_limits_is_not_a_cap_notice(text):
+    """An answer that mentions or explains a limit prints; only one that starts like a notice is a cap notice.
+    The same bug as chatgpt-web-cli's overflow/chatgptwebclitests bug 1 (471b06d)."""
+    assert not parse.limit_reply(text)
+
+
+@pytest.mark.parametrize('text', ['Daily quota exhausted. Try again tomorrow.', 'Sorry, quota exceeded.',
+                                  "It looks like you've reached your limit for 3 Pro.", 'Daily quota.'])
+def test_cap_notices_that_start_the_answer_still_count(text):
+    assert parse.limit_reply(text)
+
+
 @pytest.mark.parametrize(('text', 'now', 'expected'), [
     ('Your limit resets at 1:53 PM', '2026-10-16T12:00:00-05:00', '2026-10-16T13:53:00-05:00'),
     ('Your limit resets at 1:53 PM', '2026-10-16T14:00:00-05:00', '2026-10-17T13:53:00-05:00'),

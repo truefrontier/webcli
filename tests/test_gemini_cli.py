@@ -491,6 +491,13 @@ def test_rate_limit_exit_and_json(monkeypatch, command, banner, message):
     assert len(calls) == 1  # no rate-limit retry
 
 
+def test_an_answer_that_mentions_a_limit_prints_and_exits_0(monkeypatch):
+    answer = 'The limit was reached at 50 messages in the study, so the authors split the sessions.'
+    stub(monkeypatch, 'ask', {**ANSWER, 'answer': answer})
+    result = run('ask', 'q', '--format', 'text')
+    assert (result.exit_code, result.stdout) == (0, answer + '\n')
+
+
 def test_rate_limit_print_does_not_replace_answer_file(monkeypatch, tmp_path):
     target = tmp_path / 'answer.txt'
     target.write_text('previous')
