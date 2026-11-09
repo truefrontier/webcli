@@ -119,7 +119,7 @@ def request_allowed(method: str, url: str, body: str | None = None) -> bool:
         queries = parse_qs(parts.query).get("query", [])
         return method in ("GET", "HEAD") and len(queries) == 1 and read_only_document(queries[0])
     if method in ("GET", "HEAD"):
-        return not any(host == h and path.startswith(prefix) for h, prefix in SIDE_EFFECT_GETS)
+        return not any(path.startswith(prefix) for prefix in SIDE_EFFECT_GETS)  # every host here is Loom's
     return False
 
 

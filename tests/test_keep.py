@@ -107,6 +107,12 @@ def test_read_only_sync():
     assert not parse.read_only_sync(json.dumps({"nodes": [{"id": "n1"}]}))
     assert not parse.read_only_sync(json.dumps({"userInfo": {"labels": [{"mainId": "x"}]}}))
     assert not parse.read_only_sync(json.dumps({"userInfo": {"labels": []}, "nodes": []}))  # any userInfo: fail closed
+
+
+def test_a_sync_body_that_names_a_key_twice_is_refused():
+    # json.loads keeps the last copy, so this read as "no edits"; a server that keeps the first would apply the edit.
+    assert not parse.read_only_sync('{"nodes": [{"id": "n1"}], "nodes": []}')
+    assert not parse.read_only_sync('{"userInfo": {"labels": [{"mainId": "x"}]}, "userInfo": null}')
     assert not parse.read_only_sync("[]") and not parse.read_only_sync("") and not parse.read_only_sync(None)
 
 

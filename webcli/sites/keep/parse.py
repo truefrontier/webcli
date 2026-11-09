@@ -31,11 +31,20 @@ def note(node: Any) -> dict | None:
     }
 
 
+
+def _unique_keys(pairs: list) -> dict:
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
+
+
 def read_only_sync(body: str | None) -> bool:
     """True only for a changes body that uploads nothing: a JSON object whose nodes (edits) and userInfo (label
-    changes) are empty or absent. Anything else, unreadable included, is False."""
+    changes) are empty or absent. Anything else, unreadable included, is False. A key given twice is unreadable:
+    json.loads keeps the last copy, and a server that keeps the first would see the edit this check missed."""
     try:
-        data = json.loads(body or "")
+        data = json.loads(body or "", object_pairs_hook=_unique_keys)
     except ValueError:
         return False
     return isinstance(data, dict) and not data.get("nodes") and not data.get("userInfo")
