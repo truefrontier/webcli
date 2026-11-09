@@ -13,6 +13,7 @@ fetchCurrentRunningSpend / billingConfiguration).
 from __future__ import annotations
 
 import html
+import math
 import re
 from datetime import date, datetime, timezone
 from typing import Any
@@ -59,12 +60,14 @@ _RAW_METRICS = (
 
 
 def _num(value: Any) -> float | None:
+    """A finite number, else None. float() takes "NaN" and "Infinity", which int() and JSON output can't."""
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        n = float(value)
     except (TypeError, ValueError):
         return None
+    return n if math.isfinite(n) else None
 
 
 def _int(value: Any) -> int | None:

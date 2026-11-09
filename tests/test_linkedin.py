@@ -725,6 +725,23 @@ def test_boost_zero_rows_report_zero_and_null_ratios():
     assert failed["spend"] is None and failed["warnings"] == ["adAnalytics HTTP 500"]
 
 
+@pytest.mark.parametrize("odd", ["NaN", "Infinity", "-Infinity", "1e999"])
+def test_boost_a_nan_or_infinite_api_number_is_no_number(odd):
+    # float() takes these strings. Before, impressions crashed the record (int(nan)) and spend printed NaN, which
+    # isn't JSON.
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    campaign = {"id": 1, "status": "ACTIVE", "runSchedule": {"start": 1759881600000},
+                "totalBudget": {"amount": odd, "currencyCode": "USD"}}
+    row = {"pivotValues": ["urn:li:sponsoredCampaign:1"], "baseMetrics": {
+        "costInLocalCurrency": odd, "impressions": odd, "clicks": "4", "clickThroughRate": odd}}
+    record = boost.boost_record(campaign, [], (200, {"elements": [row]}), account=None, date_range=None, now=now)
+    assert (record["spend"], record["impressions"], record["clicks"], record["ctr"]) == (None, None, 4, None)
+    assert "ctrApi" not in record
+    json.loads(json.dumps(record, default=str), parse_constant=lambda token: pytest.fail(f"{token} in the output"))
+
+
 # Ported from linkedin-messages-cli's overflow/linkedinclibugs (its bugs 3, 10, 11, 14, 15, 16).
 
 PADDED = "2-YWJjZGVmZ2g=="
