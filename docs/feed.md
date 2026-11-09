@@ -146,6 +146,9 @@ since = "48h"
 file = "~/path/to/x-latest.json"
 ```
 
+A value of the wrong kind, a `limit_per_site` below 1, or a `since` that `--since` wouldn't take exits 7 before any
+site reads. `--since` itself is checked the same way (exit 2). A limit over a site's own cap is cut to that cap.
+
 `schedule install` writes `~/Library/LaunchAgents/ai.truefrontier.webcli.feed.plist` (StartCalendarInterval at
 `--at`, default 05:30 and 12:30 local; runs `webcli feed pull --quiet`) and loads it unless `--no-load`. `remove`
 unloads and deletes it.

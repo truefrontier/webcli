@@ -199,3 +199,44 @@ def test_linkedin_image_becomes_media():
     li = normalize.item("linkedin", "feed", {**LI, "image": img})
     assert li["media"] == [{"type": "image", "url": img}]
     assert normalize.item("linkedin", "feed", LI)["media"] == []
+
+
+def _no_site_may_run(*a, **k):
+    raise AssertionError("no site may run")
+
+
+def test_cli_pull_checks_since_before_any_site_reads(tmp_path, monkeypatch):
+    # Before, only youtube's own child refused it, and every other site still read.
+    monkeypatch.setenv("WEBCLI_HOME", str(tmp_path))
+    monkeypatch.setattr(pull, "pull", _no_site_may_run)
+    out = CliRunner().invoke(webcli_app.build(), ["feed", "pull", "--since", "yesterday"])
+    assert out.exit_code == 2, out.output
+    assert "--since" in out.output
+
+
+@pytest.mark.parametrize(("toml", "names"), [
+    ('limit_per_site = "lots"', "limit_per_site"), ("limit_per_site = 0.5", "limit_per_site"),
+    ("limit_per_site = -5", "limit_per_site"), ('[youtube]\nsince = "yesterday"', "[youtube] since"),
+    ("[youtube]\nsince = 48", "[youtube] since"), ('youtube = "48h"', "[youtube] since"),
+    ('x = "x.json"', "[x] file"), ("[x]\nfile = 5", "[x] file"), ("sites = 5", "sites"),
+    ('sites = "youtube"', "sites"),
+])
+def test_cli_pull_refuses_a_bad_feed_toml_before_any_site_reads(tmp_path, monkeypatch, toml, names):
+    monkeypatch.setenv("WEBCLI_HOME", str(tmp_path))
+    (tmp_path / "feed.toml").write_text(toml + "\n")
+    monkeypatch.setattr(pull, "pull", _no_site_may_run)
+    out = CliRunner().invoke(webcli_app.build(), ["feed", "pull"])
+    assert out.exit_code == 7, out.output
+    assert f"feed.toml: {names} must" in out.output
+
+
+def test_cli_pull_takes_feed_toml_values_and_flags_override_them(tmp_path, monkeypatch):
+    monkeypatch.setenv("WEBCLI_HOME", str(tmp_path))
+    (tmp_path / "feed.toml").write_text('sites = ["youtube"]\nlimit_per_site = 9000\n[youtube]\nsince = "3d"\n'
+                                        '[x]\nfile = "x.json"\n')  # over every site's cap: pull caps it per site
+    seen = []
+    monkeypatch.setattr(pull, "pull", lambda names, limit, **k: seen.append((names, limit, k["since"], k["x_file"]))
+                        or {"items": [], "sources": []})
+    for args in ([], ["--limit-per-site", "9", "--since", "1w", "--x-file", "y.json", "--sites", "gnews"]):
+        CliRunner().invoke(webcli_app.build(), ["feed", "pull", "--out", str(tmp_path / "f.json"), *args])
+    assert seen == [(["youtube", "x"], 9000, "3d", "x.json"), (["gnews", "x"], 9, "1w", "y.json")]
