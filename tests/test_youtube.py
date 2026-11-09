@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
-from webcli.core import daemon
+from webcli.core import daemon, guard
 from webcli.core.errors import AuthRequired, UsageError
 from webcli.sites.youtube import fetch
 from webcli.sites.youtube.endpoints import MYACTIVITY_URL, SIGN_IN_URL
@@ -42,7 +42,7 @@ def load(name: str) -> dict:
     ("POST", "https://www.youtube.com/youtubei/v1/browse?key=k&prettyPrint=false", True),
     ("POST", "https://www.youtube.com/youtubei/v1/account/account_menu?key=k", True),
     ("POST", "https://www.youtube.com/youtubei/v1/account/accounts_list?key=k", True),
-    ("POST", "https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x", True),
+    ("POST", "https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x", False),  # history's alone
     ("POST", "https://accounts.google.com/RotateCookies", True),
     ("POST", "https://www.youtube.com/youtubei/v1/browse/edit_playlist", False),
     ("POST", "https://www.youtube.com/youtubei/v1/playlist/create?key=k", False),
@@ -247,6 +247,21 @@ def test_auto_prefers_my_activity_and_falls_back_when_it_is_signed_out(monkeypat
     assert result["rows"][0]["source"] == "youtube-history"
     assert result["notes"] == ["My Activity unavailable (Not signed in to My Activity.); using YouTube history (day "
                                "precision)."]
+
+
+MY_ACTIVITY_RPC = SimpleNamespace(method="POST", post_data="f.req=x",
+                                  url="https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x")
+
+
+def test_only_history_may_post_to_my_activity(monkeypatch):
+    # My Activity's read rpcids aren't mapped, so its batchexecute passes for any rpcid (a delete included). Only
+    # `history` reads My Activity, so only its page gets that; every other command's page refuses it.
+    page = install(monkeypatch, youtube_page(signed_in_already=True, html=DOM, text="Today"))
+    asyncio.run(fetch.history("myactivity", 2, None))
+    assert page.policy.allowed(MY_ACTIVITY_RPC, guard.state) is True
+    assert fetch.POLICY.allowed(MY_ACTIVITY_RPC, guard.state) is False
+    scope = WriteScope(title="t", privacy="PRIVATE", video_ids=IDS, armed=True)
+    assert write_policy(scope).allowed(MY_ACTIVITY_RPC, SimpleNamespace(send=True)) is False
 
 
 def test_since_stops_at_the_cutoff(monkeypatch):
