@@ -15,7 +15,9 @@ from test_tool_trust import make_tool
 
 from webcli import sites
 from webcli.apps import webcli as webcli_app
-from webcli.core import grants, index_client
+from webcli.core import daemon, grants, index_client
+from webcli.core.errors import ConfigError
+from webcli.core.identities import Identity
 
 
 @pytest.fixture(autouse=True)
@@ -465,6 +467,18 @@ def test_remove_deletes_the_tool_and_its_grants(library, tools):
     assert not (tools / "toyhttp").exists() and grants.list_grants() == {}
     assert installed_rows() == []
     assert run("tools", "remove", "toyhttp").exit_code == 3
+
+
+def test_install_drops_grants_left_under_its_name(library, tools):
+    grants.grant("toyhttp", "google:default")  # from a dev tool of that name, or a remove that couldn't edit grants
+    library.publish(identity="google")
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 0, result.stderr
+    assert "it can't use your google sign-in until you run `webcli tools grant" in result.stderr
+    assert json.loads(result.stdout)["grantsDropped"] == ["google:default"]
+    assert "dropped" in result.stderr and grants.list_grants() == {}
+    with pytest.raises(ConfigError, match="only if you grant it"):  # the install prompt said so
+        daemon.site_op(Identity("google:default"), "toyhttp", "get")
 
 
 def test_grant_needs_an_installed_tool_and_its_own_identity_needs_none(library, tools):
