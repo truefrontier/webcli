@@ -32,7 +32,7 @@ from webcli.sites.youtube.endpoints import (
     SIGN_IN_URL,
     VERIFY_TRIES,
 )
-from webcli.sites.youtube.guard import POLICY, WriteScope, write_policy
+from webcli.sites.youtube.guard import HISTORY, POLICY, WriteScope, write_policy
 from webcli.sites.youtube.parse import (
     account_from_menu,
     channel_names,
@@ -244,7 +244,7 @@ async def history(source: str = "auto", limit: int | None = None, since: str | N
     offset; older watches are left out."""
     cutoff = datetime.fromisoformat(since) if since else None
     notes: list[str] = []
-    async with browser.site_page(POLICY) as page:
+    async with browser.site_page(HISTORY) as page:  # the only page that may POST to My Activity
         if source == "youtube":
             return {"rows": await youtube_history(page, limit=limit, cutoff=cutoff), "notes": notes}
         if source == "myactivity":
