@@ -25,9 +25,10 @@ if TYPE_CHECKING:
 # avatars and thumbnails, the account menu.
 INFRA_HOSTS = ("accounts.google.com", "*.gstatic.com", "fonts.googleapis.com", "apis.google.com", "ogs.google.com",
                "*.googleusercontent.com", "www.google.com")
-# GETs with side effects: aborted even on a listed host.
+# GETs with side effects: aborted even on a listed host. youtube.com/logout redirects to www.youtube.com/logout, and
+# a redirect's hops are never checked, so the bare host is listed too.
 SIDE_EFFECT_GETS = (("accounts.google.com", "/Logout"), ("www.google.com", "/accounts/Logout"),
-                    ("www.youtube.com", "/logout"))
+                    ("www.youtube.com", "/logout"), ("youtube.com", "/logout"))
 # Cookie rotation keeps the shared Google session alive (gemini allows it too) and touches no user data.
 SESSION_POSTS = frozenset({("accounts.google.com", "/RotateCookies")})
 # Where a Google app sends a profile that isn't signed in: sign-in, consent, or the product's marketing page.

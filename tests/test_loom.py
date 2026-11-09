@@ -90,6 +90,11 @@ def test_the_policy(method, url, data, ok):
     assert request_allowed(method, url, data) is ok
 
 
+@pytest.mark.parametrize("url", ["https://loom.com/logout", "https://loom.com/api/logout", "https://cdn.loom.com/logout"])
+def test_sign_out_is_blocked_on_every_loom_host(url):
+    assert request_allowed("GET", url, None) is False
+
+
 def test_a_blocked_graphql_post_is_named_by_its_operation_never_its_body():
     request = SimpleNamespace(method="POST", url=GRAPHQL + "?token=abc0123456789secretvalue",
                               post_data=body("mutation RecordView { x }", "RecordView"))
