@@ -354,3 +354,16 @@ def test_a_daemon_that_drops_mid_command_never_says_just_retry_for_a_write(monke
     with pytest.raises(RuntimeError) as failed:
         asyncio.run(daemon.call(Identity("messages:default"), "messages", op))
     assert str(failed.value) == f"The webcli daemon stopped in the middle of the command. {hint}"
+
+
+@pytest.mark.parametrize(("value", "seconds"), [
+    ("", 6 * 3600), ("2", 7200), ("0.5", 1800), ("abc", 6 * 3600), ("0", 360), ("-3", 360),
+    ("nan", 6 * 3600), ("inf", 6 * 3600), ("-inf", 6 * 3600),
+])
+def test_recycle_hours(monkeypatch, value, seconds):
+    """A NaN would make every command relaunch Chrome (age < NaN is never true) and put NaN, which isn't JSON, in
+    `serve --status`; infinity puts Infinity there. Both fall back to the default, like a typo does. Ported from
+    chatgpt-web-cli's overflow/chatgptwebclitests (2e52684)."""
+    monkeypatch.setenv(daemon.RECYCLE_ENV, value)
+    assert daemon.recycle_seconds() == seconds
+    json.dumps(daemon.Shared(IDENT).info(), allow_nan=False)
