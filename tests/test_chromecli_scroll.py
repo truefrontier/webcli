@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from browsers import launch_chromium
 from test_chromecli import err, ext, home, run  # noqa: F401
 from test_chromecli_dom import EXT, FIXTURES  # noqa: F401
 
@@ -44,15 +45,7 @@ def spage():
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     with sync_playwright() as p:
-        browser = None
-        shells = sorted(Path.home().glob("Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        shells += sorted(Path.home().glob(".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        for exe in [None, *reversed(shells)]:
-            try:
-                browser = p.chromium.launch(**({"executable_path": str(exe)} if exe else {}))
-                break
-            except Exception:
-                continue
+        browser = launch_chromium(p)
         if browser is None:
             srv.shutdown()
             pytest.skip("no headless Chromium")

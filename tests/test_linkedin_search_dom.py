@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from browsers import launch_chromium
+
 from webcli.sites.linkedin import fetch, posts
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "linkedin"
@@ -25,16 +27,7 @@ def chromium():
     except ImportError:
         pytest.skip("playwright not installed")
     with sync_playwright() as p:
-        browser = None
-        shells = sorted(Path.home().glob("Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        shells += sorted(Path.home().glob(".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        options = [{}, *({"executable_path": str(exe)} for exe in reversed(shells)), {"channel": "chrome"}]
-        for option in options:
-            try:
-                browser = p.chromium.launch(**option)
-                break
-            except Exception:
-                continue
+        browser = launch_chromium(p)
         if browser is None:
             pytest.skip("no headless Chromium")
         yield browser
