@@ -185,7 +185,19 @@ def test_download_falls_back_to_the_still_original_and_never_trusts_the_name(mon
                f"{BASE}=d": APIResponse(200, b"jpeg!", {"content-type": "image/jpeg",
                                                         "content-disposition": 'filename="../../evil.jpg"'})}))
     saved = asyncio.run(fetch.download(KEY, str(tmp_path)))
-    assert saved["path"] == str(tmp_path / ".._.._evil.jpg") and (tmp_path / ".._.._evil.jpg").read_bytes() == b"jpeg!"
+    assert saved["path"] == str(tmp_path / "_.._evil.jpg") and (tmp_path / "_.._evil.jpg").read_bytes() == b"jpeg!"
+
+
+def test_download_never_replaces_a_dot_file(monkeypatch, tmp_path):
+    (tmp_path / ".zshrc").write_text("keep me")
+    install(monkeypatch, photo_page(
+        requests={f"https://photos.google.com/photo/{KEY}": [f"{BASE}=w800"]},
+        files={f"{BASE}=dv": APIResponse(200, b"poster", {"content-type": "image/jpeg"}),
+               f"{BASE}=d": APIResponse(200, b"jpeg!", {"content-type": "image/jpeg",
+                                                        "content-disposition": 'filename=".zshrc"'})}))
+    saved = asyncio.run(fetch.download(KEY, str(tmp_path)))
+    assert (tmp_path / ".zshrc").read_text() == "keep me"
+    assert saved["path"] == str(tmp_path / "zshrc") and (tmp_path / "zshrc").read_bytes() == b"jpeg!"
 
 
 def test_a_poster_is_never_the_original_and_a_refusal_is_sign_in(monkeypatch, tmp_path):
