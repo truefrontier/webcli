@@ -16,6 +16,10 @@ from webcli.sites.linkedin.endpoints import FEED_UPDATE, MAX_IMAGE_BYTES, MAX_TE
 
 # --- Messaging ----------------------------------------------------------------------------------------------------
 
+# A thread id: "2-" plus base64, "=" padding included. The lookbehind skips a "2-" inside a profile id (ACoAAB12-xYz).
+_THREAD_ID = re.compile(r"(?<![A-Za-z0-9_-])(2-[A-Za-z0-9_=-]+)")
+
+
 def _textish(val: Any) -> str:
     if val is None:
         return ""
@@ -123,7 +127,7 @@ def parse_conversations_payload(data: Any) -> list[dict]:
     for conv in conversations:
         entity = conv.get("entityUrn") or conv.get("backendUrn") or conv.get("conversationId") or ""
         thread = ""
-        m = re.search(r"(2-[A-Za-z0-9_=-]+)", str(entity))  # = too: thread ids are base64 (normalize_conversation_urn)
+        m = _THREAD_ID.search(str(entity))
         if m:
             thread = m.group(1)
         elif entity:
@@ -139,7 +143,7 @@ def parse_conversations_payload(data: Any) -> list[dict]:
         if isinstance(refs, list):
             for r in refs:
                 if isinstance(r, str):
-                    names.append(participant_names.get(r) or by_urn.get(r, {}).get("name") or "")
+                    names.append(participant_names.get(r) or _textish(by_urn.get(r, {}).get("name")))
                 elif isinstance(r, dict):
                     n = _name_from_member(r.get("member") if isinstance(r.get("member"), dict) else r)
                     if not n:
@@ -147,7 +151,7 @@ def parse_conversations_payload(data: Any) -> list[dict]:
                         n = _name_from_member(mini if isinstance(mini, dict) else None)
                     names.append(n)
         names = [n for n in names if n]
-        peer = ", ".join(names) if names else (conv.get("title") or "(unknown)")
+        peer = ", ".join(names) if names else (_textish(conv.get("title")) or "(unknown)")
 
         unread = conv.get("unreadCount")
         if unread is None:
@@ -215,7 +219,7 @@ def normalize_conversation_urn(conversation_id_or_urn: str) -> tuple[str, str]:
     raw = (conversation_id_or_urn or "").strip()
     if not raw:
         raise ValueError("empty conversation id")
-    m = re.search(r"(2-[A-Za-z0-9_=-]+)", raw)
+    m = _THREAD_ID.search(raw)
     thread = m.group(1) if m else raw
     if raw.startswith("urn:li:"):
         # Keep full URN (including parenthetical msg_conversation forms)
@@ -470,6 +474,8 @@ def resolve_thread(rows: list[dict], target: str) -> dict | None:
     """The thread `target` names: an exact thread id or entityUrn (ignoring case), else the one thread whose peer
     contains it. None when nothing matches; NotFound (exit 3) when several peers do."""
     q = target.strip().lower()
+    if not q:  # "" is a substring of every peer name
+        return None
     for row in rows:
         if row.get("id", "").lower() == q or row.get("entityUrn", "").lower() == q:
             return row
@@ -531,7 +537,8 @@ _MONTHS = {
 }
 
 
-_REL_TIME = re.compile(r"^(\d+)\s*([smhdw])$", re.I)
+# LinkedIn's relative stamps: 5m, 3h, 2d, 1w, then 3mo and 1yr on older cards.
+_REL_TIME = re.compile(r"^(\d+)\s*(mo|yr|[smhdw])$", re.I)
 
 
 _ABS_TIME = re.compile(
@@ -541,7 +548,7 @@ _ABS_TIME = re.compile(
 
 
 _TIME_LINE = re.compile(
-    r"^(\d+\s*[smhdw]|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:,\s*\d{4})?)\s*•?$",
+    r"^(\d+\s*(?:mo|yr|[smhdw])|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:,\s*\d{4})?)\s*•?$",
     re.I,
 )
 
@@ -603,6 +610,9 @@ def linkedin_time_to_iso(token: str, *, now: datetime | None = None) -> str:
             "h": timedelta(hours=n),
             "d": timedelta(days=n),
             "w": timedelta(weeks=n),
+            # ponytail: LinkedIn rounds months and years, so 30 and 365 days are as exact as the label (posts.py too).
+            "mo": timedelta(days=30 * n),
+            "yr": timedelta(days=365 * n),
         }[unit]
         return _iso(now - delta)
     abs_m = _ABS_TIME.fullmatch(text)
@@ -615,7 +625,10 @@ def linkedin_time_to_iso(token: str, *, now: datetime | None = None) -> str:
         except ValueError:
             return text
         if abs_m.group(3) is None and dt > now + timedelta(days=1):
-            dt = dt.replace(year=year - 1)
+            try:
+                dt = dt.replace(year=year - 1)
+            except ValueError:  # Feb 29 rolled back into a non-leap year: unreadable, like other bad dates
+                return text
         return _iso(dt)
     return text
 
@@ -863,7 +876,7 @@ def load_text(text: str | None, text_file: str | None) -> str:
 
 
 def _dimensions(mime: str, data: bytes) -> tuple[int, int] | None:
-    if mime == "image/png" and data[12:16] == b"IHDR":
+    if mime == "image/png" and len(data) >= 24 and data[12:16] == b"IHDR":
         return struct.unpack(">II", data[16:24])
     if mime == "image/gif" and len(data) >= 10:
         return struct.unpack("<HH", data[6:10])

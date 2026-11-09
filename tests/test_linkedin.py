@@ -723,3 +723,79 @@ def test_boost_zero_rows_report_zero_and_null_ratios():
         0.0, 0, None, "adAnalytics:no-delivery-rows")
     failed = boost.boost_record(campaign, [], (500, None), account=None, date_range=None, now=now)
     assert failed["spend"] is None and failed["warnings"] == ["adAnalytics HTTP 500"]
+
+
+# Ported from linkedin-messages-cli's overflow/linkedinclibugs (its bugs 3, 10, 11, 14, 15, 16).
+
+PADDED = "2-YWJjZGVmZ2g=="
+PADDED_CONV = f"urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAB12-xYzQ,{PADDED})"  # a "2-" inside the profile id
+
+
+@pytest.mark.parametrize("target", ["", "   "])
+def test_a_blank_target_matches_no_thread(tab, target):
+    [row] = parse.conversations(THREADS)
+    assert parse.resolve_thread([row], target) is None  # "" is a substring of every peer name
+    site = tab(messaging())
+    with pytest.raises(NotFound, match="No thread matching"):
+        asyncio.run(fetch.send(target, "ping", "kevnk", confirm=True))
+    assert site.sent == []
+
+
+def test_a_thread_id_skips_a_2_dash_inside_the_profile_id_and_keeps_its_padding():
+    rows = parse.parse_conversations_payload({"included": [
+        {"$type": "com.linkedin.messenger.Conversation", "entityUrn": PADDED_CONV}]})
+    assert [r["id"] for r in rows] == [PADDED]
+    assert parse.normalize_conversation_urn(PADDED_CONV) == (PADDED, PADDED_CONV)
+    assert parse.normalize_conversation_urn(PADDED) == (PADDED, f"urn:li:msg_conversation:{PADDED}")
+
+
+@pytest.mark.parametrize(("conversation", "included"), [
+    ({"conversationParticipants": ["urn:li:fsd_company:1"]},
+     [{"$type": "com.linkedin.voyager.dash.organization.Company", "entityUrn": "urn:li:fsd_company:1",
+       "name": {"text": "Acme Corp"}}]),
+    ({"title": {"text": "Acme Corp"}}, []),
+], ids=["participant-name", "conversation-title"])
+def test_a_peer_sent_as_a_text_object_is_plain_text(conversation, included):
+    conv = {"$type": "com.linkedin.messenger.Conversation", "entityUrn": PADDED_CONV, **conversation}
+    rows = parse.parse_conversations_payload({"included": [conv, *included]})
+    assert [r["peer"] for r in rows] == ["Acme Corp"]  # was a TypeError, or a dict peer
+
+
+@pytest.mark.parametrize(("token", "expected"), [
+    ("3mo", "2026-08-05T12:00:00Z"),
+    ("11mo", "2025-12-08T12:00:00Z"),
+    ("1yr", "2025-11-03T12:00:00Z"),
+    ("5m", "2026-11-03T11:55:00Z"),  # minutes stay minutes
+    ("2w", "2026-10-20T12:00:00Z"),
+])
+def test_relative_stamps_include_months_and_years(token, expected):
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    assert parse._is_time_line(f"{token} •")
+    assert parse.linkedin_time_to_iso(token, now=now) == expected
+
+
+def test_a_month_old_comment_keeps_its_time_and_text():
+    from datetime import datetime, timezone
+
+    card = {"id": "expandedurn:li:activity:7300000000000000001FeedType_PROFILE_COMMENTS",
+            "lines": ["Jane Doe", "Original post", "Kevin Kirchner", "• You", "3mo •", "Great point, thanks!",
+                      "2 impressions"], "links": []}
+    row = parse.normalize_card("comments", card, now=datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc))
+    assert (row["time"], row["text"]) == ("2026-08-05T12:00:00Z", "Great point, thanks!")  # was ("", "")
+
+
+def test_a_leap_day_without_a_year_does_not_crash():
+    from datetime import datetime, timezone
+
+    now = datetime(2028, 1, 15, tzinfo=timezone.utc)  # a leap year: Feb 29 is ahead, so it rolls back to 2027
+    assert parse.linkedin_time_to_iso("Feb 29", now=now) == "Feb 29"  # was ValueError, which ended the command
+    assert parse.linkedin_time_to_iso("Mar 1", now=now) == "2027-03-01T00:00:00Z"
+
+
+def test_a_truncated_png_is_still_a_png_without_dimensions(tmp_path):
+    cut = tmp_path / "cut.png"
+    cut.write_bytes(PNG[:20])  # the IHDR tag, then the width and height cut off
+    image = parse.load_image(str(cut))
+    assert (image["type"], image["width"], image["height"]) == ("image/png", None, None)  # was struct.error
