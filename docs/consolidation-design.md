@@ -2,6 +2,11 @@
 
 *Prepared for Kevin K to review. Mon Oct 19, 2026 (America/Chicago). **Design only — nothing is being built, migrated, moved, or deleted here.** Grounded in a read-only survey of the current CLIs on Kevin's M4 MacBook (user `kk`): repos under `~/Sites/truefrontier/*` and `~/Sites/CodefiLabs/google-recorder-cli`, binaries in `~/.local/bin`, and `~/.<tool>-cli` data dirs. No site/browser commands were run; no cookies, tokens, or chrome-profile contents were read.*
 
+> **Status (Nov 2026): this is the Oct 19 proposal, kept as written.** Three parts of it didn't ship as described. Each is marked "Superseded" where it appears:
+> - **The chat sites run under `llmcli`, not `webcli`.** It's `llmcli gemini|chatgpt|muse …` (`webcli/apps/llmcli.py`). `webcli` itself registers only the data sites (`webcli/apps/webcli.py`, `sites.of_kind("data")`).
+> - **There's no `webcli sites add`.** `webcli new` makes a tool, and `webcli dev`, `lint`, `test` and `submit` run, check and share it ([making-a-tool.md](making-a-tool.md)).
+> - **There's no `~/.webcli/plugins/` and no third-party entry points.** Tools live in `~/.webcli/tools/` (`webcli/scaffold/__init__.py`, `tools_dir()`), and come in through `webcli tools install` or `webcli new`. The `webcli.sites` entry points load only webcli's own built-ins (`webcli/sites/__init__.py`).
+
 Name is final: **`webcli`** (free on PyPI and Homebrew; npm has only a stale 2022 placeholder, which we don't need). Data home `~/.webcli/`, umbrella command `webcli <site> <verb>`, Python package `webcli`.
 
 ---
@@ -77,6 +82,8 @@ The richest conventions already in the fleet (we keep all of these):
 - **Two Gemini accounts**, concretely, either way:
   - `webcli gemini ask --identity google:personal "…"` and `webcli gemini ask --identity google:work "…"` (two profiles), **or**
   - `webcli gemini ask --account 0` / `--account 1` if both live under one Google identity.
+
+  > **Superseded:** Gemini runs as `llmcli gemini …`, not `webcli gemini …` (see Status at the top).
 - Resolution order for identity/account: explicit `--identity`/`--account` → `$WEBCLI_IDENTITY`/`$WEBCLI_ACCOUNT` → per-site default in `config.toml` → the site's provider default identity, `--account 0`.
 
 `config.toml` sketch:
@@ -112,6 +119,8 @@ expect_author = "kevnk"          # limsg's author safety check, preserved
 plus top-level management verbs:
 - `webcli sites` — list installed site adapters, coverage, which identity each uses.
 - `webcli sites add <name> [--from-capture FILE]` — scaffold a new adapter from a HAR/capture (see §2.4).
+
+  > **Superseded:** there's no `sites add`. `webcli new NAME [--url URL] [--capture]` makes a tool ([making-a-tool.md](making-a-tool.md)). `webcli sites` does exist: it lists the sites with their tier, provider and default identity.
 - `webcli identity list|login|status` — `webcli identity login google:work` opens a **headful** Chrome once for sign-in; everything else runs hidden.
 - `webcli serve` / `webcli daemon` — manage the per-identity headless daemons and launchd agents.
 - `webcli doctor` — health: daemons, identities signed-in state, profile locks, keychain reachability.
@@ -122,6 +131,8 @@ plus top-level management verbs:
 - Adapters are Python modules discovered two ways:
   1. **Built-in**, shipped in the `webcli.sites` package (`webcli/sites/chatgpt/…`).
   2. **Plugins**, via Python **entry points** (`[project.entry-points."webcli.sites"]`) so a separate pip/pipx package can add a site, **and** a lightweight drop-in dir `~/.webcli/plugins/<name>/` scanned at startup (OpenCLI-style, for quick local adapters without packaging).
+
+  > **Superseded:** neither kind of plugin shipped. The `webcli.sites` entry points load only webcli's own built-ins, and nothing scans `~/.webcli/plugins/`. Outside tools live in `~/.webcli/tools/`, each with a `webcli-tool.toml` manifest ([webcli-tool-manifest.md](webcli-tool-manifest.md)).
 - An adapter declares: `site` name, `provider`/identity, verbs, each verb's **strategy**, args, output `columns`, and whether it writes.
 
 ```python
@@ -159,6 +170,9 @@ Adapters pick per-verb, exactly like today (a `chats` read is COOKIE/INTERCEPT; 
 - **Writes** — unified `--dry-run` (default for writes) / `--confirm` (alias `--yes`), plus the **author/identity safety check** generalized from limsg: a write re-reads "who am I" and refuses on mismatch against `expect_author`/expected account (exit 4), never retries a possibly-live write.
 
 ### 2.4 `webcli sites add` scaffolding
+
+> **Superseded:** this shipped as `webcli new` (with `--capture` for a guided capture), and tools go in `~/.webcli/tools/`, not `~/.webcli/plugins/`. `webcli lint` and `webcli test` do the offline checks ([making-a-tool.md](making-a-tool.md)).
+
 `webcli sites add muse --from-capture muse.har` → infers hosts/paths/auth, writes a starter adapter under `~/.webcli/plugins/muse/` with a fail-closed allowlist and a `status`/`ask` stub, then `webcli sites test muse` validates structure offline. (Mirrors OpenCLI's `adapter init/test` + Printing-Press sniffing.)
 
 ### 2.5 Unified exit-code table (superset of cgpt's, incl. rate limit + resets_at)
@@ -181,6 +195,8 @@ Adapters pick per-verb, exactly like today (a `chats` read is COOKIE/INTERCEPT; 
 ## 3. Full command list, per site — every current command mapped to `webcli`
 
 Legend: **[keep]** same behavior, new spelling · **[new]** not in today's tool (flagged for Kevin's approval) · flags shown are the notable ones; all inherit shared `--identity/--account/--format/--quiet`.
+
+> **Superseded (ChatGPT, Gemini and Muse below):** these three run under `llmcli`, so read each `webcli chatgpt|gemini|muse …` as `llmcli chatgpt|gemini|muse …`. The other sites in this section do run under `webcli`.
 
 ### ChatGPT (`cgpt` → `webcli chatgpt`)
 | Today | webcli | Notes |
@@ -256,6 +272,8 @@ Legend: **[keep]** same behavior, new spelling · **[new]** not in today's tool 
 | `walkie meetings/dictations/status` (+ `--db`, `--account`, `--format`) | `webcli walkie …` | [keep] local SQLite only, no browser/identity |
 
 **New things flagged (not requested by Kevin):** the only genuinely new surface is (a) the top-level management verbs `webcli sites / identity / serve / doctor / agent-help`, (b) exit code `7` for config, and (c) `sites add --from-capture` scaffolding. Everything per-site is a 1:1 keep. No per-site command is being dropped.
+
+> **Superseded:** (c) shipped as `webcli new --capture`, not `sites add --from-capture` (see §2.4).
 
 ---
 
