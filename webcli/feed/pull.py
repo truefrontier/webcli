@@ -16,13 +16,17 @@ import os
 import subprocess
 import sys
 import tempfile
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from webcli.core import config
 from webcli.feed.normalize import SCHEMA, imported, item, merge
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 
 SITES = ("youtube", "gnews", "perplexity", "linkedin", "x")
 DEFAULT_SITES = ("youtube", "gnews", "perplexity", "linkedin")
