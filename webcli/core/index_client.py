@@ -47,6 +47,11 @@ DEFAULT_ARCHIVE = "https://codeload.github.com/truefrontier/webcli-tools/tar.gz/
 CACHE = "index-cache.json"
 INDEX_LIMIT = 5_000_000
 ARCHIVE_LIMIT = 50_000_000  # the download, and separately what one tool's files expand to
+# The whole archive, the library's other folders included: tarfile reads (and keeps) every member's header, and
+# skipping a member still decompresses it. So a 50 MB download can't make install hold millions of headers or
+# inflate gigabytes it never writes.
+MEMBER_LIMIT = 20_000
+UNPACKED_LIMIT = 250_000_000
 TIMEOUT = 30
 # What Python imports with no source next to it (an unchecked-hash .pyc even wins over the .py beside it).
 COMPILED = (".pyc", ".pyo", ".pyd", ".so")
@@ -265,10 +270,17 @@ def download(entry: Entry, dest: Path) -> None:
     target = archive_url(entry)
     body = _get(target, ARCHIVE_LIMIT)
     prefix = PurePosixPath(entry.path)
-    count = size = 0
+    count = size = members = unpacked = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as tar:
             for member in tar:
+                # Checked before the loop moves on, which is when tarfile reads past this member's data.
+                members += 1
+                unpacked += member.size
+                if members > MEMBER_LIMIT:
+                    raise LibraryError(f"{target} holds more than {MEMBER_LIMIT} files; not installing it.")
+                if unpacked > UNPACKED_LIMIT:
+                    raise LibraryError(f"{target} expands past {UNPACKED_LIMIT // 1_000_000} MB; not installing it.")
                 parts = PurePosixPath(member.name).parts[1:]  # the archive's top folder: <repo>-<commit>/
                 if len(parts) <= len(prefix.parts) or PurePosixPath(*parts[:len(prefix.parts)]) != prefix:
                     continue
