@@ -359,9 +359,13 @@ def test_playlist_create_confirm_exits_0_or_8(calls):
 
 
 def table(*args) -> str:
-    """A command's table, as a terminal would show it (wide enough that no header wraps)."""
+    """A command's table, as a terminal would show it (wide enough that no header wraps).
+
+    LINES is set with COLUMNS: when TERM=dumb, Rich ignores COLUMNS unless the height is set too,
+    and the compact feed URL is then cut before the video id.
+    """
     return CliRunner().invoke(webcli_app.build(), ["youtube", *args, "--format", "table"],
-                              env={"COLUMNS": "200"}).stdout
+                              env={"COLUMNS": "200", "LINES": "40"}).stdout
 
 
 def test_compact_narrows_the_history_table(calls):
