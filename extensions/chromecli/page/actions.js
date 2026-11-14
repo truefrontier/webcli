@@ -138,8 +138,10 @@ export function pageAction(spec) {
       const f = el.form || closestDeep(el, "form");
       try { const u = new URL(f.action || location.href); d.formAction = u.origin + u.pathname; } catch { /* skip */ }
     }
-    return d;
+    // A page can make any attribute huge: no field goes back longer than this (name and outerHTML are shorter still).
+    return capped(d);
   }
+  const capped = (o) => { for (const k in o) if (typeof o[k] === "string" && o[k].length > 500) o[k] = o[k].slice(0, 500) + "…"; return o; };
   const fingerprint = (d) => [d.tag, d.role, d.name, d.type, d.id, d.nameAttr, d.outerHTML].join("\u0001");
 
   const INTERACTIVE = "a[href], button, input:not([type=hidden]), select, textarea, summary, [contenteditable=''], " +
@@ -218,7 +220,7 @@ export function pageAction(spec) {
     }
     return nearest ? { el: nearest, via: "nearest_html" } : { el: node, via: "dispatch" };
   }
-  const brief = (n) => ({ tag: String(n.tagName || "").toLowerCase(), id: n.id || null,
+  const brief = (n) => capped({ tag: String(n.tagName || "").toLowerCase(), id: n.id || null,
     role: n.getAttribute?.("role") || null, name: clean(n.getAttribute?.("aria-label") || "").slice(0, 80) || null });
 
   const r = resolve(spec.target);
