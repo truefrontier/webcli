@@ -234,12 +234,13 @@ def test_a_manifest_that_disagrees_with_the_index_is_refused(library, tools):
     assert not (tools / "toyhttp").exists()
 
 
-def add_to_archive(library: Library, name: str, extra: tuple[tuple[str, int], ...]) -> None:
+def add_to_archive(library: Library, name: str, extra: tuple[tuple[str, int], ...],
+                   fmt: int = tarfile.PAX_FORMAT) -> None:
     """Add zero-filled files outside the tool's folder (the library's other folders) to its published tarball."""
     path = library.root / f"{library.tools[name]['commit']}.tar.gz"
     with tarfile.open(path) as old:
         members = [(m, old.extractfile(m).read() if m.isfile() else None) for m in old.getmembers()]
-    with tarfile.open(path, "w:gz") as tar:
+    with tarfile.open(path, "w:gz", format=fmt) as tar:
         for member, data in members:
             tar.addfile(member, None if data is None else io.BytesIO(data))
         for rel, size in extra:
@@ -273,6 +274,36 @@ def test_an_archive_under_both_limits_installs(library, tools, monkeypatch):
     monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000, raising=False)
     library.publish()
     add_to_archive(library, "toyhttp", (("other/a.txt", 10), ("other/b.bin", 500_000)))
+    ok("tools", "install", "toyhttp", "--yes")
+    assert (tools / "toyhttp" / "webcli-tool.toml").is_file()
+
+
+@pytest.mark.parametrize("fmt", [tarfile.PAX_FORMAT, tarfile.GNU_FORMAT], ids=["pax", "gnu"])
+def test_an_oversized_long_name_header_is_refused_before_tarfile_reads_it(library, tools, monkeypatch, fmt):
+    # A long name rides in its own header (pax "path=" or GNU's ././@LongLink) that tarfile reads whole before the
+    # loop sees the member, so neither cap above can stop it. Gzip shrinks a run of one byte about a thousandfold.
+    monkeypatch.setattr(index_client, "HEADER_LIMIT", 10_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/" + "a" * 20_000, 0),), fmt=fmt)
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "a tar header over 10 KB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_header_bytes_count_toward_the_unpacked_limit(library, tools, monkeypatch):
+    # 15 empty files, each named in a ~90 KB pax header: 0 bytes of file data, but 1.35 MB to decompress.
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000)
+    library.publish()
+    add_to_archive(library, "toyhttp", tuple((f"other/{i}-" + "a" * 90_000, 0) for i in range(15)))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "expands past 1 MB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_a_long_but_ordinary_path_still_installs(library, tools):
+    # Real long names (a deep folder, a 255-byte file name) are far under the header cap, in either format.
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/" + "d/" * 400 + "f" * 255, 10),), fmt=tarfile.GNU_FORMAT)
     ok("tools", "install", "toyhttp", "--yes")
     assert (tools / "toyhttp" / "webcli-tool.toml").is_file()
 
