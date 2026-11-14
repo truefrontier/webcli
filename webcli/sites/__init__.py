@@ -3,9 +3,9 @@
 (identities.login_site), the official one does.
 
 A community tool is skipped, with a warning on stderr and a line in `webcli doctor`, never an error for the whole
-CLI, when: its name is a built-in site, a built-in site's provider (google, meta), a webcli command, or already taken;
-it is revoked; or anything about it is broken. A disabled tool is skipped quietly. A site's tier comes from where it
-was loaded, never from the site itself.
+CLI, when: its name is a built-in site, a built-in site's provider (google, meta), "none", a webcli command (the one
+list is manifest_schema._reserved), or already taken; it is revoked; or anything about it is broken. A disabled tool
+is skipped quietly. A site's tier comes from where it was loaded, never from the site itself.
 
 The "webcli.sites" entry points are webcli's own built-ins. Another package's entry point isn't loaded: community
 tools come with a webcli-tool.toml manifest, through `webcli tools install` or `webcli new`.
@@ -19,7 +19,7 @@ from importlib.metadata import entry_points
 from typing import NamedTuple
 
 from webcli.core.errors import ConfigError
-from webcli.sites.base import NO_IDENTITY, Site
+from webcli.sites.base import Site
 
 GROUP = "webcli.sites"
 OFFICIAL, COMMUNITY = "official", "community"
@@ -83,8 +83,7 @@ def loaded() -> Loaded:
         if BUILTIN.get(ep.name) != ep.value and getattr(ep.dist, "name", None) != "truefrontier-webcli":
             skip(ep.name, f"entry point {ep.value}",
                   "another package's entry point; community tools install with `webcli tools install`")
-    reserved = set(sites) | {site.provider for site in sites.values()} | {NO_IDENTITY} | \
-        manifest_schema.CORE_COMMANDS
+    reserved = manifest_schema._reserved()
     for candidate in tools_registry.candidates():
         name, source = candidate.name, f"{candidate.source} {candidate.folder}"
         if name in reserved or name in sites:
