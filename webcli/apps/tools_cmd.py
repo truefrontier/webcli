@@ -344,9 +344,14 @@ def install_cmd(name: str, yes: bool) -> None:
         if not yes and not _ask(f"Install {name} {manifest.version}?"):
             die(f"{name} was not installed.", EXIT_USAGE, hint="Pass --yes to install without asking.")
         _write_record(stage, entry, index)
+        if stale:  # before the folder goes in place: if grants.toml can't be written, nothing is installed
+            try:
+                grants.revoke_grant(name)
+            except OSError as exc:
+                raise ConfigError(f"Can't drop the grants left under the name {name} ({exc}); not installing it.",
+                                  hint=f"Check {grants.path()}.") from None
         stage.rename(folder)  # fails, rather than replacing, if a non-empty folder appeared meanwhile
     if stale:
-        grants.revoke_grant(name)
         warn(f"webcli: dropped the grants left under the name {name} ({', '.join(stale)}): they were for an earlier "
              f"tool. Grant again only if you trust this one.")
     sites.reload()
