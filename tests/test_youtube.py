@@ -69,6 +69,12 @@ def test_request_allowed(method, url, allowed):
     assert request_allowed(method, url) is allowed
 
 
+def test_sign_out_is_blocked_on_the_bare_youtube_host_too():
+    # youtube.com/logout redirects to www.youtube.com/logout, and the guard never sees a redirect's hops.
+    assert request_allowed("GET", "https://youtube.com/logout") is False
+    assert request_allowed("GET", "https://youtube.com/feed/history") is True
+
+
 # The one write: playlist/create, bound to its scope.
 
 CREATE = "https://www.youtube.com/youtubei/v1/playlist/create?key=k&prettyPrint=false"
