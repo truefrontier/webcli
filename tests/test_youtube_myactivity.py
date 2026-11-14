@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -174,3 +175,32 @@ def test_dom_wins_when_page_data_misses_entries():
 def test_no_limit_scrolls_until_the_list_stops_growing():
     rows = asyncio.run(fetch.myactivity_history(FakePage(DOM + HTML, "Today"), limit=None, cutoff=None, notes=[]))
     assert [r["videoId"] for r in rows] == ["dQw4w9WgXcQ", "aaaaaaaaaaa", "jNQXAC9IVRw", "ccccccccccc"]
+
+
+def auto(monkeypatch, page: FakePage, source: str = "auto", since: str | None = None) -> dict:
+    """fetch.history on `page`, with YouTube history (the day-precision fallback) stubbed to one row."""
+
+    @asynccontextmanager
+    async def site_page(policy, **options):
+        yield page
+
+    async def youtube_history(page, **options):
+        return [{"videoId": "from-youtube", "watchedAtPrecision": "day"}]
+
+    monkeypatch.setattr(fetch.browser, "site_page", site_page)
+    monkeypatch.setattr(fetch, "youtube_history", youtube_history)
+    return asyncio.run(fetch.history(source, None, since))
+
+
+def test_auto_keeps_my_activity_when_nothing_is_inside_since(monkeypatch):
+    # My Activity parsed fine and every entry is older than --since: no rows, not a reason to switch sources.
+    since = (datetime.now().astimezone() + timedelta(days=1)).isoformat()
+    assert auto(monkeypatch, FakePage(DOM, "Today"), since=since) == {"rows": [], "notes": []}
+
+
+def test_auto_still_falls_back_when_my_activity_shows_no_entries(monkeypatch):
+    assert auto(monkeypatch, FakePage("<html></html>", "")) == {
+        "rows": [{"videoId": "from-youtube", "watchedAtPrecision": "day"}],
+        "notes": ["My Activity unavailable (no watch entries could be parsed); using YouTube history (day "
+                  "precision)."]}
+    assert auto(monkeypatch, FakePage("<html></html>", ""), "myactivity") == {"rows": [], "notes": []}
