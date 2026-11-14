@@ -80,6 +80,7 @@ It runs the library's checks. It exits 0 when there are no errors (warnings are 
 | `writes` | A command takes `--confirm` but isn't marked `writes = true`. A marked write is a warning: the library reviews each one |
 | `guard` | The tool's `POLICY` lets the page reach a host outside `hosts`, or lets a PUT, PATCH, or DELETE through when no command writes |
 | `imports` | The tool imports anything from webcli besides `webcli.adapter` |
+| `compiled` | A file is compiled code a reviewer can't read: a `.so` or `.pyd`, a `.pyc` with no source, or a `__pycache__` `.pyc` built unchecked-hash (Python runs it instead of the `.py` beside it). Python's own `__pycache__` is fine, but don't commit it: `webcli tools install` refuses any compiled file |
 | `tests` | There's no `tests/test_*.py` |
 | `secrets` | Any file has a private key, an API key or token, or a Cookie or Authorization value. Fixtures also can't have anything webcli's redaction would hide, or an email address |
 

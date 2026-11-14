@@ -28,6 +28,7 @@ from webcli.core.guard import Guard
 from webcli.core.redact import REDACTED, redact_text
 
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", ".pytest_cache", ".ruff_cache", "node_modules"}
+COMPILED = (".pyc", ".pyo", ".pyd", ".so")  # what Python imports with no source next to it
 MAX_SCAN_BYTES = 2_000_000
 PROBE_HOST = "webcli-lint.invalid"
 WRITE_METHODS = ("PUT", "PATCH", "DELETE")
@@ -91,6 +92,33 @@ def secrets(folder: Path) -> list[dict]:
                     what.append("an email address")
             out.extend(_finding("secrets", "error", f"{rel}:{n}: looks like {w}") for w in what)
     return out
+
+
+def compiled(folder: Path) -> list[dict]:
+    """Code Python runs that a reviewer can't read: a native module, a .pyc with no source, or a cached .pyc built
+    unchecked-hash, which Python runs instead of the .py beside it. Python's own __pycache__ (timestamp or checked
+    hash, written as the tool is imported) is fine. `webcli tools install` refuses every compiled file."""
+    out = []
+    for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(folder)
+        if not path.is_file() or not path.name.endswith(COMPILED) or (SKIP_DIRS - {"__pycache__"}) & set(rel.parts):
+            continue
+        cached = "__pycache__" in rel.parts
+        if cached and not _unchecked_pyc(path):
+            continue
+        out.append(_finding("compiled", "error", f"{rel.as_posix()}: compiled code a reviewer can't read; a tool ships "
+                                                 "source only" + (" (Python runs this cache without checking it "
+                                                                  "against the source)" if cached else "")))
+    return out
+
+
+def _unchecked_pyc(path: Path) -> bool:
+    """A .pyc whose header (PEP 552) says hash-based with check_source off. A cache file that isn't a .pyc counts."""
+    if path.suffix != ".pyc":
+        return True
+    with path.open("rb") as handle:
+        flags = handle.read(8)[4:]
+    return len(flags) == 4 and int.from_bytes(flags, "little") & 0b11 == 0b01
 
 
 def imports(folder: Path) -> list[dict]:
@@ -213,7 +241,7 @@ def tests_present(folder: Path) -> list[dict]:
 
 def lint(name: str, folder: Path) -> list[dict]:
     """Every finding for the tool at `folder`, errors and warnings. It passes when there are no errors."""
-    out = secrets(folder) + imports(folder) + tests_present(folder)
+    out = secrets(folder) + compiled(folder) + imports(folder) + tests_present(folder)
     try:
         manifest = manifest_schema.load(folder)
     except manifest_schema.ManifestError as exc:
