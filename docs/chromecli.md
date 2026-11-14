@@ -668,7 +668,7 @@ Patterns: `host`, `*.host` (includes the bare host), `scheme://host[:port]`, `ho
 (`configError` in `status`). An unknown key (0.11.4; a typo, or a key from a newer chromecli) is ignored with a warning:
 the host logs `event=config_warning` and `status` lists it in `configWarnings` (key names only, never values).
 Ignoring is always safe: the policy is built from the known keys only, so an unknown key never loosens anything.
-Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME`.
+Env: `CHROMECLI_TIMEOUT` (seconds, default 30; anything but a positive number uses the default), `CHROMECLI_FORMAT`, `WEBCLI_HOME`.
 
 ## Exit codes
 
