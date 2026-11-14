@@ -700,6 +700,11 @@ iframes, a closed shadow root, a canvas), and `animated.html` (0.12.1: something
 and throttling checks; `window.__stats` counts rAF, timer ticks, visibility changes). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
 
+The pytest files that load these pages (and the Messages and LinkedIn DOM fixtures) get their browser from
+`tests/browsers.py`: Playwright's own Chromium, else a cached headless shell, never your Chrome. They skip when
+neither is there. To run them on your installed Chrome instead, set `WEBCLI_TEST_CHROME_CHANNEL=chrome`. Playwright
+starts it headless with a throwaway profile.
+
 `extensions/chromecli/test/fixtures/grant-batch-as-described.json` (0.11.5): quote (b) above, the vague quote (a)
 "i approve screencast clicks", the As Described tab (URL, title), the 7 grants and Jev answers in the TypeSafe
 response shape, keyed by target. Hand-made in the recorded shape; tests never call the real TypeSafe API.

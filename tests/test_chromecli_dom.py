@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from browsers import launch_chromium
+
 REPO = Path(__file__).resolve().parents[1]
 EXT = REPO / "extensions" / "chromecli"
 FIXTURES = REPO / "tests" / "fixtures" / "chromecli"
@@ -33,16 +35,7 @@ def page():
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     with sync_playwright() as p:
-        browser = None
-        # Playwright's own Chromium, else any cached headless shell (never the user's Chrome).
-        shells = sorted(Path.home().glob("Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        shells += sorted(Path.home().glob(".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        for exe in [None, *reversed(shells)]:
-            try:
-                browser = p.chromium.launch(**({"executable_path": str(exe)} if exe else {}))
-                break
-            except Exception:
-                continue
+        browser = launch_chromium(p)
         if browser is None:
             srv.shutdown()
             pytest.skip("no headless Chromium")

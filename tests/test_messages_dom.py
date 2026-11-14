@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from browsers import launch_chromium
+
 from webcli.sites.messages import fetch, parse
 from webcli.sites.messages.endpoints import SELECTORS
 
@@ -22,15 +24,7 @@ def chromium():
     except ImportError:
         pytest.skip("playwright not installed")
     with sync_playwright() as p:
-        browser = None
-        shells = sorted(Path.home().glob("Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        shells += sorted(Path.home().glob(".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        for exe in [None, *reversed(shells)]:
-            try:
-                browser = p.chromium.launch(**({"executable_path": str(exe)} if exe else {}))
-                break
-            except Exception:
-                continue
+        browser = launch_chromium(p)
         if browser is None:
             pytest.skip("no headless Chromium")
         yield browser
