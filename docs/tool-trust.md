@@ -70,7 +70,7 @@ The library's `index.json` has a `revoked` list. Each entry is a tool name, or a
 {"name": "sometool", "versions": ["0.1.0"], "reason": "posted without asking"}
 ```
 
-If an entry has no `versions`, every version is revoked. Versions are matched exactly; ranges aren't supported. Core won't load a revoked tool. The daemon also re-reads the list before every op of a community tool, so a daemon that is already running honors a new revocation.
+If an entry has no `versions`, every version is revoked. Versions are matched exactly; ranges aren't supported. Core won't load a revoked tool. The daemon also re-reads the list before every op of a community tool, so a daemon that is already running honors a new revocation. It checks `.disabled` and the tool's folder before every op too, so `webcli tools disable` and `webcli tools remove` stop the tool in a running daemon as well.
 
 If `index-cache.json` or `revoked.json` exists but can't be read, no community tool runs until you fix or remove the file. A damaged cache never switches a revoked tool back on.
 
