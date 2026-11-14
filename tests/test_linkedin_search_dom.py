@@ -72,7 +72,7 @@ def test_search_cards_parse_in_both_markups(chromium, name):
     assert john["author_headline"] == "Founder, Example Studio"
     assert john["text"].startswith("Thanks Jane Doe")  # a mention in the text is not the author
     # "Just now" and "with 2 others • Just now" are dated, so --sort latest can order them
-    posted = {r["author_name"]: datetime.fromisoformat(r["posted_at"]) for r in rows}
+    posted = {r["author_name"]: datetime.fromisoformat(r["posted_at"].replace("Z", "+00:00")) for r in rows}
     assert posted["Jane Doe"] == posted["John Roe"]
     assert abs(posted["Jane Doe"] - NOW) < timedelta(minutes=1)
     assert posted["Example Co"] == NOW - timedelta(hours=2)
