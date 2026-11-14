@@ -57,7 +57,10 @@ def parse_since(value: str | None, now: datetime | None = None) -> datetime | No
     m = _SINCE.match(value.strip())
     if m:
         n, unit = int(m.group(1)), m.group(2).lower()
-        return now - timedelta(hours=n if unit == "h" else 0, days=n if unit == "d" else 7 * n if unit == "w" else 0)
+        try:
+            return now - timedelta(**{"hours" if unit == "h" else "days": n * (7 if unit == "w" else 1)})
+        except OverflowError:  # before year 1, or more than timedelta holds
+            raise ValueError(f"--since {value!r} is too far back to be a date.") from None
     try:
         at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
@@ -134,8 +137,12 @@ def video(key: str, renderer: dict, now: datetime, *, include_shorts: bool = Fal
         views = next((c for p in parts if p != base["channel"] and (c := count(p)) is not None), None)
         snippet = None
     age = age_seconds(age_text)
-    published = (now - timedelta(seconds=age)).isoformat(timespec="seconds").replace("+00:00", "Z") \
-        if age is not None else None
+    published = None
+    if age is not None:
+        try:
+            published = (now - timedelta(seconds=age)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        except OverflowError:  # before year 1 ("99999 years ago"): no date; publishedText still says it
+            pass
     return {"source": "youtube", "id": base["videoId"], "url": base["url"], "title": base["title"],
             "author": base["channel"], "channelUrl": base["channelUrl"], "publishedAt": published,
             "publishedText": age_text, "snippet": snippet, "thumbnail": _thumb(renderer),

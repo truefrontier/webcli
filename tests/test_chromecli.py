@@ -342,6 +342,15 @@ def test_history_since_reads_a_utc_z(ext):
     assert sent["args"]["since"] == 1790812800000  # 2026-10-01T00:00:00Z, on Python 3.10 too
 
 
+def test_history_since_with_no_timestamp_is_a_usage_error(ext):
+    # A local date-time's timestamp() looks a day back, so year 1's first day fails in every time zone.
+    fake = ext(fake_tabs).start()
+    result = run("history", "--since", "0001-01-01", "--format", "json")
+    assert result.exit_code == 2, result.output
+    assert "--since" in result.output
+    assert not [m for m in fake.received if m.get("op") == "history.search"]  # never asked the extension
+
+
 def test_target_is_tab_or_active(ext):
     ext(fake_tabs).start()
     assert run("read").exit_code == 2
