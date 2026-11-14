@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import socket
 import stat
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,13 +19,14 @@ from urllib.parse import urlencode
 
 import pytest
 from click.testing import CliRunner
+from playwright.async_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout
 
 import webcli
 from webcli.apps import webcli as webcli_app
 from webcli.core import browser, config, daemon, guard
 from webcli.core.errors import AuthRequired, NotFound
 from webcli.sites.facebook import endpoints, enrich, fetch, parse, store
-from webcli.sites.facebook.guard import POLICY, read_policy, request_allowed
+from webcli.sites.facebook.guard import POLICY, fb_host, read_policy, request_allowed
 
 from conftest import FIXTURES, make_profile
 
@@ -246,6 +248,9 @@ class FakePage:
 
     async def title(self):
         return "Jane Doe | Facebook"
+
+    def is_closed(self):
+        return False
 
     async def evaluate(self, script, arg=None):
         if script == fetch.MAIN_JS:
@@ -524,3 +529,150 @@ def test_status_signed_out_points_at_the_facebook_login(calls):
     result = run("status")
     assert result.exit_code == 4 and "webcli identity login facebook:default" in result.stderr
     assert "meta:default" not in result.stderr
+
+
+# Ported from fbc's last bug hunt (facebook-contacts-cli overflow/fbcontactsbugs; the repo is archived). The number in
+# each comment is that hunt's bug number.
+
+def friend(key: str, name: str, subtitle: str | None = None) -> dict:
+    return {"key": key, "username": key, "numericId": None, "name": name, "profileUrl": f"{FB}/{key}",
+            "subtitle": subtitle}
+
+
+def test_search_folds_accents_but_keeps_non_latin_letters():  # 1
+    store.save_friends([friend("jane.doe", "Jane Doe"), friend("ivan.petrov", "Иван Петров", "Lives in 東京"),
+                        friend("anna.strasse", "Anna Straße"), friend("sean.obrien", "Seán O’Brien-Lee"),
+                        friend("jean.luc", "Jean‑Luc Picard"), friend("kim.minsu", "김민수")])
+    people = store.people()
+
+    def keys(**filters):
+        return sorted(p["key"] for p in people if store.matches(p, **filters))
+
+    assert keys(name="Мария") == []  # a non-Latin query used to fold to "" and match everyone
+    assert keys(name="иван") == ["ivan.petrov"] and keys(city="東京") == ["ivan.petrov"]
+    assert keys(name="STRASSE") == ["anna.strasse"] and keys(name="Jane") == ["jane.doe"]
+    for query in ("obrien", "O'Brien", "o’brien", "sean obrien-lee"):
+        assert keys(name=query) == ["sean.obrien"], query  # the old ASCII fold only got "obrien"
+    assert keys(name="jean-luc") == ["jean.luc"]  # a non-breaking hyphen reads as "-"
+    assert keys(name="기") == [] and keys(name="민수") == ["kim.minsu"]  # 기 is not a prefix of 김
+
+
+def test_keyword_matches_values_not_field_names_or_bookkeeping():  # 2
+    store.save_friends(parse.friends(fixture("friends_tab.html"), FRIENDS))
+    store.save_about({**parse.about({"about": OVERVIEW}, f"{FB}/jane.doe/about"),
+                      "sections": {"about": "ok", "directory_work": "missing"}})
+    store.save_enrich("jane.doe", {"role": {"value": "Owner", "source": "facebook_about", "confidence": "high"},
+                                   "publicLinks": {"linkedin": None, "website": None, "companyPage": None},
+                                   "webSearch": "skipped", "enrichedAt": "2026-10-15T00:00:00Z"})
+    people = store.people()
+
+    def keys(keyword):
+        return sorted(p["key"] for p in people if store.matches(p, keyword=keyword))
+
+    for word in ("linkedin", "websites", "currentcity", "hometown", "employerpage", "none", "null", "true", "high",
+                 "facebook_about", "skipped", "fetchedat", "2026", "missing"):
+        assert keys(word) == [], word
+    assert keys("bolivar") == ["jane.doe"] and keys("acme coffee") == ["jane.doe"]
+
+
+@pytest.mark.parametrize("value", ["m.jones", "m.smith.3", "www.doe", "facebook.fan"])
+def test_usernames_that_start_like_a_facebook_host(value):  # 3
+    assert parse.person_from_arg(value) == parse.Person(value, username=value)
+
+
+@pytest.mark.parametrize("value", ["facebook.com", "www.facebook.com", "m.facebook.com"])
+def test_a_bare_facebook_host_is_still_not_a_profile(value):  # 3, guard rail
+    with pytest.raises(ValueError):
+        parse.person_from_arg(value)
+
+
+def test_a_year_on_the_next_item_does_not_end_a_current_job():  # 4
+    items = ["Works at Acme", "Married to Pat Lee since 2010", "Owner at Ozark AI Labs", "Born on June 5, 1985",
+             "Consultant at Hooli", "Went to Central High, class of 1999", "Advisor at Pied Piper",
+             "Board member at Raviga since 2019", "Manager at Old Co", "2012 - 2016"]
+    html = '<div role="main">' + "".join(f"<div><span>{t}</span></div>" for t in items) + "</div>"
+    work = {w["employer"]: w["current"] for w in parse.about({"about": html}, f"{FB}/a.b/about")["work"]}
+    assert [work[e] for e in ("Acme", "Ozark AI Labs", "Hooli", "Pied Piper", "Old Co")] == [True] * 4 + [False]
+
+
+@pytest.mark.parametrize(("text", "school", "field"), [
+    ("Studied at University of North Carolina at Chapel Hill", "University of North Carolina at Chapel Hill", None),
+    ("Studied Business at University of Texas at Austin", "University of Texas at Austin", "Business"),
+    ("Went to University of Texas at Austin", "University of Texas at Austin", None),
+])
+def test_school_names_with_at_in_them(text, school, field):  # 5
+    found = parse._school(parse.Line(text, []))
+    assert (found["school"], found["field"]) == (school, field)
+
+
+def test_the_education_tab_adds_the_field_the_overview_left_out():  # 6
+    overview = '<div role="main"><div>Studied at Missouri State University</div></div>'
+    tab = ('<div role="main"><div>Studied Computer Science at missouri state university</div>'
+           '<div>Class of 2009</div></div>')
+    record = parse.about({"about": overview, "directory_education": tab}, f"{FB}/a.b/about")
+    assert [(e["school"], e["field"]) for e in record["education"]] == [
+        ("missouri state university", "Computer Science")]
+
+
+@pytest.mark.parametrize("past", ["Worked at Initech", "Former Engineer at Initech", "Previously Engineer at Initech"])
+def test_a_past_job_on_the_friends_tab_is_not_the_current_company(past):  # 7
+    record = enrich.build({"key": "d", "name": "Dan Lee", "subtitle": f"{past} · Lives in Nixa, Missouri"}, None,
+                          web=False)
+    assert (record["company"], record["role"], record["location"]["value"]) == (None, None, "Nixa, Missouri")
+
+
+def test_sync_is_not_complete_when_the_list_vanishes_mid_scroll(page):  # 8
+    page({FRIENDS: [fixture("friends_tab.html"), ""]}, {endpoints.FRIENDS_URL: FRIENDS})
+    result = asyncio.run(fetch.sync(None))
+    assert len(result["friends"]) == 5 and result["complete"] is False
+
+
+def test_about_many_keeps_going_past_a_page_timeout(page):  # 9
+    fake, _ = page({f"{FB}/jane.doe/about": OVERVIEW})
+    real_goto = fake.goto
+
+    async def goto(url, **options):
+        if "slow.person" in url:
+            raise PlaywrightTimeout("Timeout 60000ms exceeded.")
+        await real_goto(url, **options)
+
+    fake.goto = goto
+    people = [{"key": "slow.person", "username": "slow.person"}, {"key": "jane.doe", "username": "jane.doe"}]
+    out = asyncio.run(fetch.about_many(people))
+    assert out[0] == {"person": people[0], "error": "Timeout 60000ms exceeded."}
+    assert out[1]["record"]["currentCity"] == "Springfield, Missouri"
+
+
+def test_about_many_stops_once_chrome_is_gone(page):  # 9, guard rail
+    fake, _ = page({})
+
+    async def goto(url, **options):
+        raise PlaywrightError("Target page, context or browser has been closed")
+
+    fake.goto, fake.is_closed = goto, lambda: True
+    with pytest.raises(PlaywrightError, match="closed"):
+        asyncio.run(fetch.about_many([{"key": "jane.doe", "username": "jane.doe"}]))
+
+
+def test_search_enrich_shows_a_row_whose_key_changed(calls):  # 10
+    _, answers = calls
+    store.save_friends(parse.friends(fixture("friends_tab.html"), FRIENDS))
+    # Bob is cached by numeric id; his About page reveals a username, so saving it re-keys his row.
+    record = {**parse.about({"about": OVERVIEW.replace("Springfield", "Nixa")}, f"{FB}/bob.smith/about"),
+              "name": "Bob Smith", "numericId": "100004567890123", "blocked": []}
+    answers["about_many"] = lambda people, **_: [{"person": p, "record": record} for p in people]
+    rows = json.loads(run("search", "--name", "bob", "--enrich", "--no-web").stdout)
+    assert [(r["key"], r["city"], bool(r["enrichedAt"])) for r in rows] == [("bob.smith", "Nixa, Missouri", True)]
+
+
+@pytest.mark.parametrize("url", ["https://m.facebook.com/logout", "https://web.facebook.com/logout.php",
+                                 "https://facebook.com/logout.php", "https://mbasic.facebook.com/logout/"])
+def test_sign_out_gets_are_blocked_on_every_facebook_host(url):  # 14
+    assert not allowed("GET", url)
+    assert allowed("GET", "https://m.facebook.com/logoutx")  # whole segments only
+
+
+def test_a_trailing_dot_is_still_a_facebook_host(monkeypatch):  # 14
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: pytest.fail("looked up a Facebook host"))
+    assert fb_host("www.facebook.com.") and not fb_host("facebook.com.evil.example")
+    assert not enrich.public_http_url("https://www.facebook.com./jane.doe")  # never fetched outside the guard
