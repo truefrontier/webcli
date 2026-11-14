@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,10 @@ def sampler_binary() -> Path:
     digest = hashlib.sha256(SAMPLER.encode()).hexdigest()[:12]
     work = Path(tempfile.gettempdir()) / f"window-check-{os.getuid()}"
     work.mkdir(mode=0o700, exist_ok=True)
+    st = os.lstat(work)  # with no $TMPDIR this is /tmp, where anyone could have made it first: never run from that
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise SystemExit(f"window_check: {work} isn't private to you (your own folder, mode 0700, not a link), so "
+                         "it won't run a sampler from it. Remove it and run again.")
     binary = work / f"sampler-{digest}"
     if not binary.exists():
         source = work / f"sampler-{digest}.swift"

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from webcli import scaffold, sites
+from webcli import scaffold
 from webcli.core import browser, capture, identities, manifest_schema, output
 from webcli.core.errors import UsageError
 from webcli.core.guard import host_matches
@@ -21,17 +21,11 @@ from webcli.sites.base import NO_IDENTITY
 CAPTURE_TIMEOUT = 600
 
 
-def reserved() -> set[str]:
-    """Names a tool can't take: a built-in site, a webcli command, or the provider a built-in signs in with."""
-    official = {s.provider for n, s in sites.registry().items() if sites.tier_of(n) == sites.OFFICIAL}
-    return set(manifest_schema._reserved()) | official | {NO_IDENTITY}
-
-
 def check_name(name: str) -> None:
     if not manifest_schema._NAME.fullmatch(name):
         die(f"{name!r} can't be a tool name: use 2-32 lowercase letters and digits, starting with a letter, and no "
             "hyphens (the name is also the tool's identity, NAME:default).", EXIT_USAGE)
-    if name in reserved():
+    if name in manifest_schema._reserved():
         die(f"{name!r} is a built-in site, provider, or webcli command; a tool can't take its name.", EXIT_USAGE,
             hint="Pick another name. `webcli sites` lists the built-ins.")
     if name in scaffold.library_names():

@@ -43,6 +43,8 @@ export function detailRows(info) {
   if (info.element) {
     rows.push(["Element", elementLine(info.element)]);
     if (info.element.name && info.element.name.length > 60) rows.push(["Name", trunc(info.element.name, 160)]);
+    const also = info.element.activates; // a label: its click also clicks this control
+    if (also) rows.push(["Also clicks", [elementLine(also), also.name && `“${trunc(also.name, 80)}”`].filter(Boolean).join(" · ")]);
   }
   if (info.value) rows.push(["Value", info.value.masked ? `${info.value.text}  (${info.value.chars} chars, hidden)` : info.value.text, info.value.masked ? "masked" : "mono"]);
   if (info.key) rows.push(["Key", info.key, "mono"]);

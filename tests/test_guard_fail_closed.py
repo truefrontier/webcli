@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib
 import json
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
 
+from webcli import sites
 from webcli.core import guard
 from webcli.sites.chatgpt.guard import POLICY as CHATGPT
 from webcli.sites.gemini.guard import POLICY as GEMINI
@@ -105,6 +108,21 @@ def test_a_policy_that_raises_fails_closed():
     assert guard.state.blocked == ["x"]
 
 
+def test_a_request_the_guard_cannot_even_read_is_blocked_and_recorded():
+    """Ported from gemini-web-cli's overflow/geminiwebclitests (f6b500c): a request whose URL raises (its page just
+    closed) fails closed, and the blocked list still says what it was, without the URL."""
+    class Unreadable:
+        method, post_data = "POST", None
+
+        @property
+        def url(self):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    for policy in (GEMINI, CHATGPT, GSC):
+        assert not allowed(policy, Unreadable(), send=True)
+        assert guard.state.blocked == ["POST <unreadable request>"]
+
+
 def test_quiet_requests_are_aborted_but_not_listed():
     log = Request("POST", "https://play.google.com/log?format=json")
     assert not allowed(GSC, log)
@@ -171,3 +189,16 @@ def test_a_page_left_over_from_an_earlier_command_inherits_nothing():
     asyncio.run(stale(old))
     asyncio.run(fresh(new))
     assert (old.outcome, new.outcome) == ("blockedbyclient", "continue")
+
+
+GUARDED = sorted(p.parent.name for p in Path(sites.__path__[0]).glob("*/guard.py"))
+
+
+@pytest.mark.parametrize("site", GUARDED)
+def test_only_gemini_and_muse_let_the_page_get_an_unlisted_host(site):
+    # docs/reference.md ("How it stays hidden and private") says so. If this changes, change that line too.
+    module = importlib.import_module(f"webcli.sites.{site}.guard")
+    check = getattr(module, "request_allowed", None) or module.read_allowed  # gsc names its read check
+    wide = site in ("gemini", "muse")
+    assert check("GET", "https://attacker.example/x.png?d=1") is wide
+    assert check("GET", "http://attacker.example/x.png") is wide

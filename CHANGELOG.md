@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.0.0rc3 / llmcli 0.9.0rc3 (2026-11-14)
+
+Third release candidate. Folds the open hardening fixes and archived-CLI ports onto 1.0.0rc2. Still a **pre-release**:
+`pip install --pre truefrontier-webcli==1.0.0rc3`. Writes and sends stay behind `--confirm`. Google Messages and
+WhatsApp sends are unchanged.
+
+### Fixed
+
+- **A blank Gmail filter criterion is a usage error.** `--from "$BOSS"` with `$BOSS` unset no longer drops that
+  criterion and widens the filter. Each criterion is typed into its own box, and create won't guess which row is
+  new when more than one appeared.
+- **Muse `ask --chat` refuses to type into a chat the page didn't open.** A non-UTF-8 prompt and an unwritable
+  `--output-file` are caught before the send. Loom `list` stops when a cursor repeats. Facebook search keeps
+  non-Latin names and usernames like `m.jones`. LinkedIn parsing no longer crashes on a truncated image, a
+  company object, or `Feb 29`.
+- **YouTube, contacts, and table output.** CSV is UTF-8 even when stdout isn't. `--compact` narrows the table.
+  History keeps My Activity when rows parsed but none fall inside `--since`. Only `history` may POST to My
+  Activity. Sign-out GETs are blocked on every host a guard already allows (YouTube, Loom).
+- **Photos, Keep, ChatGPT, and Gemini ports.** A download is never a hidden file. A blank Keep id matches
+  nothing. An answer that merely talks about a limit is an answer, not a usage cap. Timestamps outside what
+  `datetime` can hold are no time, not a crash, and a `--since` that far out exits 2. `feed pull` checks
+  `--since` and `feed.toml` before any site reads.
+- **Tool install and the daemon.** Install refuses compiled code (`.pyc`, `__pycache__`, `.so`), caps the
+  archive's file count and unpacked size, and refuses an oversized pax or GNU long-name header before
+  `tarfile` reads it. Grants left under the tool's name are dropped before the tool is moved into place.
+  A daemon stops serving a tool once it is disabled or removed. `webcli lint` refuses the same reserved names
+  as install (`google`, `meta`, `none`) and flags compiled code a reviewer can't read.
+- **chromecli.** The socket path appears only once it listens. A host with a trailing dot still matches its
+  deny patterns. A click on a `<label>` is gated as the control it also clicks. Element fields sent back to
+  the agent are capped at 500 characters. `NaN` and `Infinity` are never sent to Chrome. A non-finite
+  `CHROMECLI_TIMEOUT` uses the default; `--timeout nan` and `--max-amount inf` are usage errors.
+- **Python 3.10 starts again** (`tomllib` falls back to `tomli`). `webcli doctor` says how old the library's
+  revoked list is.
+
+### Changed
+
+- chromecli's extension `version` stays 0.18.3 (same key and extension ID). `version_name` is `1.0.0rc3`.
+
 ## 1.0.0rc2 / llmcli 0.9.0rc2 (2026-11-06)
 
 Second release candidate. Every command now says what it can do besides read, so a program deciding what an agent

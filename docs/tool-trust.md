@@ -10,7 +10,7 @@ Everything lives in `~/.webcli/tools/` (or `$WEBCLI_HOME/tools/`), mode 0700.
 |---|---|---|
 | `<name>/` | `webcli tools install` | One installed tool: its `webcli-tool.toml` and its package, `webcli_tool_<name>/`, whose `__init__.py` sets `ADAPTER = Site(...)`. |
 | `<name>/.disabled` | `webcli tools disable` | If present, the tool is off. Core never imports its code. |
-| `<name>/.installed.json` | `webcli tools install` | What the install pinned: version, commit, sha256, and the index it came from. Core doesn't read it. |
+| `<name>/.installed.json` | `webcli tools install` | What the install pinned: version, commit, sha256, and the index it came from. Loading never reads it; `webcli sites` does, to report `verified` only while the files still match that pin. |
 | `.<anything>/` | `webcli tools install` | Skipped. Use a dot name for an install in progress (`webcli tools` uses `.stage-<name>-…` and `.old-<name>-…`). |
 | `dev.toml` | `webcli new` | Tools you're still writing. One table per tool: `[toyhttp]` then `path = "/Users/you/webcli-tool-toyhttp"`. |
 | `grants.toml` | `webcli tools grant` | Which of your identities each tool may use besides its own. Mode 0600. One line per tool: `toyhttp = ["google:default"]`. |
@@ -50,6 +50,8 @@ A community tool may always use its own identities, `<tool>:<account>`. A tool c
 
 Any other identity needs a grant: `webcli tools grant <tool> <identity>`. A tool whose manifest says `identity = "google"` can't use `google:default` until you grant it. Each grant covers one identity. If `grants.toml` can't be read, core treats it as granting nothing.
 
+Grants are kept by tool name. `webcli tools remove` takes a tool's grants back, and `webcli tools install` drops any it finds left under the new tool's name (a dev tool's, say), so a tool you install starts with none.
+
 `webcli identity login` uses an official site's sign-in whenever one exists. A community tool signs in only its own identities.
 
 ## Hosts
@@ -70,10 +72,20 @@ The library's `index.json` has a `revoked` list. Each entry is a tool name, or a
 {"name": "sometool", "versions": ["0.1.0"], "reason": "posted without asking"}
 ```
 
-If an entry has no `versions`, every version is revoked. Versions are matched exactly; ranges aren't supported. Core won't load a revoked tool. The daemon also re-reads the list before every op of a community tool, so a daemon that is already running honors a new revocation.
+If an entry has no `versions`, every version is revoked. Versions are matched exactly; ranges aren't supported. Core won't load a revoked tool. The daemon also re-reads the list before every op of a community tool, so a daemon that is already running honors a new revocation. It checks `.disabled` and the tool's folder before every op too, so `webcli tools disable` and `webcli tools remove` stop the tool in a running daemon as well.
+
+Revocations arrive when a `webcli tools` command (`search`, `info`, `install`, `update`) refreshes `index-cache.json`. Nothing refreshes it on its own, so `webcli doctor` shows its age under `tools.revocations`. It calls the list stale when a community tool is installed and the list is missing or over a week old.
 
 If `index-cache.json` or `revoked.json` exists but can't be read, no community tool runs until you fix or remove the file. A damaged cache never switches a revoked tool back on.
 
 ## What core can't do
 
 A tool's Python can still do anything your user account can: read files, start processes, or skip these checks. The checks catch honest mistakes and hold well-behaved tools to their manifest. They don't make a stranger's code safe. A tool updated while its daemon runs keeps its old code until the daemon restarts.
+
+## Who can reach the sockets
+
+The daemon (`run/<identity>.sock`) and chromecli-host (`run/chromecli.sock`) listen on unix sockets in `~/.webcli/run/`, which is mode 0700. The sockets are 0600. No other account on the Mac can open them. Any program running as you can.
+
+A request on the socket names a site, an op, and its arguments, and the daemon runs it. A write op's `confirm` is one of those arguments, so a client that opens the socket sets it itself, the same way `--confirm` would. The dry-run default lives in the CLI, not behind the socket. chromecli-host is the same, except the extension still asks in the browser before a risky action.
+
+So a policy that decides which webcli commands an agent may run, from `agent-help` effects or a wrapper like webcli-guard, holds only if that agent also can't open `~/.webcli/run/`. Run the agent under a sandbox profile that denies that folder, or as a separate macOS user.

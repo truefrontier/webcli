@@ -81,8 +81,9 @@ AGENT_NOTES = [
     ("When Gemini's whole answer is its own error message (\"Something went wrong…\", "
      "\"I encountered an error…\"), `ask` and `-p` exit 5 with it on stderr. JSON output still prints first, with "
      "an `error` field; text output prints nothing."),
-    ("A usage-limit notice (\"You've reached your limit…\", \"Your limit resets at 1:53 PM\") as the answer, or in a "
-     "toast, dialog, or banner before or after sending, exits 6. The JSON error (and an answer's JSON output) has "
+    ("A usage-limit notice (\"You've reached your limit…\", \"Your limit resets at 1:53 PM\") that starts the "
+     "answer, or in a toast, dialog, or banner before or after sending, exits 6; an answer that only mentions limits "
+     "prints. The JSON error (and an answer's JSON output) has "
      "error \"rate_limited\", code 6, message (Gemini's text), and resets_at (ISO 8601, America/Chicago, or null). "
      "Don't retry before resets_at."),
     ("`--image-out DIR|PATH` (ask, -p) turns on Gemini's Create image tool, waits for the image reply, and saves each "
@@ -153,11 +154,8 @@ def _ask(prompt: str, chat_id: str | None, *, image_out: Path | None = None, can
     _need_session()
     fmt = images.wanted_format(image_out) if image_out else None
     result = _call("ask", prompt, chat_id=chat_id, model=model, image_format=fmt, **kwargs)
-    last = llm.last_chat_file(SITE)
-    if result["chatId"]:
-        _write(last, result["chatId"] + "\n", result["chatId"])
-    else:
-        last.unlink(missing_ok=True)  # so -c can't fall back to an older chat
+    chat = result["chatId"]
+    _write(llm.last_chat_file(SITE), f"{chat}\n" if chat else None, chat)  # None clears it: -c can't use an older chat
     _save_images(result, image_out, prompt)
     _save_canvas(result, canvas_out)
     if image_out is None and result["imageCount"]:

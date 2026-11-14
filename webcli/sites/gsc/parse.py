@@ -83,7 +83,10 @@ def iso_ms(ms: Any) -> str | None:
     """Epoch milliseconds -> ISO 8601 UTC ("...Z"); 0 / None -> None."""
     if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):  # out of datetime's range: no time, not a failed report
+        return None
 
 
 def report_day(ms: Any) -> str | None:
@@ -91,7 +94,10 @@ def report_day(ms: Any) -> str | None:
     report's own "Last update" shows it."""
     if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=ZoneInfo(REPORT_TZ)).date().isoformat()
+    try:
+        return datetime.fromtimestamp(ms / 1000, tz=ZoneInfo(REPORT_TZ)).date().isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def report_today() -> date:

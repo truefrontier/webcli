@@ -15,7 +15,9 @@ from test_tool_trust import make_tool
 
 from webcli import sites
 from webcli.apps import webcli as webcli_app
-from webcli.core import grants, index_client
+from webcli.core import daemon, grants, index_client
+from webcli.core.errors import ConfigError
+from webcli.core.identities import Identity
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +37,10 @@ class Library:
         self.save()
 
     def publish(self, name: str = "toyhttp", *, hosts: tuple[str, ...] = ("httpbin.org",), version: str = "0.1.0",
-                requires: str = "", extra_file: tuple[str, str] | None = None, symlink: bool = False, **kw) -> dict:
-        commit = hashlib.sha1(f"{name}{version}{hosts}{requires}{len(self.tools)}{extra_file}".encode()).hexdigest()
+                requires: str = "", extra_file: tuple[str, str] | None = None, symlink: bool = False,
+                compiled: str | None = None, **kw) -> dict:
+        commit = hashlib.sha1(f"{name}{version}{hosts}{requires}{len(self.tools)}{extra_file}{compiled}"
+                              .encode()).hexdigest()
         src = make_tool(self.root / "src" / commit / "tools", name, version=version,
                         adapter_hosts=repr(tuple(hosts)), **kw)
         toml = src / "webcli-tool.toml"
@@ -45,6 +49,9 @@ class Library:
                         if requires else text)
         if extra_file:
             (src / extra_file[0]).write_text(extra_file[1])
+        if compiled:  # a .pyc or .so at this path, compiled from code nobody reviewed
+            (src / compiled).parent.mkdir(parents=True, exist_ok=True)
+            (src / compiled).write_bytes(b"\x00compiled")
         entry = {"name": name, "version": version, "summary": "a toy tool", "commit": commit,
                  "sha256": index_client.tree_sha256(src), "verified": False}
         if symlink:
@@ -204,6 +211,20 @@ def test_a_link_in_the_tool_is_refused(library, tools):
     assert not (tools / "toyhttp").exists() and leftovers(tools) == []
 
 
+@pytest.mark.parametrize("compiled", [
+    "webcli_tool_toyhttp/__pycache__/__init__.cpython-312.pyc",  # an unchecked-hash .pyc runs instead of the .py
+    "webcli_tool_toyhttp/helper.pyc",  # sourceless: `from . import helper` runs it
+    "webcli_tool_toyhttp/fast.cpython-312-darwin.so",  # a native extension module
+    "webcli_tool_toyhttp/fast.abi3.so",
+    "webcli_tool_toyhttp/fast.pyd",
+])
+def test_compiled_code_in_the_tool_is_refused(library, tools, compiled):
+    library.publish(compiled=compiled)  # the index's sha256 covers it: the pin alone doesn't catch it
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "compiled code" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
 def test_a_manifest_that_disagrees_with_the_index_is_refused(library, tools):
     library.publish()
     library.tools["toyhttp"]["version"] = "0.9.0"
@@ -213,13 +234,88 @@ def test_a_manifest_that_disagrees_with_the_index_is_refused(library, tools):
     assert not (tools / "toyhttp").exists()
 
 
+def add_to_archive(library: Library, name: str, extra: tuple[tuple[str, int], ...],
+                   fmt: int = tarfile.PAX_FORMAT) -> None:
+    """Add zero-filled files outside the tool's folder (the library's other folders) to its published tarball."""
+    path = library.root / f"{library.tools[name]['commit']}.tar.gz"
+    with tarfile.open(path) as old:
+        members = [(m, old.extractfile(m).read() if m.isfile() else None) for m in old.getmembers()]
+    with tarfile.open(path, "w:gz", format=fmt) as tar:
+        for member, data in members:
+            tar.addfile(member, None if data is None else io.BytesIO(data))
+        for rel, size in extra:
+            info = tarfile.TarInfo(f"webcli-tools-{library.tools[name]['commit']}/{rel}")
+            info.size = size
+            tar.addfile(info, io.BytesIO(bytes(size)))
+
+
+def test_an_archive_with_too_many_files_is_refused_even_outside_the_tool(library, tools, monkeypatch):
+    # tarfile reads, and keeps, every member's header to find the tool's folder, so the count covers them all.
+    monkeypatch.setattr(index_client, "MEMBER_LIMIT", 20, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", tuple((f"other/{i}.txt", 0) for i in range(30)))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "more than 20 files" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_an_archive_that_expands_too_far_is_refused_even_outside_the_tool(library, tools, monkeypatch):
+    # Skipping a member still decompresses it, so the size covers the members outside the tool's folder too.
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/big.bin", 2_000_000),))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "expands past 1 MB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_an_archive_under_both_limits_installs(library, tools, monkeypatch):
+    monkeypatch.setattr(index_client, "MEMBER_LIMIT", 40, raising=False)
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/a.txt", 10), ("other/b.bin", 500_000)))
+    ok("tools", "install", "toyhttp", "--yes")
+    assert (tools / "toyhttp" / "webcli-tool.toml").is_file()
+
+
+@pytest.mark.parametrize("fmt", [tarfile.PAX_FORMAT, tarfile.GNU_FORMAT], ids=["pax", "gnu"])
+def test_an_oversized_long_name_header_is_refused_before_tarfile_reads_it(library, tools, monkeypatch, fmt):
+    # A long name rides in its own header (pax "path=" or GNU's ././@LongLink) that tarfile reads whole before the
+    # loop sees the member, so neither cap above can stop it. Gzip shrinks a run of one byte about a thousandfold.
+    monkeypatch.setattr(index_client, "HEADER_LIMIT", 10_000, raising=False)
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/" + "a" * 20_000, 0),), fmt=fmt)
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "a tar header over 10 KB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_header_bytes_count_toward_the_unpacked_limit(library, tools, monkeypatch):
+    # 15 empty files, each named in a ~90 KB pax header: 0 bytes of file data, but 1.35 MB to decompress.
+    monkeypatch.setattr(index_client, "UNPACKED_LIMIT", 1_000_000)
+    library.publish()
+    add_to_archive(library, "toyhttp", tuple((f"other/{i}-" + "a" * 90_000, 0) for i in range(15)))
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 7 and "expands past 1 MB" in result.stderr
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+
+
+def test_a_long_but_ordinary_path_still_installs(library, tools):
+    # Real long names (a deep folder, a 255-byte file name) are far under the header cap, in either format.
+    library.publish()
+    add_to_archive(library, "toyhttp", (("other/" + "d/" * 400 + "f" * 255, 10),), fmt=tarfile.GNU_FORMAT)
+    ok("tools", "install", "toyhttp", "--yes")
+    assert (tools / "toyhttp" / "webcli-tool.toml").is_file()
+
+
 def test_a_tool_that_needs_a_newer_webcli_is_refused(library, tools):
     library.publish(requires=">=99")
     result = run("tools", "install", "toyhttp", "--yes")
     assert result.exit_code == 2 and "needs webcli >=99" in result.stderr and not (tools / "toyhttp").exists()
 
 
-@pytest.mark.parametrize("name", ["google", "loom"])  # a provider; a built-in site listed as if it were community
+# Providers, a built-in site listed as if it were community, "none", and a webcli command.
+@pytest.mark.parametrize("name", ["google", "meta", "loom", "none", "tools"])
 def test_a_community_entry_with_a_built_in_name_is_refused_before_download(library, tools, name):
     library.publish(name)
     result = run("tools", "install", name, "--yes")
@@ -465,6 +561,34 @@ def test_remove_deletes_the_tool_and_its_grants(library, tools):
     assert not (tools / "toyhttp").exists() and grants.list_grants() == {}
     assert installed_rows() == []
     assert run("tools", "remove", "toyhttp").exit_code == 3
+
+
+def test_install_drops_grants_left_under_its_name(library, tools):
+    grants.grant("toyhttp", "google:default")  # from a dev tool of that name, or a remove that couldn't edit grants
+    library.publish(identity="google")
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert result.exit_code == 0, result.stderr
+    assert "it can't use your google sign-in until you run `webcli tools grant" in result.stderr
+    assert json.loads(result.stdout)["grantsDropped"] == ["google:default"]
+    assert "dropped" in result.stderr and grants.list_grants() == {}
+    with pytest.raises(ConfigError, match="only if you grant it"):  # the install prompt said so
+        daemon.site_op(Identity("google:default"), "toyhttp", "get")
+
+
+def test_an_install_that_cant_drop_the_old_grants_installs_nothing(library, tools, monkeypatch):
+    # The grants go before the folder goes in place, so a grants.toml that can't be written never leaves the new
+    # tool installed with the old tool's grants.
+    grants.grant("toyhttp", "google:default")
+    library.publish(identity="google")
+
+    def full_disk(_grants):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(grants, "_save", full_disk)
+    result = run("tools", "install", "toyhttp", "--yes")
+    assert not (tools / "toyhttp").exists() and leftovers(tools) == []
+    assert grants.list_grants() == {"toyhttp": ["google:default"]}  # untouched, and no tool by that name to use them
+    assert result.exit_code == 7 and "Can't drop the grants left under the name toyhttp" in result.stderr
 
 
 def test_grant_needs_an_installed_tool_and_its_own_identity_needs_none(library, tools):

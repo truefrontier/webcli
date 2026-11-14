@@ -18,6 +18,7 @@ from webcli.core.output import (
 from webcli.feed import pull as pullmod
 from webcli.feed import push as pushmod
 from webcli.feed import schedule as schedmod
+from webcli.sites.youtube.feeds import parse_since as uploads_since  # what `youtube uploads --since` takes
 
 NOTES = [
     "`feed pull` runs each site's own read-only command (`webcli <site> <read> --format json`), one site at a time, "
@@ -33,7 +34,7 @@ NOTES = [
     "pull exits 5 (partial). A public fallback returned rows, so it exits 0 (stderr and sources say to log in). No "
     "site's read writes anything.",
     "Config: ~/.webcli/feed.toml: sites = [\"youtube\", \"gnews\", \"perplexity\", \"linkedin\"], limit_per_site = 20, "
-    "[youtube] since = \"48h\", [x] file = \"...\". Flags override it.",
+    "[youtube] since = \"48h\", [x] file = \"...\". Flags override it. A bad value exits 7 before any site reads.",
     "`feed schedule install [--at 05:30,12:30] [--no-load]` writes ~/Library/LaunchAgents/ai.truefrontier.webcli.feed"
     ".plist (StartCalendarInterval, `webcli feed pull --quiet`) and loads it unless --no-load; remove unloads and "
     "deletes it; status reports both.",
@@ -50,12 +51,50 @@ def group() -> None:
 
 
 def _sites(value: str | None, cfg: dict) -> list[str]:
-    names = [s.strip() for s in value.split(",")] if value else list(cfg.get("sites") or pullmod.DEFAULT_SITES)
+    configured = cfg.get("sites") or pullmod.DEFAULT_SITES
+    if not value and not (isinstance(configured, (list, tuple)) and all(isinstance(s, str) for s in configured)):
+        _bad_config('sites must be a list of names, like ["youtube", "gnews"]')
+    names = [s.strip() for s in value.split(",")] if value else list(configured)
     bad = [s for s in names if s not in pullmod.SITES]
     if bad or not names:
         raise click.BadParameter(f"unknown site {', '.join(bad) or '(none)'}; choose from {', '.join(pullmod.SITES)}.",
                                  param_hint="--sites")
     return list(dict.fromkeys(names))
+
+
+def _since_arg(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    """--since, checked here: otherwise only youtube's own read refuses it, and the other sites still read."""
+    try:
+        uploads_since(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+    return value
+
+
+def _bad_config(problem: str) -> None:
+    output.die(f"feed.toml: {problem}.", EXIT_CONFIG, hint=f"Fix it in {pullmod.config_path()}.")
+
+
+def _config_values(cfg: dict) -> tuple[int, str, str | None]:
+    """feed.toml's limit_per_site, [youtube] since and [x] file. A bad one exits 7 before any site reads. A limit
+    over a site's own cap is fine: pull caps it per site."""
+    try:
+        limit = int(cfg.get("limit_per_site") or pullmod.DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit < 1:
+        _bad_config(f"limit_per_site must be a whole number of 1 or more, not {cfg['limit_per_site']!r}")
+    youtube, x = cfg.get("youtube") or {}, cfg.get("x") or {}
+    since = (youtube.get("since") or "48h") if isinstance(youtube, dict) else None
+    try:
+        uploads_since(since)
+    except (AttributeError, ValueError):  # AttributeError: not a string
+        since = None
+    if since is None:
+        _bad_config("[youtube] since must be 48h, 3d, 1w or an ISO date, in a [youtube] table")
+    if not isinstance(x, dict) or not isinstance(x.get("file") or "", str):
+        _bad_config("[x] file must be a path, in an [x] table")
+    return limit, since, x.get("file") or None
 
 
 @effects("never")
@@ -65,7 +104,7 @@ def _sites(value: str | None, cfg: dict) -> list[str]:
               help="File to write (default ~/.webcli/feeds/YYYY-MM-DD-HHMM.json).")
 @click.option("--limit-per-site", type=click.IntRange(1, 500), default=None,
               help=f"Rows per read (default {pullmod.DEFAULT_LIMIT}; each site's own cap applies).")
-@click.option("--since", default=None, help="youtube uploads window (default 48h).")
+@click.option("--since", default=None, callback=_since_arg, help="youtube uploads window (default 48h).")
 @click.option("--x-file", default=None, help="Import X items from this newsfeed.items/1 file (adds x to --sites).")
 @json_flag
 @agent_output_options(rows=False)
@@ -76,11 +115,10 @@ def pull_cmd(sites, out, limit_per_site, since, x_file, fmt, quiet) -> None:
     except Exception as exc:  # a broken feed.toml
         output.die(f"Couldn't read {pullmod.config_path()}: {exc}", EXIT_CONFIG)
     names = _sites(sites, cfg)
-    x_file = x_file or (cfg.get("x") or {}).get("file")
+    cfg_limit, cfg_since, cfg_x = _config_values(cfg)
+    limit, since, x_file = limit_per_site or cfg_limit, since or cfg_since, x_file or cfg_x
     if x_file and "x" not in names:
         names.append("x")
-    limit = limit_per_site or int(cfg.get("limit_per_site") or pullmod.DEFAULT_LIMIT)
-    since = since or (cfg.get("youtube") or {}).get("since") or "48h"
     progress = (lambda m: None) if quiet else (lambda m: click.echo(m, err=True))
     doc = pullmod.pull(names, limit, since=since, x_file=x_file, progress=progress)
     path = pullmod.write_atomic(out or pullmod.default_out(), doc)

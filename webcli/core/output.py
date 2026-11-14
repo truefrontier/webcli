@@ -143,6 +143,8 @@ def emit_csv(rows: Sequence[dict], fields: Sequence[str] | None = None) -> None:
     if not rows:
         return
     fields = list(fields or rows[0].keys())
+    if hasattr(sys.stdout, "reconfigure"):  # CSV is data: UTF-8 even on an ASCII or latin-1 locale
+        sys.stdout.reconfigure(encoding="utf-8")
     writer = csv.DictWriter(sys.stdout, fieldnames=fields, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for row in rows:
@@ -182,25 +184,25 @@ def kv_table(title: str, data: dict, fmt: str = "table") -> None:
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title=title)
+    table = Table(title=_cell(title))  # a title is site text too: "[/b]" must not parse as markup
     table.add_column("field")
     table.add_column("value")
     for key, value in data.items():
         table.add_row(key, _cell(value))
-    Console().print(table)
+    Console(emoji=False).print(table)  # ":smile:" in a title or cell prints as written
 
 
 def rows_table(title: str, rows: list[dict], columns: list[str]) -> None:
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title=title)
+    table = Table(title=_cell(title))
     for col in columns:
         table.add_column(col)
     for row in rows:
         table.add_row(*[_cell(truncate(str(row.get(c) or ""), 60) if c in ("title", "description") else row.get(c))
                         for c in columns])
-    Console().print(table)
+    Console(emoji=False).print(table)
 
 
 def emit_rows(rows, *, title, fields, compact_fields, columns, noun, fmt, compact, select, quiet, as_csv) -> None:
@@ -212,8 +214,8 @@ def emit_rows(rows, *, title, fields, compact_fields, columns, noun, fmt, compac
         emit_json(data)
     elif out == "md":
         emit_md(data)
-    else:
-        rows_table(title, rows, columns)
+    else:  # --compact narrows the table too; --select stays JSON/CSV/md, as its help says
+        rows_table(title, rows, list(compact_fields) if compact else columns)
     note_showing(len(rows), quiet=quiet, noun=noun)
 
 
@@ -348,15 +350,17 @@ def die_rate_limited(message: str, resets: str | None, where: str, *, site: str)
         hint=f"Rate limited {until}: don't retry before then, or try another --model. {where}")
 
 
-def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: str | None = None) -> None:
+def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: str | None = None,
+         headed: bool = False) -> None:
     """Exit with the code for `exc` (the errors.py table). `site` names it in messages ("Gemini"), `login` is the
     sign-in hint, `chats` the command that lists chats (for "check before resending"), `challenge` the Cloudflare
-    hint."""
+    hint. `headed`: the command ran in a visible window, so any Cloudflare check (even one only the site's API
+    reported, mode "page") was that window's."""
     if isinstance(exc, SystemExit):
         raise exc
     if isinstance(exc, Challenged):
         hint = challenge or login
-        if exc.mode == "visible":
+        if headed or exc.mode == "visible":
             die(str(exc), EXIT_AUTH, error="cloudflare_challenge", hint=hint)
         die(f"Cloudflare needs a visible check: {login}", EXIT_AUTH, error="hidden_browser_blocked",
             hint=f"{hint} No window is ever shown for other commands.")

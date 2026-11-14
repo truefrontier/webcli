@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 ENV = "WEBCLI_IDENTITY"
 # Strict on purpose: an id becomes a directory name, a socket path, and a launchd label.
-_ID = re.compile(r"^([a-z][a-z0-9]{0,31}):([a-z0-9][a-z0-9_.-]{0,63})$")
+_ID = re.compile(r"([a-z][a-z0-9]{0,31}):([a-z0-9][a-z0-9_.-]{0,63})")  # fullmatch: "$" lets a "\n" through
 LABEL_PREFIX = "com.truefrontier.webcli."
 
 
@@ -33,7 +33,7 @@ class Identity:
     id: str
 
     def __post_init__(self) -> None:
-        if not _ID.match(self.id) or ".." in self.id:
+        if not _ID.fullmatch(self.id) or ".." in self.id:
             raise ConfigError(f"{self.id!r} is not an identity id: use provider:account, e.g. google:default.",
                               hint="Lowercase letters, digits, and _ . - in the account.")
 

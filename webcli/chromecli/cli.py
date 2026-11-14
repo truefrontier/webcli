@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -280,7 +281,7 @@ def chromecli_exit_codes() -> dict[int, str]:
 def _env() -> dict[str, str]:
     return {
         output.FORMAT_ENV: "json | table | text | md. Default output when --format is not given.",
-        TIMEOUT_ENV: "Seconds to wait for the extension (default 30).",
+        TIMEOUT_ENV: "Seconds to wait for the extension (default 30; anything but a positive number uses it).",
         config.HOME_ENV: "The data home (default ~/.webcli): config.toml [chromecli], run/chromecli.sock, "
                          "logs/chromecli.log.",
     }
@@ -630,10 +631,13 @@ def _since_ms(value: str | None) -> int | None:
     if not value:
         return None
     try:
-        when = datetime.fromisoformat(value)
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))  # Python 3.10 reads no "Z"
     except ValueError:
         die(f"--since {value!r} is not a date (YYYY-MM-DD or ISO 8601).", EXIT_USAGE, error="bad_request")
-    return int(when.timestamp() * 1000)
+    try:
+        return int(when.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):  # 0001-01-01 local: the time zone math leaves year 1
+        die(f"--since {value!r} is too far back to be a date.", EXIT_USAGE, error="bad_request")
 
 
 @effects("never")
@@ -966,6 +970,8 @@ def press_cmd(key, tab, selector, ref, target_text, role, find, jev, expect_orig
 @agent_output_options(rows=False)
 def wait_cmd(tab, selector, text, url_prefix, timeout, expect_origin, expect_url, fmt, quiet) -> None:
     """Wait until a selector / text / URL prefix shows up in a shared tab (read-only). Exit 5 timeout if it doesn't."""
+    if math.isnan(timeout):  # FloatRange lets nan through: every comparison with it is false
+        die("--timeout must be a number of seconds from 0.1 to 120.", EXIT_USAGE, error="bad_request")
     given = [x for x in (selector, text, url_prefix) if x not in (None, "")]
     if len(given) != 1:
         die("Give exactly one of --selector, --text, --url-prefix.", EXIT_USAGE, error="bad_target")
@@ -1105,6 +1111,8 @@ def _grant_args(op, origin, target_text=None, role=None, selector=None, value=No
             max_amount = -1.0
         if not max_amount >= 0:
             die(f"{w}--max-amount must be 0 or more.", EXIT_USAGE, error="bad_request")
+        if not math.isfinite(max_amount):  # inf passes FloatRange(min=0), and isn't JSON
+            die(f"{w}--max-amount must be a finite amount.", EXIT_USAGE, error="bad_request")
     try:
         uses = int(uses)
     except (TypeError, ValueError):

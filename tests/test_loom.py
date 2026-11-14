@@ -90,6 +90,11 @@ def test_the_policy(method, url, data, ok):
     assert request_allowed(method, url, data) is ok
 
 
+@pytest.mark.parametrize("url", ["https://loom.com/logout", "https://loom.com/api/logout", "https://cdn.loom.com/logout"])
+def test_sign_out_is_blocked_on_every_loom_host(url):
+    assert request_allowed("GET", url, None) is False
+
+
 def test_a_blocked_graphql_post_is_named_by_its_operation_never_its_body():
     request = SimpleNamespace(method="POST", url=GRAPHQL + "?token=abc0123456789secretvalue",
                               post_data=body("mutation RecordView { x }", "RecordView"))
@@ -122,6 +127,47 @@ def test_videos_follows_the_cursor_to_the_limit(monkeypatch):
     assert [r["id"] for r in rows] == [VID, "1" * 32, "2" * 32] and seen == [None, "c1"]
     assert page.gotos == [LIBRARY] and page.policy is POLICY
     assert rows[0] == {"id": VID, "title": "Video 0123", "visibility": "owner"}
+
+
+def capped(pages):
+    """A fake GetLoomsForLibrary that answers pages(n) on call n, and fails the test past 20 calls: a loop that never
+    ends would otherwise hang the suite (ScriptedPage.evaluate never yields, so no wall-clock timeout could stop it)."""
+    calls = []
+
+    def graphql(arg):
+        calls.append(arg[2]["variables"]["cursor"])
+        assert len(calls) <= 20, f"videos() kept asking for more pages: {calls[:5]}..."
+        return library_page(pages(len(calls) - 1))[0]
+
+    return calls, graphql
+
+
+def test_videos_stops_on_a_repeated_cursor_and_drops_repeated_videos(monkeypatch):
+    # Loom hands back the cursor it already gave (hasNextPage stuck on true) with a non-empty page.
+    calls, graphql = capped(lambda n: ([VID, "1" * 32], "c1") if n == 0 else (["2" * 32, VID], "c1"))
+    install(monkeypatch, ScriptedPage(answers={"res.json()": graphql}))
+    assert [r["id"] for r in asyncio.run(fetch.videos())] == [VID, "1" * 32, "2" * 32]
+    assert calls == [None, "c1"]
+
+
+def test_videos_stops_on_a_page_with_no_new_video(monkeypatch):
+    calls, graphql = capped(lambda n: ([VID], f"c{n}"))  # a fresh cursor each time, the same video every time
+    install(monkeypatch, ScriptedPage(answers={"res.json()": graphql}))
+    assert [r["id"] for r in asyncio.run(fetch.videos())] == [VID]
+    assert calls == [None, "c0"]
+
+
+@pytest.mark.parametrize("answer", [
+    {"data": {"getLooms": None}},
+    {"data": {"getLooms": {"__typename": "GenericError", "message": "x"}}},
+    {"data": {"getLooms": {"__typename": "UserNotAuthorizedError"}}},
+    {"data": None},
+])
+def test_a_library_answer_without_a_library_is_not_an_empty_library(monkeypatch, answer):
+    install(monkeypatch, ScriptedPage(answers={"res.json()": {"status": 200, "body": answer}}))
+    with pytest.raises(AuthRequired, match="answered without a library"):  # was [] with exit 0
+        asyncio.run(fetch.videos())
+    assert asyncio.run(fetch.status())["signedIn"] is False  # status and list agree
 
 
 def test_signed_out_is_auth_required_and_status_says_so(monkeypatch):
@@ -180,6 +226,25 @@ def test_video_card_and_a_missing_video(monkeypatch):
     install(monkeypatch, ScriptedPage(answers={"res.json()": {"status": 401, "body": None}}))
     with pytest.raises(AuthRequired):
         asyncio.run(fetch.video(VID))
+
+
+@pytest.mark.parametrize("kind", ["SomeNewVideoType", "VideoRestrictedError", None])
+def test_info_on_any_other_video_type_is_not_found(monkeypatch, kind):
+    # The query selects fields only on RegularUserVideo: anything else holds no video, not a blank one.
+    found = {"__typename": kind, "id": VID} if kind else {"id": VID, "name": "Demo"}
+    install(monkeypatch, ScriptedPage(answers={"res.json()": {"status": 200, "body": {"data": {"video": found}}}}))
+    with pytest.raises(NotFound):
+        asyncio.run(fetch.video(VID))
+
+
+@pytest.mark.parametrize(("data", "rows"), [
+    ([{"ts": 0, "value": "Hi"}], []),  # a list body
+    ({"phrases": ["Hi", None, 5, {"ts": 1, "value": "Hi"}, {"ts": 2, "value": 7}]}, [{"ts": 1, "text": "Hi"}]),
+    ({"phrases": {"ts": 0, "value": "Hi"}}, []),
+    (None, []),
+])
+def test_phrases_skip_anything_not_shaped_like_one(data, rows):
+    assert parse.phrases(data) == rows
 
 
 def test_transcript_reads_the_phrase_file_the_share_page_fetches(monkeypatch):

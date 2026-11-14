@@ -20,6 +20,10 @@
     ["*.chase.com", "https://chase.com/", true],
     ["*.chase.com", "https://notchase.com/", false],
     ["*.chase.com", "https://chase.com.evil.io/", false],
+    ["*.chase.com", "https://www.chase.com./", true],
+    ["accounts.google.com", "https://accounts.google.com./signin", true],
+    ["github.com/login", "https://github.com./login", true],
+    ["https://docs.python.org", "https://docs.python.org./3/", true],
     ["http://127.0.0.1:8765", "http://127.0.0.1:8765/form.html", true],
     ["http://127.0.0.1:8765", "http://127.0.0.1:9000/form.html", false],
     ["http://127.0.0.1:8765", "https://127.0.0.1:8765/", false],
@@ -35,6 +39,8 @@
     ["EXAMPLE.com", "https://Example.COM/", true]
   ],
   "denied_default": [
+    ["https://www.chase.com./", true],
+    ["https://accounts.google.com./", true],
     ["chrome://settings", true],
     ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html", true],
     ["file:///Users/kk/x.html", true],
@@ -54,6 +60,7 @@
     ["http://127.0.0.1:8765/form.html", false]
   ],
   "builtin_with_empty_deny": [
+    ["https://chromewebstore.google.com./detail/x", true],
     ["chrome://settings", true],
     ["https://chromewebstore.google.com/", true],
     ["file:///etc/hosts", true],

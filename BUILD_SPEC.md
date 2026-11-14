@@ -164,7 +164,7 @@ Use pytest. Tests must run **offline, with no browser launch and no network** (m
 2. **No visible window** (hard requirement):
    - Assert the browser launch options for every non-login command are `headless=True`, `channel="chrome"`, and `ignore_default_args` contains BOTH `--use-mock-keychain` and `--enable-automation`; assert no code path for `ask/-p/chats/models/status/serve` ever requests a headed/visible context.
    - Assert only `identity login` and explicit `--headed` can produce a visible context.
-   - Wire `scripts/window_check.py` as the **live** no-window check for the post-login verification phase (document the command; it needs a login so it is not run in CI).
+   - Wire `webcli/scripts/window_check.py` as the **live** no-window check for the post-login verification phase (document the command; it needs a login so it is not run in CI).
 3. **Exit-code table**: `agent-help --format json` lists all codes incl. 6 with `resets_at` semantics and 7 for config; a simulated rate-limit path returns 6 with a JSON `resets_at` field.
 4. **Guard fail-closed**: an unlisted rpcid/host/POST is blocked; a listed read passes; send requests blocked unless in send mode.
 5. **Output**: json emitted when stdout is piped; uniform llm JSON field set present (answer/requestedModel/servedModel/images/citations/canvas) with a mocked site response.

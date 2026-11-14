@@ -25,8 +25,8 @@ GRAPHQL_HEADERS = {"content-type": "application/json", "accept": "application/js
 # Hosts every command may GET: Loom's app, API, and CDN (cdn.loom.com serves the transcript file). GUESS for any
 # Loom host past www.loom.com; an off-list host is blocked and named.
 HOSTS = ("loom.com", "*.loom.com")
-# GETs with side effects (GUESS): sign-out. Aborted even on a listed host.
-SIDE_EFFECT_GETS = (("www.loom.com", "/logout"), ("www.loom.com", "/api/logout"))
+# GETs with side effects (GUESS): sign-out. Aborted on every Loom host, even though they are GETs.
+SIDE_EFFECT_GETS = ("/logout", "/api/logout")
 # Sign-in: a landing URL holding one of these means signed out (LOOM-CLI).
 SIGNED_OUT_MARKS = ("login", "signup")
 # A tab past sign-in shows one of these (LOOM-CLI, minus /share/: a public share page loads signed out). Login also

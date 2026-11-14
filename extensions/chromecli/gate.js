@@ -23,6 +23,8 @@ export function submitReasons(el) {
     const m = SUBMIT_WORDS.exec(String(text ?? ""));
     if (m) { out.push(`submit_word:${lc(m[1]).replace(/\s+/g, "")}`); break; }
   }
+  // A click on a label also clicks the label's control (page/actions.js `activates`), so its reasons count too.
+  if (el.activates) out.push(...submitReasons(el.activates));
   return out;
 }
 

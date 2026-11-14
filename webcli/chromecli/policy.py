@@ -9,6 +9,8 @@ Patterns:
     host/path         that host, paths starting with /path      e.g. "github.com/login"
     path:/prefix      any origin whose path contains /prefix at a segment start, e.g. "path:/checkout"
 
+A URL's host matches with or without one trailing dot: Chrome loads "www.chase.com." as www.chase.com.
+
 Built-in deny, which config can't remove: every scheme other than http and https (chrome://, chrome-extension://,
 file://, devtools://, view-source:, about:, data:, ...), the Chrome Web Store (chromewebstore.google.com,
 chrome.google.com/webstore).
@@ -102,7 +104,7 @@ def matches(pattern: str, url: str) -> bool:
     p = pattern.strip().lower()
     try:
         parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
+        host = (parts.hostname or "").lower().removesuffix(".")  # "www.chase.com." is the same site to Chrome
         port = parts.port
     except ValueError:
         return False

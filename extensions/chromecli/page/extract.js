@@ -186,6 +186,8 @@ export function extractPage(opts) {
       if (closedSeen.has(el.getRootNode())) item.closedShadow = true;
       item.disabled = !!el.disabled;
       item.rect = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      // A page can make any attribute huge: no field goes back longer than this (name and outerHTML are shorter still).
+      for (const k in item) if (typeof item[k] === "string" && item[k].length > 500) item[k] = item[k].slice(0, 500) + "…";
       out.push(item);
     }
     // Refs live in this isolated world for this document only; page actions resolve them (--ref).

@@ -491,6 +491,13 @@ def test_rate_limit_exit_and_json(monkeypatch, command, banner, message):
     assert len(calls) == 1  # no rate-limit retry
 
 
+def test_an_answer_that_mentions_a_limit_prints_and_exits_0(monkeypatch):
+    answer = 'The limit was reached at 50 messages in the study, so the authors split the sessions.'
+    stub(monkeypatch, 'ask', {**ANSWER, 'answer': answer})
+    result = run('ask', 'q', '--format', 'text')
+    assert (result.exit_code, result.stdout) == (0, answer + '\n')
+
+
 def test_rate_limit_print_does_not_replace_answer_file(monkeypatch, tmp_path):
     target = tmp_path / 'answer.txt'
     target.write_text('previous')
@@ -775,3 +782,11 @@ def test_no_footnotes_reaches_fetch_and_the_answer_prints_as_is(monkeypatch):
     assert json.loads(run("ask", "q").stdout)["citations"] == cited["citations"]
     assert run("ask", "--no-footnotes", "q").exit_code == 0 and run("-p", "--no-footnotes", "q").exit_code == 0
     assert [c[1]["footnotes"] for c in calls] == [True, True, False, False]
+
+
+def test_a_last_chat_that_cannot_be_cleared_is_a_clean_error(monkeypatch):
+    stub(monkeypatch, "ask", {**ANSWER, "chatId": None})  # a new chat that never showed its id
+    last_chat().mkdir(parents=True)  # unlink can't remove it
+    result = run("-p", "hi")
+    assert (result.exit_code, result.stdout) == (5, "")
+    assert json.loads(result.stderr)["hint"] == "Don't resend the prompt. Read it at gemini.google.com."

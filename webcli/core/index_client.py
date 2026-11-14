@@ -47,7 +47,16 @@ DEFAULT_ARCHIVE = "https://codeload.github.com/truefrontier/webcli-tools/tar.gz/
 CACHE = "index-cache.json"
 INDEX_LIMIT = 5_000_000
 ARCHIVE_LIMIT = 50_000_000  # the download, and separately what one tool's files expand to
+# The whole archive, the library's other folders included: tarfile reads (and keeps) every member's header, and
+# skipping a member still decompresses it. So a 50 MB download can't make install hold millions of headers or
+# inflate gigabytes it never writes.
+MEMBER_LIMIT = 20_000
+UNPACKED_LIMIT = 250_000_000
+# One pax or GNU long-name header. Real ones hold a path or link target of at most a few KB.
+HEADER_LIMIT = 100_000
 TIMEOUT = 30
+# What Python imports with no source next to it (an unchecked-hash .pyc even wins over the .py beside it).
+COMPILED = (".pyc", ".pyo", ".pyd", ".so")
 _HEX = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -256,6 +265,18 @@ def tree_sha256(folder: Path, *, added: tuple[str, ...] = ()) -> str:
     return digest.hexdigest()
 
 
+class _Member(tarfile.TarInfo):
+    """tarfile reads a pax or GNU long-name header's payload whole, before download()'s loop sees the member it
+    describes. So the size is checked here, from the 512-byte block that announces it, before that read."""
+
+    def _proc_member(self, tar):
+        if self.type in (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE, tarfile.GNUTYPE_LONGNAME,
+                         tarfile.GNUTYPE_LONGLINK) and self.size > HEADER_LIMIT:
+            # A TarError, not a HeaderError: tarfile treats a bad header past the first as the archive's end.
+            raise tarfile.TarError(f"it has a tar header over {HEADER_LIMIT // 1000} KB; not installing it.")
+        return super()._proc_member(tar)
+
+
 def download(entry: Entry, dest: Path) -> None:
     """Put `entry`'s folder, at its pinned commit, into `dest` (new, empty) and check it against entry.sha256. Raises
     LibraryError (and leaves dest for the caller to remove) when anything is off. The hash is checked on what landed
@@ -263,10 +284,18 @@ def download(entry: Entry, dest: Path) -> None:
     target = archive_url(entry)
     body = _get(target, ARCHIVE_LIMIT)
     prefix = PurePosixPath(entry.path)
-    count = size = 0
+    count = size = members = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as tar:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*", tarinfo=_Member) as tar:
             for member in tar:
+                # Checked before the loop moves on, which is when tarfile reads past this member's data. The end of
+                # its data counts every header before it too, pax and long-name payloads included.
+                members += 1
+                unpacked = member.offset_data + member.size
+                if members > MEMBER_LIMIT:
+                    raise LibraryError(f"{target} holds more than {MEMBER_LIMIT} files; not installing it.")
+                if unpacked > UNPACKED_LIMIT:
+                    raise LibraryError(f"{target} expands past {UNPACKED_LIMIT // 1_000_000} MB; not installing it.")
                 parts = PurePosixPath(member.name).parts[1:]  # the archive's top folder: <repo>-<commit>/
                 if len(parts) <= len(prefix.parts) or PurePosixPath(*parts[:len(prefix.parts)]) != prefix:
                     continue
@@ -276,6 +305,9 @@ def download(entry: Entry, dest: Path) -> None:
                 if not member.isfile() or ".." in rel or rel[0].startswith("/"):
                     raise LibraryError(f"{entry.path}/{'/'.join(rel)} in {target} is a link or special file; "
                                       "not installing it.")
+                if "__pycache__" in rel or rel[-1].endswith(COMPILED):
+                    raise LibraryError(f"{entry.path}/{'/'.join(rel)} in {target} is compiled code; a tool ships "
+                                      "only source a reviewer can read. Not installing it.")
                 size += member.size
                 if size > ARCHIVE_LIMIT:
                     raise LibraryError(f"{entry.path}/ in {target} expands past {ARCHIVE_LIMIT // 1_000_000} MB; "

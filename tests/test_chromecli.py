@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import struct
 import tempfile
@@ -21,7 +22,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from webcli.chromecli import EXTENSION_ID, extension_origin, host, install, policy, protocol
+from webcli.chromecli import EXTENSION_ID, bridge, extension_origin, host, install, policy, protocol
 from webcli.chromecli.cli import group
 from webcli.core import config
 from webcli.core.errors import ConfigError
@@ -122,6 +123,26 @@ def ext(home):
 
 # framing
 
+def test_the_socket_appears_only_once_it_listens(home, monkeypatch):
+    path, real = host.socket_path(), socket.socket
+    seen = []
+
+    class Spy(real):
+        def listen(self, *args):
+            seen.append(path.exists())  # what a client looking for the socket finds right now
+            return super().listen(*args)
+
+    monkeypatch.setattr(host.socket, "socket", Spy)
+    server = host.listen(path)
+    try:
+        assert seen == [False], "the socket path existed before it listened: a client got connection refused"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600 and not path.with_name(path.name + "~").exists()
+        with real(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(path))
+    finally:
+        server.close()
+
+
 def test_frame_round_trip():
     msg = {"v": 1, "op": "tabs.read", "args": {"text": "héllo ✓"}}
     frame = protocol.encode_frame(msg)
@@ -142,6 +163,39 @@ def test_frame_limits():
         protocol.read_frame(io.BytesIO(over))
     with pytest.raises(protocol.ProtocolError):
         protocol.read_frame(io.BytesIO(struct.pack("<I", 3) + b"{x}"))
+
+
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")])
+def test_a_frame_never_carries_nan_or_infinity(number):
+    # json.dumps would write NaN / Infinity, which isn't JSON: the extension's parser rejects the whole message.
+    with pytest.raises(protocol.ProtocolError) as exc:
+        protocol.encode_frame({"op": "grant.add", "args": {"maxAmount": number}})
+    assert exc.value.code == "bad_request"
+
+
+@pytest.mark.parametrize(("arg", "timeout_ms"), [("NaN", "1000"), ("Infinity", "1000"), ("-Infinity", "1000"),
+                                                  ("1", "NaN")])
+def test_the_host_refuses_a_request_with_nan_or_infinity(arg, timeout_ms):
+    # Before, the first three went on to Chrome (here: no answer within the 1s floor), and NaN crashed int().
+    line = ('{"v": 1, "op": "status", "args": {"x": %s}, "confirm": false, "client": {"timeoutMs": %s}}'
+            % (arg, timeout_ms)).encode()
+    reply = host.Host(io.BytesIO(), io.BytesIO()).handle(line)
+    assert reply["ok"] is False and reply["error"]["code"] == "bad_request"
+
+
+def test_the_bridge_never_sends_nan_or_infinity(ext):
+    fake = ext(fake_tabs).start()
+    reply = bridge.call("tabs.list", {"x": float("inf")})
+    assert reply["ok"] is False and reply["error"]["code"] == "bad_request"
+    assert not [m for m in fake.received if m.get("op") == "tabs.list"]
+
+
+def test_wait_timeout_nan_is_a_usage_error(ext):
+    # click's FloatRange lets nan through: every comparison with it is false.
+    fake = ext(fake_tabs).start()
+    result = run("wait", "--tab", "7", "--text", "done", "--timeout", "nan")
+    assert result.exit_code == 2, result.output
+    assert not [m for m in fake.received if m.get("op") == "page.wait"]
 
 
 def test_validate_request():
@@ -314,6 +368,22 @@ def test_status_list_read_history_screenshot(ext, home, tmp_path):
     assert pushed and pushed[0]["policy"]["deny"] == list(policy.DEFAULT_DENY)
 
 
+def test_history_since_reads_a_utc_z(ext):
+    fake = ext(fake_tabs).start()
+    assert run("history", "--since", "2026-10-01T00:00:00Z", "--format", "json").exit_code == 0
+    [sent] = [m for m in fake.received if m.get("op") == "history.search"]
+    assert sent["args"]["since"] == 1790812800000  # 2026-10-01T00:00:00Z, on Python 3.10 too
+
+
+def test_history_since_with_no_timestamp_is_a_usage_error(ext):
+    # A local date-time's timestamp() looks a day back, so year 1's first day fails in every time zone.
+    fake = ext(fake_tabs).start()
+    result = run("history", "--since", "0001-01-01", "--format", "json")
+    assert result.exit_code == 2, result.output
+    assert "--since" in result.output
+    assert not [m for m in fake.received if m.get("op") == "history.search"]  # never asked the extension
+
+
 def test_target_is_tab_or_active(ext):
     ext(fake_tabs).start()
     assert run("read").exit_code == 2
@@ -337,6 +407,25 @@ def test_host_timeout(ext, monkeypatch):
     monkeypatch.setenv("CHROMECLI_TIMEOUT", "1")
     result = run("list")
     assert result.exit_code == 5 and err(result)["error"] == "timeout"
+
+
+@pytest.mark.parametrize(("value", "seconds"), [
+    ("", 30.0), ("12", 12.0), ("0.5", 0.5), ("abc", 30.0), ("nan", 30.0), ("inf", 30.0), ("-inf", 30.0),
+    ("0", 30.0), ("-5", 30.0),
+])
+def test_timeout_env(monkeypatch, value, seconds):
+    """NaN or infinity crashed every command at int(secs * 1000); a negative value broke the socket's timeout.
+    Like a typo, they get the default (the same bug as WEBCLI_SERVE_RECYCLE_HOURS=nan, #90)."""
+    monkeypatch.setenv("CHROMECLI_TIMEOUT", value)
+    assert bridge.timeout_seconds() == seconds
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-10"])
+def test_a_bad_timeout_env_still_runs_the_command(ext, monkeypatch, value):
+    ext(fake_tabs).start()
+    monkeypatch.setenv("CHROMECLI_TIMEOUT", value)
+    result = run("list")
+    assert result.exit_code == 0, result.stderr
 
 
 def test_config_error_blocks_ops_but_not_status(ext, home):

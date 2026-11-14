@@ -4,7 +4,9 @@ response. Also the formats (md, csv, the format env) and the tmuxlet -p contract
 from __future__ import annotations
 
 import copy
+import io
 import json
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -108,6 +110,17 @@ def test_md_and_csv_formats_and_the_format_env():
     assert run("gemini", "ask", "q", env={"LLMCLI_FORMAT": "text"}).stdout.startswith("Four.")
 
 
+@pytest.mark.parametrize("show", [
+    lambda title: output.kv_table(title, {"title": "x :smile: [part 1]"}),
+    lambda title: output.rows_table(title, [{"title": "x :smile: [part 1]"}], ["title"]),
+], ids=["kv_table", "rows_table"])
+def test_table_titles_and_cells_print_as_written(capsys, show):
+    for title in ("Demo [/b]", "Onboarding [part 1]", ":smile: time"):  # "[/b]" used to raise MarkupError
+        show(title)
+        out = capsys.readouterr().out
+        assert title in out and "x :smile: [part 1]" in out and "😄" not in out
+
+
 def test_resolve_format_order(monkeypatch):
     monkeypatch.setattr(output, "FORMAT_ENV", "LLMCLI_FORMAT")
     monkeypatch.setenv("LLMCLI_FORMAT", "table")
@@ -145,3 +158,26 @@ def test_images_is_the_list_of_saved_paths(monkeypatch, site, tmp_path):
     data = json.loads(run(site, "ask", "stars", "--image-out", str(tmp_path / "out") + "/").stdout)
     assert data["images"] == [str((tmp_path / "out" / "stars-1.png").resolve())]
     assert data["imageFiles"][0]["path"] == data["images"][0] and data["imageFiles"][0]["width"] == 4
+
+
+def test_csv_is_utf8_even_when_stdout_is_not(monkeypatch):
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="ascii"))  # LC_ALL=C, or a latin-1 locale
+    output.emit_csv([{"name": "Иван Петров", "title": "Café ✓"}])
+    sys.stdout.flush()
+    assert raw.getvalue().decode("utf-8") == "name,title\nИван Петров,Café ✓\n"
+
+
+def test_compact_narrows_every_sites_table(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "200")
+    rows = [{"key": "jane.doe", "name": "Jane Doe", "city": "Springfield", "subtitle": "Owner at Acme"}]
+
+    def table(**options) -> str:
+        output.emit_rows(rows, title="people", fields=("key", "name", "city", "subtitle"),
+                         compact_fields=("key", "name"), columns=["key", "name", "city", "subtitle"], noun="people",
+                         fmt="table", select=None, quiet=True, as_csv=False, **options)
+        return capsys.readouterr().out
+
+    assert "subtitle" in table(compact=False) and "Owner at Acme" in table(compact=False)
+    compact = table(compact=True)
+    assert "Jane Doe" in compact and "subtitle" not in compact and "Springfield" not in compact

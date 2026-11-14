@@ -6,7 +6,7 @@ import re
 
 ALBUM_RE = re.compile(r"/album/([^/?#]+)")
 PHOTO_RE = re.compile(r"/photo/([^/?#]+)")
-MEDIA_KEY = "AF1Qip"  # every album and media key starts so
+MEDIA_KEY = re.compile(r"AF1Qip[A-Za-z0-9_-]+")  # every album and media key is shaped so
 TITLE_JUNK = re.compile(r"\d+\s*items?\s*More options$", re.I)
 FILENAME = re.compile(r'filename="?([^";]+)"?')
 EXTENSIONS = (("mp4", "mp4"), ("video/", "mp4"), ("jpeg", "jpg"), ("jpg", "jpg"), ("png", "png"))
@@ -17,7 +17,7 @@ def _key(value: str, pattern: re.Pattern, what: str) -> str:
     match = pattern.search(value)
     if match:
         return match.group(1)
-    if value.startswith(MEDIA_KEY):
+    if MEDIA_KEY.fullmatch(value):  # a whole key: "AF1Qip" alone, or with a / or ?, isn't one
         return value
     raise ValueError(f"expected a{'n' if what[0] in 'aeiou' else ''} {what} id or URL")
 

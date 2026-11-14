@@ -158,7 +158,10 @@ def iso_time(stamp: Any) -> str | None:
     seconds = stamp[0] if isinstance(stamp, list) and stamp else stamp
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
         return None
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):  # milliseconds, or garbage: no time, not a failed list
+        return None
 
 
 def _bare_id(cid: Any) -> str | None:
@@ -519,8 +522,12 @@ _LIMIT_NOTICE = re.compile(
     + r"|\b(?:limits?|quotas?) (?:has been |have been |was |were )?(?:reached|exceeded|exhausted)\b"
     r"|\b(?:exceeded|exhausted|used up|out of) (?:your |the )?" + _WORDS + r"quotas?\b",
     re.IGNORECASE)
-_LIMIT_REPLY = re.compile(
-    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _YOU_HIT + "|" + _YOUR_RESETS + ")",
+# An answer that is a notice: an optional apology, then a notice or a bare heading ("Usage limit", "Daily quota",
+# "Quota exceeded"), at the very start. "Quota is..." is an answer about quotas. No length cap: a notice may be
+# followed by a long upsell.
+_LIMIT_ANSWER = re.compile(
+    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _LIMIT_NOTICE.pattern
+    + r"|(?:(?:daily|weekly|monthly)\s+)?(?:usage limit\b|quotas?(?:\s+(?:exceeded|exhausted|reached|used up)\b|[\s.!]*$)))",
     re.IGNORECASE)
 
 
@@ -535,12 +542,10 @@ def limit_notice(text: str | None) -> bool:
 
 
 def limit_reply(answer: str | None) -> bool:
-    """Whether the answer contains Gemini's usage-limit notice, such as "You've reached your
-    limit..." or "Your limit resets...". Explicit quota/usage-limit notices count as well."""
-    text = _flat(answer)
-    return bool(text) and (bool(_LIMIT_REPLY.match(text)) or bool(re.match(
-        r"(?:(?:sorry|oops)[,!.]?\s+)?(?:(?:daily|weekly|monthly)\s+)?(?:usage limit|quota)\b",
-        text, re.IGNORECASE)) or bool(_LIMIT_NOTICE.search(text)))
+    """Whether the answer is Gemini's usage-limit notice in place of a reply: it starts like one ("You've reached
+    your limit...", "Your limit resets...", "Usage limit reached", "Quota exceeded"). An answer that only mentions or
+    explains a limit stays an answer; only page notices (limit_notice) are matched anywhere in their text."""
+    return bool(_LIMIT_ANSWER.match(_flat(answer)))
 
 
 # Reset timestamps always use the owner's America/Chicago time zone.

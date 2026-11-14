@@ -120,7 +120,8 @@ def test_hidden_counts_are_null_and_pulse_links_make_an_article():
 def test_urn_time_reads_the_id_and_refuses_implausible_ones():
     assert posts.urn_time(A1) == iso(T1)
     assert posts.urn_time("urn:li:activity:12345678") is None  # 1970: not a time-based id
-    assert posts.urn_time(f"urn:li:activity:{sid(NOW + timedelta(days=400))}") is None
+    future = datetime.now(timezone.utc) + timedelta(days=400)  # urn_time checks the real clock, not NOW
+    assert posts.urn_time(f"urn:li:activity:{sid(future)}") is None
     assert posts.urn_time("urn:li:fsd_profile:x") is None
 
 
@@ -664,7 +665,7 @@ def test_posts_search_reads_urns_from_the_pages_own_stream_responses(monkeypatch
 def test_card_time_lines(line, minutes):
     now = datetime(2026, 10, 23, 17, 0, tzinfo=timezone.utc)
     row = posts.card_row({**CARD, "actorLines": ["Jane Doe", "Builder", line]}, now=now)
-    assert datetime.fromisoformat(row["posted_at"]) == now - timedelta(minutes=minutes)
+    assert datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")) == now - timedelta(minutes=minutes)
     assert row["author_headline"] == "Builder"
 
 

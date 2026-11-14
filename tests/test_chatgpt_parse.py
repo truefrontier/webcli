@@ -167,6 +167,19 @@ def test_stream_error(body, expected):
     assert parse.stream_error(body) == expected
 
 
+@pytest.mark.parametrize(("status", "message", "code", "capped"), [
+    (400, "Unsupported capability", "unsupported_capability", False),  # "cap" inside a word isn't a cap
+    (413, "HTTP 413", "content_too_large", False), (500, "HTTP 500", None, False),
+    (400, "You've reached our limit of messages per hour.", "model_cap_exceeded", True),
+    (400, "Something", "model_cap_exceeded", True), (400, "Something", "CAP", True),
+    (429, "HTTP 429", None, True), (403, "Too many requests in 1 hour. Try again later.", None, True),
+])
+def test_refused_for_a_cap(status, message, code, capped):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (0f03cd1): HTTP 400 unsupported_capability exited 6
+    as rate_limited ("don't retry before then") instead of 5."""
+    assert parse.refused_for_a_cap(status, message, code) is capped
+
+
 @pytest.mark.parametrize("text", [
     "You've reached our limit of messages per hour. Please try again later.",
     "You've hit the Plus plan limit for image generations requests. You can create more images when the limit "
@@ -186,6 +199,32 @@ def test_limit_classification(text):
                                   "Upgrade to Pro for higher limits."])
 def test_normal_reply_is_not_rate_limited(text):
     assert not parse.limit_reply(text)
+
+
+@pytest.mark.parametrize("text", [
+    "A rate limit is a cap on how many requests a client can send in a time window.",
+    "HTTP 429 means Too Many Requests: the server is rate limiting you.",
+    "Quota is the share of a resource you're allowed to use.",
+    "Here is how to handle a rate-limited API in Python: retry with exponential backoff.",
+    "The limit was reached at 50 messages in the study.",
+    "Rate limiting is a technique that controls how often a client may call an API.",
+    "Too many requests to one endpoint usually means a retry loop without backoff. " + "Here is why. " * 40,
+])
+def test_an_answer_about_limits_is_not_a_cap_notice(text):
+    """Every answer is checked: a reply that explains rate limits must print, not exit 6 with the answer hidden.
+    Page banners (limit_notice) stay broad: they are never the answer. Ported from chatgpt-web-cli's
+    overflow/chatgptwebclitests (471b06d)."""
+    assert not parse.limit_reply(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Sorry, you've hit your limit for GPT-6 Thinking.", "It looks like you've reached your usage cap.",
+    "Rate limit exceeded.", "Message cap reached. Try again later.", "Daily usage limit reached.",
+    "Your limit resets at 1:53 PM.", "Sorry, rate limit exceeded.", "Oops! Too many requests. Try again later.",
+    "Uh-oh, usage cap reached for GPT-6.",
+])
+def test_short_cap_notices_in_the_answer_still_count(text):
+    assert parse.limit_reply(text)
 
 
 @pytest.mark.parametrize(("text", "now", "expected"), [
@@ -212,6 +251,18 @@ def test_resets_after_seconds():
     assert parse.resets_after(None, now) is None and parse.resets_after(-1, now) is None
 
 
+@pytest.mark.parametrize(("now", "expected"), [
+    ("2026-11-01T00:30:00-05:00", "2026-11-01T02:30:00-06:00"),  # 3 real hours across the fall-back hour
+    ("2026-03-08T01:30:00-06:00", "2026-03-08T05:30:00-05:00"),  # and across the skipped spring hour
+    ("2026-10-18T13:00:00-05:00", "2026-10-18T16:00:00-05:00"),
+])
+def test_relative_resets_count_elapsed_time_across_dst(now, expected):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (471b06d): adding seconds to a zoned time is
+    wall-clock math, an hour off on DST days."""
+    assert parse.resets_after(3 * 3600, datetime.fromisoformat(now)) == expected
+    assert parse.resets_at("Your limit resets in 3 hours.", datetime.fromisoformat(now)) == expected
+
+
 @pytest.mark.parametrize(("answer", "is_error"), [
     ("Something went wrong while generating the response. If this issue persists please contact us.", True),
     ("Hmm...something seems to have gone wrong.", True), ("Network error", True),
@@ -219,6 +270,28 @@ def test_resets_after_seconds():
 ])
 def test_error_reply(answer, is_error):
     assert parse.error_reply(answer) is is_error
+
+
+@pytest.mark.parametrize("answer", [
+    "An error occurred. That's the generic message Windows shows when an installer fails; here is what to check.",
+    "An error occurred while parsing is what Python prints here: the fix is to quote the key.",
+])
+def test_an_answer_that_starts_with_an_error_phrase_is_still_an_answer(answer):
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (471b06d): the (?:\\..*)? tail took any answer that
+    starts "An error occurred." as ChatGPT's own error (exit 5, answer hidden)."""
+    assert not parse.error_reply(answer)
+
+
+@pytest.mark.parametrize("answer", [
+    "An error occurred.", "An error occurred",
+    "An error occurred. Either the engine you requested does not exist or there was another issue processing your "
+    "request. If this issue persists please contact us through our help center at help.openai.com.",
+    "An error occurred. If this issue persists please contact us through our help center at help.openai.com.",
+    "Something went wrong while generating the response. If this issue persists please contact us.",
+    "Hmm...something seems to have gone wrong.", "Network error", "Conversation not found",
+])
+def test_chatgpts_error_messages_are_still_error_replies(answer):
+    assert parse.error_reply(answer)
 
 
 def test_done_waits_for_a_settled_turn_and_gives_images_a_grace_period():
@@ -233,3 +306,26 @@ def test_done_waits_for_a_settled_turn_and_gives_images_a_grace_period():
     assert not _done(ended, True, time.monotonic())  # an image may still come
     assert _done(ended, True, time.monotonic() - IMAGE_GRACE - 1)
     assert _done({**ended, "images": [{"fileId": "f"}]}, True, time.monotonic())
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (1760814000, "2025-10-18T19:00:00Z"), (1760814000.5, "2025-10-18T19:00:00.500000Z"),
+    ("2025-10-18T19:00:00Z", "2025-10-18T19:00:00Z"), ("2025-10-18T14:00:00-05:00", "2025-10-18T19:00:00Z"),
+    ("not a date", "not a date"), ("", None), (0, None), (None, None),
+    (1760814000000, None), (1e300, None),  # epoch milliseconds or garbage: no time, not a failed chats list
+])
+def test_iso_time(value, expected):
+    assert parse.iso_time(value) == expected
+
+
+def test_chats_survive_a_bad_timestamp():
+    """Ported from chatgpt-web-cli's overflow/chatgptwebclitests (761ee2c): epoch milliseconds raised "year 57767 is
+    out of range" and failed the whole chats list."""
+    rows = parse.chats({"items": [{"id": "a", "update_time": 1760814000000, "create_time": "x"}]})
+    assert rows[0]["updated"] is None and rows[0]["created"] == "x"
+
+
+def test_an_absurd_reset_is_no_reset_time_not_a_crash():
+    now = datetime.fromisoformat("2026-10-18T13:00:00-05:00")
+    assert parse.resets_after(10**18, now) is None
+    assert parse.resets_at("Your limit resets in 99999999 days.", now) is None

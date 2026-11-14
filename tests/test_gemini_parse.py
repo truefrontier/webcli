@@ -277,6 +277,24 @@ def test_normal_reply_is_not_rate_limited(text):
     assert not parse.limit_reply(text)
 
 
+@pytest.mark.parametrize('text', [
+    "Quota is the share of a resource you're allowed to use.",
+    'The limit was reached at 50 messages in the study.',
+    "If you've used up your free quota, the API answers 429 until midnight Pacific.",
+    'Quotas exist so one client cannot starve the rest.',
+])
+def test_an_answer_about_limits_is_not_a_cap_notice(text):
+    """An answer that mentions or explains a limit prints; only one that starts like a notice is a cap notice.
+    The same bug as chatgpt-web-cli's overflow/chatgptwebclitests bug 1 (471b06d)."""
+    assert not parse.limit_reply(text)
+
+
+@pytest.mark.parametrize('text', ['Daily quota exhausted. Try again tomorrow.', 'Sorry, quota exceeded.',
+                                  "It looks like you've reached your limit for 3 Pro.", 'Daily quota.'])
+def test_cap_notices_that_start_the_answer_still_count(text):
+    assert parse.limit_reply(text)
+
+
 @pytest.mark.parametrize(('text', 'now', 'expected'), [
     ('Your limit resets at 1:53 PM', '2026-10-16T12:00:00-05:00', '2026-10-16T13:53:00-05:00'),
     ('Your limit resets at 1:53 PM', '2026-10-16T14:00:00-05:00', '2026-10-17T13:53:00-05:00'),
@@ -298,6 +316,9 @@ def test_normal_reply_is_not_rate_limited(text):
     ('Quota exceeded', '2026-10-16T12:00:00-05:00', None),
     ('Your limit resets February 30 at 1:53 PM', '2026-10-16T12:00:00-05:00', None),
     ('Your limit resets at 13 PM', '2026-10-16T12:00:00-05:00', None),
+    ('Your limit resets tonight at 11:30 PM', '2026-10-16T10:00:00-05:00', '2026-10-16T23:30:00-05:00'),
+    ('Your limit resets today at 9 PM', '2026-10-16T22:00:00-05:00', '2026-10-16T21:00:00-05:00'),  # said today: not tomorrow
+    ('Your limit resets on 1/5/27 at 9:00 AM', '2026-10-16T10:00:00-05:00', '2027-01-05T09:00:00-06:00'),  # 2-digit year
 ])
 def test_limit_reset_time(text, now, expected):
     from datetime import datetime
@@ -429,3 +450,14 @@ def test_coincident_refs_mark_a_source_once_and_sentences_skip_markers():
     web = {"label": "Wikipedia", "title": "T", "url": "https://w.example/"}
     candidate = [None, None, [None, [[["cite"], [1], [["https://w.example/", "T", None, None, None, None, "Wikipedia"]]]]]]
     assert parse.cite_refs("A [cite: 1] cite", candidate)[-1] == (16, 16, [web])  # the visible "cite", not the marker's
+
+
+def test_chat_rows_without_an_id_are_skipped_and_a_transcript_must_be_an_array():
+    """Ported from gemini-web-cli's overflow/geminiwebclitests (e5d54c8)."""
+    rows, cursor = parse.chats([None, None, [[None, "no id"], ["c_1a2b3c4d5e6f7a8b", "Trip ideas", True, None, None,
+                                                               [1760450400, 0]]]])
+    assert (rows, cursor) == ([{"id": "1a2b3c4d5e6f7a8b", "title": "Trip ideas", "updated": "2025-10-14T14:00:00Z",
+                                "pinned": True, "url": "https://gemini.google.com/app/1a2b3c4d5e6f7a8b"}], None)
+    assert parse.chat_messages(None) == parse.chat_messages([]) == ([], None)
+    with pytest.raises(ValueError, match="^Chat transcript: expected a JSON array, got str"):
+        parse.chat_messages("text")

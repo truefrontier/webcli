@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import stat
 import textwrap
 from pathlib import Path
@@ -225,6 +226,24 @@ def test_doctor_reports_community_and_skipped_tools(tools):
     assert [s["name"] for s in report["tools"]["skipped"]] == ["gmail"]
 
 
+def test_doctor_says_how_old_the_revoked_list_is(tools):
+    """Revocations arrive only when a `webcli tools` command refreshes index-cache.json, so doctor says how old it is,
+    and calls it stale once a community tool is installed and the list is missing or over a week old."""
+    def revocations():
+        return json.loads(run("doctor", "--no-browser").stdout)["tools"]["revocations"]
+
+    assert revocations() == {"cache": str(tools / "index-cache.json"), "ageDays": None, "stale": False, "hint": None}
+    make_tool(tools)
+    sites.reload()  # the first doctor run cached a registry with no tools
+    assert revocations()["stale"] is True and "webcli tools search" in revocations()["hint"]
+    cache = tools / "index-cache.json"
+    cache.write_text(json.dumps({"tools": [], "revoked": []}))
+    assert revocations()["ageDays"] == 0.0 and revocations()["stale"] is False
+    eight_days_ago = cache.stat().st_mtime - 8 * 86400
+    os.utime(cache, (eight_days_ago, eight_days_ago))
+    assert revocations()["ageDays"] == 8.0 and revocations()["stale"] is True
+
+
 # Revoked tools.
 
 def test_a_revoked_tool_is_not_loaded_and_its_code_never_runs(tools, capsys):
@@ -255,6 +274,18 @@ def test_the_daemon_refuses_a_tool_revoked_after_it_loaded(tools):
     assert sites.tier_of("toyhttp") == "community"
     (tools / "revoked.json").write_text(json.dumps({"revoked": ["toyhttp"]}))
     with pytest.raises(ConfigError, match="revoked"):
+        daemon.site_op(Identity("toyhttp:default"), "toyhttp", "get")
+
+
+@pytest.mark.parametrize("off", ["disable", "remove"])
+def test_the_daemon_refuses_a_tool_disabled_or_removed_after_it_loaded(tools, off):
+    folder = make_tool(tools)
+    assert sites.tier_of("toyhttp") == "community"  # the daemon's registry, loaded before the change
+    if off == "disable":
+        (folder / tools_registry.DISABLED).touch()
+    else:
+        shutil.rmtree(folder)
+    with pytest.raises(ConfigError, match="disabled" if off == "disable" else "removed"):
         daemon.site_op(Identity("toyhttp:default"), "toyhttp", "get")
 
 

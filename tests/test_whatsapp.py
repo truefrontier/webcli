@@ -490,8 +490,10 @@ def test_read_opens_the_exact_chat_and_reads_its_messages(web):
     assert page.searching is None and page.writes() == []
 
 
-def test_read_since(web):
+def test_read_since(web, monkeypatch):
     web(WhatsAppPage())
+    thread = parse.thread  # the fixture's "TODAY" separator is TODAY, not the day the suite runs
+    monkeypatch.setattr(parse, "thread", lambda html, chat=None, today=None: thread(html, chat, today=today or TODAY))
     found = asyncio.run(fetch.messages("Alice Smith", 20, "2026-10-22T10:00"))
     assert [m["text"] for m in found["messages"]] == ["Groceries:\nmilk\neggs", "On my way"]
 

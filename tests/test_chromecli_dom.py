@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from browsers import launch_chromium
+
 REPO = Path(__file__).resolve().parents[1]
 EXT = REPO / "extensions" / "chromecli"
 FIXTURES = REPO / "tests" / "fixtures" / "chromecli"
@@ -33,16 +35,7 @@ def page():
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     with sync_playwright() as p:
-        browser = None
-        # Playwright's own Chromium, else any cached headless shell (never the user's Chrome).
-        shells = sorted(Path.home().glob("Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        shells += sorted(Path.home().glob(".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell"))
-        for exe in [None, *reversed(shells)]:
-            try:
-                browser = p.chromium.launch(**({"executable_path": str(exe)} if exe else {}))
-                break
-            except Exception:
-                continue
+        browser = launch_chromium(p)
         if browser is None:
             srv.shutdown()
             pytest.skip("no headless Chromium")
@@ -144,3 +137,27 @@ def test_snapshot_has_no_values_and_shares_refs(page):
                                     check=True).stdout)
     assert out[0].lower().startswith("email") and "delete" in out[1].lower() and "order" in out[2].lower()
     assert out[3] <= 24 * 1024
+
+
+def test_a_page_cant_make_an_element_description_huge(page):
+    # Every field of what describe, read --elements and the snapshot return is cut, not just the name and outerHTML:
+    # a page could otherwise send megabytes through the native host into the agent's context.
+    fresh = page.context.browser.new_page()
+    fresh.goto(page.url.split("?")[0])
+    fresh.evaluate(page.evaluate("() => window.__src"))
+    fresh.evaluate("""n => {
+        const a = document.getElementById("next");
+        for (const k of ["title", "name", "autocomplete", "role", "aria-description"]) a.setAttribute(k, k + "x".repeat(n));
+        a.setAttribute("href", "/" + "p".repeat(n));
+        document.getElementById("order").setAttribute("action", "/" + "f".repeat(n));
+    }""", 1_000_000)
+    d = act(fresh, mode="describe", op="click", target={"selector": "#next"})
+    assert d["ok"], str(d)[:300]
+    rows = [d["element"],
+            next(e for e in fresh.evaluate("() => window.__ex({elements: true}).elements") if e["tag"] == "a"),
+            next(e for e in fresh.evaluate("() => window.__snap({max: 300}).elements") if e["tag"] == "a")]
+    for row in rows:
+        assert max(len(v) for v in row.values() if isinstance(v, str)) <= 501, {k: len(v) for k, v in row.items()
+                                                                                if isinstance(v, str)}
+    assert len(json.dumps(d)) < 10_000
+    fresh.close()

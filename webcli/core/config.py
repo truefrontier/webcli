@@ -93,8 +93,17 @@ def load() -> dict[str, Any]:
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # TOML allows tab, but no other control character, raw
+
+
+def _string(text: str) -> str:
+    """A TOML basic string: backslashes, quotes, and every control character but tab escaped."""
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + _CONTROL.sub(lambda m: f"\\u{ord(m.group()):04x}", text) + '"'
+
+
 def _key(key: str) -> str:
-    return key if _BARE_KEY.match(key) else '"' + key.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return key if _BARE_KEY.fullmatch(key) else _string(key)
 
 
 def _value(value: Any) -> str:
@@ -103,7 +112,7 @@ def _value(value: Any) -> str:
     if isinstance(value, (int, float)):
         return repr(value)
     if isinstance(value, str):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+        return _string(value)
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_value(v) for v in value) + "]"
     raise ConfigError(f"config.toml can't hold a {type(value).__name__}")

@@ -72,7 +72,10 @@ def cloudflare_challenge(state: dict) -> bool:
 def iso_time(value: Any) -> str | None:
     """An API timestamp (epoch seconds, or an ISO string) as ISO 8601 UTC."""
     if isinstance(value, (int, float)) and value > 0:
-        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        except (ValueError, OverflowError, OSError):  # epoch milliseconds, or garbage: no time, not a failed list
+            return None
     if isinstance(value, str) and value:
         try:
             when = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -335,7 +338,8 @@ def stream_error(body: str | None) -> dict | None:
 _ERROR_REPLY = re.compile(
     r"(?:something went wrong(?: while generating the response)?(?:\. if this issue persists.*)?"
     r"|hmm\.*\s*something seems to have gone wrong"
-    r"|an error occurred(?:\..*)?|network error|error in message stream|conversation not found)[\s.!]*",
+    r"|an error occurred(?:\. (?:either the engine you requested does not exist|if this issue persists).*)?"
+    r"|network error|error in message stream|conversation not found)[\s.!]*",
     re.IGNORECASE | re.DOTALL)
 
 
@@ -360,9 +364,13 @@ _LIMIT_NOTICE = re.compile(
     r"|\b(?:exceeded|exhausted|used up|out of) (?:your |the )?" + _WORDS + r"quotas?\b"
     r"|\btoo many requests\b|\b(?:usage|message|image generation) caps?\b|\brate.limit(?:ed)?\b",
     re.IGNORECASE)
-_LIMIT_REPLY = re.compile(
-    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _YOU_HIT + "|" + _YOUR_RESETS + ")",
-    re.IGNORECASE)
+# An answer that is a notice: an optional apology, then a notice, at the very start.
+_LIMIT_ANSWER = re.compile(
+    r"(?:(?:sorry|oops|uh-oh|whoops)[,!.]?\s+)?(?:(?:it )?(?:looks|seems) like )?(?:" + _LIMIT_NOTICE.pattern
+    + r"|(?:(?:daily|weekly|monthly)\s+)?(?:usage limit|usage cap|too many requests)\b)", re.IGNORECASE)
+# ponytail: a cap notice is a sentence or two (the longest seen is ~140 characters); an answer longer than this is
+# an answer. Raise it if ChatGPT starts appending long upsell text to the notice.
+NOTICE_CHARS = 500
 
 
 def _flat(text: str | None) -> str:
@@ -375,13 +383,20 @@ def limit_notice(text: str | None) -> bool:
     return bool(_LIMIT_NOTICE.search(flat) or re.search(r"\busage (?:limit|cap)\b|\bquota\b", flat, re.IGNORECASE))
 
 
+def refused_for_a_cap(status: int, message: str | None, code: Any) -> bool:
+    """Whether ChatGPT refused a prompt (an HTTP error on the conversation POST, with stream_error's message and code)
+    for a usage cap: a 429, a limit notice, or an error code with a "cap" word in it (model_cap_exceeded; not
+    unsupported_capability)."""
+    return status == 429 or limit_notice(message) or "cap" in re.split(r"[^a-z]+", str(code or "").lower())
+
+
 def limit_reply(answer: str | None) -> bool:
-    """Whether the answer contains Gemini's usage-limit notice, such as "You've reached your
-    limit..." or "Your limit resets...". Explicit quota/usage-limit notices count as well."""
+    """Whether the answer is ChatGPT's usage-limit notice in place of a reply: at most NOTICE_CHARS long and starting
+    like one ("You've reached your limit...", "Your limit resets...", "Usage limit reached", "Rate limit exceeded",
+    "Too many requests..."). Every answer goes through this, so an answer that explains rate limits, quotas, or caps
+    stays an answer; only page notices (limit_notice) are matched anywhere in their text."""
     text = _flat(answer)
-    return bool(text) and (bool(_LIMIT_REPLY.match(text)) or bool(re.match(
-        r"(?:(?:sorry|oops)[,!.]?\s+)?(?:(?:daily|weekly|monthly)\s+)?(?:usage limit|usage cap|quota|too many requests)\b",
-        text, re.IGNORECASE)) or bool(_LIMIT_NOTICE.search(text)))
+    return 0 < len(text) <= NOTICE_CHARS and bool(_LIMIT_ANSWER.match(text))
 
 
 # Reset timestamps always use the owner's America/Chicago time zone.
@@ -438,7 +453,10 @@ def resets_after(seconds: float | None, now: datetime | None = None) -> str | No
     if seconds is None or seconds < 0:
         return None
     now = now or datetime.now(RESET_TZ)
-    when = now.astimezone(RESET_TZ) + timedelta(seconds=round(seconds))
+    try:
+        when = (now.astimezone(timezone.utc) + timedelta(seconds=round(seconds))).astimezone(RESET_TZ)  # elapsed time
+    except OverflowError:  # "resets in 99999999 days": past datetime's range
+        return None
     return when.replace(microsecond=0).isoformat()
 
 

@@ -125,9 +125,25 @@ def test_open_digest_and_picks():
 
 def test_open_weight_guess():
     assert digest.is_open_weight({"name": "gpt-oss-120b", "model_creator_name": "OpenAI"}) is True
-    assert digest.is_open_weight({"name": "Gemini-Pro 2", "model_creator_name": "Google"}) is False
+    for name in ("Gemini-Pro 2", "Gemini 2.5 Pro", "Gemini 3 Flash", "Gemini 2.0 Flash-Lite"):
+        assert digest.is_open_weight({"name": name, "model_creator_name": "Google"}) is False, name
     assert digest.is_open_weight({"name": "Gemma 3", "model_creator_name": "Google"}) is True
     assert digest.is_open_weight({"name": None, "model_creator_name": "Anthropic"}) is False
+
+
+def test_local_pick_and_open_digest_leave_out_gemini():
+    google = [digest.normalize({"name": name, "model_creator": {"name": "Google"},
+                                "evaluations": {"artificial_analysis_intelligence_index": score}})
+              for name, score in [("Gemini 3 Flash", 90.0), ("Gemini 2.5 Pro", 85.0), ("Gemma 3", 60.0),
+                                  ("Gemma 2", 40.0)]]
+    local = digest.pick(google, "local")
+    assert local["recommendation"]["name"] == "Gemma 3" and names(local["runners_up"]) == ["Gemma 2"]
+    only_gemini = digest.pick(google[:2], "local")
+    assert only_gemini["recommendation"] is None and only_gemini["runners_up"] == []
+    opened = digest.open_digest(google)
+    assert names(opened["open_models"]) == ["Gemma 3", "Gemma 2"]
+    assert names(opened["proprietary_comparison"]) == ["Gemini 3 Flash", "Gemini 2.5 Pro"]
+    assert opened["intelligence_gap"] == 30.0
 
 
 def test_tts_rankings():
@@ -208,6 +224,16 @@ def test_resets_at_reads_retry_after():
     assert api.resets_at("90", now) == "2026-10-19T12:01:30-05:00"
     assert api.resets_at("Wed, 21 Oct 2026 07:28:00 GMT") == "2026-10-21T02:28:00-05:00"
     assert api.resets_at(None) is None and api.resets_at("soon") is None
+
+
+@pytest.mark.parametrize(("now", "expected"), [
+    (datetime(2026, 11, 1, 0, 30, tzinfo=api.RESET_TZ), "2026-11-01T02:30:00-06:00"),  # across the fall-back hour
+    (datetime(2026, 3, 8, 1, 30, tzinfo=api.RESET_TZ), "2026-03-08T05:30:00-05:00"),  # across the skipped hour
+])
+def test_retry_after_counts_elapsed_time_across_dst(now, expected):
+    """Adding seconds to a zoned time is wall-clock math, an hour off on DST days. The same bug as ChatGPT's
+    resets_after (chatgpt-web-cli's overflow/chatgptwebclitests, 471b06d)."""
+    assert api.resets_at("10800", now) == expected
 
 
 # The CLI.

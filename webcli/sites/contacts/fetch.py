@@ -183,7 +183,11 @@ async def paginate(page: "Page", rpcid: str, first: list, next_payload: Callable
     seen_tokens: set[str] = set()
     payload = first
     for _ in range(MAX_PAGES):
-        batch, token = unpack(await rpc(page, rpcid, payload))
+        answer = await rpc(page, rpcid, payload)
+        try:
+            batch, token = unpack(answer)
+        except ValueError:
+            raise SiteError(f"The {rpcid} answer has an unexpected shape. {CHANGED_HINT}") from None
         for r in batch:
             rid = r[0] if isinstance(r[0], str) else None
             if rid in seen_ids or not keep(r):

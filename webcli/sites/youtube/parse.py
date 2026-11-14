@@ -10,7 +10,8 @@ from typing import Any, Iterator
 from urllib.parse import parse_qs, unquote, urlsplit
 
 YT = "https://www.youtube.com"
-_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december")
 _WEEKDAYS = {d: i for i, d in enumerate(("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"))}
 _MONTH_DAY = re.compile(r"([a-z]{3,})\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?")  # Oct 3 / October 3, 2025
 _DAY_MONTH = re.compile(r"(\d{1,2})\s+([a-z]{3,})\.?(?:,?\s+(\d{4}))?")  # 3 Oct 2025
@@ -87,16 +88,19 @@ def parse_day_header(text: str | None, today: date) -> date | None:
         if not m:
             return None
         day, month_name, year = m.groups()
-    month = _MONTHS.get(month_name[:3])
+    # "Sep", "Sept", "September" match; "Decades" doesn't. Three letters already pick one month.
+    month = next((i for i, name in enumerate(_MONTHS, 1) if name.startswith(month_name)), None)
     if not month:
         return None
-    try:
-        if year:
-            return date(int(year), month, int(day))
-        d = date(today.year, month, int(day))
-        return d if d <= today else date(today.year - 1, month, int(day))
-    except ValueError:
-        return None
+    # No year: this year, or last year when this year's date is still ahead or doesn't exist (Feb 29).
+    for y in (int(year),) if year else (today.year, today.year - 1):
+        try:
+            d = date(y, month, int(day))
+        except ValueError:
+            continue
+        if year or d <= today:
+            return d
+    return None
 
 
 def _channel(node: Any) -> tuple[str | None, str | None]:
@@ -324,9 +328,12 @@ def parse_since(value: str | None, tz: tzinfo | None = None) -> datetime | None:
         dt = datetime.fromisoformat(raw)
     except ValueError:
         raise ValueError("Use YYYY-MM-DD or ISO-8601, e.g. 2026-10-01 or 2026-10-01T08:00:00-05:00.") from None
-    if dt.tzinfo is None:
-        return dt.astimezone() if tz is None else dt.replace(tzinfo=tz)
-    return dt.astimezone(tz)
+    try:
+        if dt.tzinfo is None:
+            return dt.astimezone() if tz is None else dt.replace(tzinfo=tz)
+        return dt.astimezone(tz)
+    except (OverflowError, ValueError, OSError):  # before year 1 or past 9999 in local time
+        raise ValueError(f"{value.strip()!r} is outside the years 1 to 9999 in local time.") from None
 
 
 def is_older(row: dict, cutoff: datetime) -> bool:

@@ -183,6 +183,9 @@ Jev never removes a heuristic gate on any tab kind.
 - **Always gated** (`extensions/chromecli/gate.js`, spec 6.7): `eval`; clicks on submit-like elements (`button`
   default-submit in a form, `input[type=submit|image]`, or name/value/title matching
   `\b(buy|purchase|order|pay|checkout|send|post|publish|tweet|reply|submit|confirm|delete|remove|destroy|transfer|withdraw|subscribe|unsubscribe|accept|agree|approve|sign ?out|log ?out|merge|deploy|install|uninstall|authori[sz]e)\b`; install/uninstall/authorize are new in 0.11.3);
+  a click on a `<label>`, or on plain content inside one, is gated as a click on the control the label also clicks
+  (the element's `activates`; a styled `<label for=pay>` over a hidden submit submits the form, and the confirm
+  window shows it as *Also clicks*);
   Enter (or Space) on such a button; `press Enter` in a form field; `type`/`fill`/`select` into `input[type=password]`,
   `autocomplete` `cc-*` / `current-password` / `new-password` / `one-time-code`, or name/id/label matching
   `card|cvv|cvc|iban|routing|ssn`; `open`/`navigate` to an origin outside `read_allow ∪ act_allow` (since 0.9.1 a
@@ -660,11 +663,12 @@ frame_act_allow = []      # 0.11.3: exact https origins whose iframes can be act
 ```
 
 Patterns: `host`, `*.host` (includes the bare host), `scheme://host[:port]`, `host/path` (path prefix),
-`path:/prefix` (any origin whose path contains `/prefix`). A known key with an invalid value: every op but `status` exits 7
+`path:/prefix` (any origin whose path contains `/prefix`). A URL's host matches with or without one trailing dot
+(`www.chase.com.` is `www.chase.com`). A known key with an invalid value: every op but `status` exits 7
 (`configError` in `status`). An unknown key (0.11.4; a typo, or a key from a newer chromecli) is ignored with a warning:
 the host logs `event=config_warning` and `status` lists it in `configWarnings` (key names only, never values).
 Ignoring is always safe: the policy is built from the known keys only, so an unknown key never loosens anything.
-Env: `CHROMECLI_TIMEOUT` (seconds, default 30), `CHROMECLI_FORMAT`, `WEBCLI_HOME`.
+Env: `CHROMECLI_TIMEOUT` (seconds, default 30; anything but a positive number uses the default), `CHROMECLI_FORMAT`, `WEBCLI_HOME`.
 
 ## Exit codes
 
@@ -695,6 +699,11 @@ Hosts before 0.11.4 also refused unknown `[chromecli]` keys (exit 7 "has unknown
 iframes, a closed shadow root, a canvas), and `animated.html` (0.12.1: something changes every frame, for recording
 and throttling checks; `window.__stats` counts rAF, timer ticks, visibility changes). For E2E: `python3 -m http.server 8765 -d tests/fixtures/chromecli`
 and `act_allow = ["http://127.0.0.1:8765"]` (Accept it in the popup).
+
+The pytest files that load these pages (and the Messages and LinkedIn DOM fixtures) get their browser from
+`tests/browsers.py`: Playwright's own Chromium, else a cached headless shell, never your Chrome. They skip when
+neither is there. To run them on your installed Chrome instead, set `WEBCLI_TEST_CHROME_CHANNEL=chrome`. Playwright
+starts it headless with a throwaway profile.
 
 `extensions/chromecli/test/fixtures/grant-batch-as-described.json` (0.11.5): quote (b) above, the vague quote (a)
 "i approve screencast clicks", the As Described tab (URL, title), the 7 grants and Jev answers in the TypeSafe

@@ -13,6 +13,7 @@ fetchCurrentRunningSpend / billingConfiguration).
 from __future__ import annotations
 
 import html
+import math
 import re
 from datetime import date, datetime, timezone
 from typing import Any
@@ -59,12 +60,14 @@ _RAW_METRICS = (
 
 
 def _num(value: Any) -> float | None:
+    """A finite number, else None. float() takes "NaN" and "Infinity", which int() and JSON output can't."""
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        n = float(value)
     except (TypeError, ValueError):
         return None
+    return n if math.isfinite(n) else None
 
 
 def _int(value: Any) -> int | None:
@@ -104,7 +107,12 @@ def elements(data: Any) -> list[dict]:
 
 def ms_to_dt(ms: Any) -> datetime | None:
     n = _num(ms)
-    return None if n is None else datetime.fromtimestamp(n / 1000, tz=timezone.utc)
+    if n is None:
+        return None
+    try:
+        return datetime.fromtimestamp(n / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):  # out of datetime's range: no time
+        return None
 
 
 def campaign_start(campaign: dict) -> datetime | None:

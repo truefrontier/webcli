@@ -1,6 +1,6 @@
 """youtube.com's request policy for the core guard: endpoints.py's tables (ytcli's rules), plus the one write scope.
 
-POLICY is read-only. write_policy(scope) is `playlist create --confirm`'s alone: on top of the reads it passes ONE
+POLICY is read-only. HISTORY is `history`'s: POLICY plus My Activity's batchexecute. write_policy(scope) is `playlist create --confirm`'s alone: on top of the reads it passes ONE
 POST /youtubei/v1/playlist/create whose JSON body is exactly the scope's title, privacy, and video list, only while
 the command's page holds the core guard's send permission and fetch.create_playlist has armed the scope around its
 own call. The first such write uses the scope up, so a second is refused.
@@ -80,18 +80,21 @@ def write_allowed(method: str, url: str, body: str | None, scope: WriteScope | N
     return True
 
 
-def request_allowed(method: str, url: str, body: str | None = None, *, scope: WriteScope | None = None) -> bool:
+def request_allowed(method: str, url: str, body: str | None = None, *, scope: WriteScope | None = None,
+                    myactivity: bool = False) -> bool:
     """The policy. Fails closed: anything not listed in endpoints.py is aborted.
 
     - google.allowed: GET/HEAD on youtube.com, its image hosts, My Activity, and Google's sign-in and static hosts
       (no sign-out on either), and Google's cookie rotation.
-    - POST the three youtubei reads (READ_POSTS) on www.youtube.com, and My Activity's batchexecute.
+    - POST the three youtubei reads (READ_POSTS) on www.youtube.com; and, with myactivity (`history`'s page alone),
+      My Activity's batchexecute.
     - With a scope (`playlist create --confirm` only), the one playlist/create write_allowed() accepts.
     Everything else is aborted: telemetry, the player, likes, subscriptions, comments, other playlist edits, history
     pause/clear, and every unknown POST.
 
-    Limits: My Activity's batchexecute is allowed for any rpcid, as in ytcli: its read rpcids aren't mapped yet,
-    and webcli youtube only scrolls that page (a delete there needs clicks and a confirmation it never makes).
+    Limits: on `history`'s page, My Activity's batchexecute is allowed for any rpcid, as in ytcli: its read rpcids
+    aren't mapped yet, and history only scrolls that page (a delete there needs clicks and a confirmation it never
+    makes). Every other command's page refuses it.
     Playwright routes only the first URL of a redirect chain, so a redirect Google's server chooses for an allowed
     request is followed unchecked.
     """
@@ -102,7 +105,7 @@ def request_allowed(method: str, url: str, body: str | None = None, *, scope: Wr
     if method == "POST" and parts.scheme == "https" and parts.port in (None, 443):
         if (parts.hostname, parts.path) in READ_POSTS:
             return True
-        if parts.hostname == MYACTIVITY_HOST and MYACTIVITY_BATCH.fullmatch(parts.path):
+        if myactivity and parts.hostname == MYACTIVITY_HOST and MYACTIVITY_BATCH.fullmatch(parts.path):
             return True
     return write_allowed(method, url, body, scope)
 
@@ -132,3 +135,5 @@ def write_policy(scope: WriteScope | None) -> Policy:
 
 
 POLICY = write_policy(None)
+HISTORY = Policy("youtube", lambda request, _state: request_allowed(request.method, request.url, myactivity=True),
+                 _describe)

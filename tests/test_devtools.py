@@ -4,7 +4,9 @@ runs against a fake page)."""
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+import py_compile
 import sys
 from pathlib import Path
 
@@ -215,6 +217,25 @@ def test_lint_catches_imports_from_webcli_internals(workdir):
         "imports: webcli_tool_toyhttp/parse.py:7: imports webcli.sites; a tool may import only webcli.adapter from webcli"]
 
 
+def test_lint_catches_compiled_code_a_reviewer_cant_read(workdir):
+    folder = make()
+    package = folder / "webcli_tool_toyhttp"
+    py_compile.compile(str(package / "__init__.py"), doraise=True)  # Python's own cache: checked against the source
+    unchecked = Path(importlib.util.cache_from_source(str(package / "parse.py")))  # runs instead of parse.py
+    py_compile.compile(str(package / "parse.py"), cfile=str(unchecked), doraise=True,
+                       invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+    (package / "helper.pyc").write_bytes(b"\x00" * 16)  # sourceless: `from . import helper` runs it
+    (package / "fast.abi3.so").write_bytes(b"\x7fELF")  # a native module
+    code, findings = lint("toyhttp")
+    assert code == 7
+    why = "compiled code a reviewer can't read; a tool ships source only"
+    assert [e for e in errors(findings) if e.startswith("compiled")] == [
+        f"compiled: {unchecked.relative_to(folder).as_posix()}: {why} (Python runs this cache without checking it "
+        "against the source)",
+        f"compiled: webcli_tool_toyhttp/fast.abi3.so: {why}",
+        f"compiled: webcli_tool_toyhttp/helper.pyc: {why}"]
+
+
 def test_lint_catches_secrets_and_personal_details_in_fixtures(workdir):
     folder = make()
     (folder / "tests" / "fixtures" / "leak.json").write_text(json.dumps({
@@ -238,6 +259,20 @@ def test_lint_catches_an_adapter_that_disagrees_with_its_manifest(workdir):
     assert code == 7
     assert errors(findings) == ["adapter: Its ADAPTER doesn't match webcli-tool.toml: hosts: the adapter says "
                                 "['httpbin.org'], the manifest ['cdn.httpbin.org', 'httpbin.org']"]
+
+
+@pytest.mark.parametrize("name", ["google", "meta", "none"])
+def test_lint_refuses_a_tool_named_for_a_provider_or_none(workdir, name):
+    # `new` refuses these names, so make toyhttp and rename it throughout: a tool that is right in every other way.
+    # The library's CI lints tools/<name>/ by path. Lint has to refuse it there: core would never load it.
+    folder = make()
+    (folder / "webcli_tool_toyhttp").rename(folder / f"webcli_tool_{name}")
+    for path in [p for p in folder.rglob("*") if p.is_file()]:
+        path.write_text(path.read_text().replace("toyhttp", name))
+    result = run("lint", str(folder), "--format", "json")
+    assert result.exit_code == 7
+    assert errors(out(result)["findings"]) == [
+        f"manifest: name: {name!r} is a built-in site, provider, or webcli command; pick another name"]
 
 
 def test_lint_lists_every_manifest_problem(workdir):

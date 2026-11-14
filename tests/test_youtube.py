@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from webcli.apps import webcli as webcli_app
-from webcli.core import daemon
+from webcli.core import daemon, guard
 from webcli.core.errors import AuthRequired, UsageError
 from webcli.sites.youtube import fetch
 from webcli.sites.youtube.endpoints import MYACTIVITY_URL, SIGN_IN_URL
@@ -42,7 +42,7 @@ def load(name: str) -> dict:
     ("POST", "https://www.youtube.com/youtubei/v1/browse?key=k&prettyPrint=false", True),
     ("POST", "https://www.youtube.com/youtubei/v1/account/account_menu?key=k", True),
     ("POST", "https://www.youtube.com/youtubei/v1/account/accounts_list?key=k", True),
-    ("POST", "https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x", True),
+    ("POST", "https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x", False),  # history's alone
     ("POST", "https://accounts.google.com/RotateCookies", True),
     ("POST", "https://www.youtube.com/youtubei/v1/browse/edit_playlist", False),
     ("POST", "https://www.youtube.com/youtubei/v1/playlist/create?key=k", False),
@@ -67,6 +67,12 @@ def load(name: str) -> dict:
 ])
 def test_request_allowed(method, url, allowed):
     assert request_allowed(method, url) is allowed
+
+
+def test_sign_out_is_blocked_on_the_bare_youtube_host_too():
+    # youtube.com/logout redirects to www.youtube.com/logout, and the guard never sees a redirect's hops.
+    assert request_allowed("GET", "https://youtube.com/logout") is False
+    assert request_allowed("GET", "https://youtube.com/feed/history") is True
 
 
 # The one write: playlist/create, bound to its scope.
@@ -249,6 +255,21 @@ def test_auto_prefers_my_activity_and_falls_back_when_it_is_signed_out(monkeypat
                                "precision)."]
 
 
+MY_ACTIVITY_RPC = SimpleNamespace(method="POST", post_data="f.req=x",
+                                  url="https://myactivity.google.com/_/FootprintsMyactivityUi/data/batchexecute?rpcids=x")
+
+
+def test_only_history_may_post_to_my_activity(monkeypatch):
+    # My Activity's read rpcids aren't mapped, so its batchexecute passes for any rpcid (a delete included). Only
+    # `history` reads My Activity, so only its page gets that; every other command's page refuses it.
+    page = install(monkeypatch, youtube_page(signed_in_already=True, html=DOM, text="Today"))
+    asyncio.run(fetch.history("myactivity", 2, None))
+    assert page.policy.allowed(MY_ACTIVITY_RPC, guard.state) is True
+    assert fetch.POLICY.allowed(MY_ACTIVITY_RPC, guard.state) is False
+    scope = WriteScope(title="t", privacy="PRIVATE", video_ids=IDS, armed=True)
+    assert write_policy(scope).allowed(MY_ACTIVITY_RPC, SimpleNamespace(send=True)) is False
+
+
 def test_since_stops_at_the_cutoff(monkeypatch):
     install(monkeypatch, youtube_page(signed_in_already=True))
     rows = asyncio.run(fetch.history("youtube", None, "2000-01-01T00:00:00+00:00"))["rows"]
@@ -335,3 +356,34 @@ def test_playlist_create_confirm_exits_0_or_8(calls):
     calls.answer["confirmed"] = False
     result = run("playlist", "create", "--title", "Pieces", "--yes", *IDS)
     assert result.exit_code == 8 and json.loads(result.stderr.splitlines()[-1])["error"] == "sent_unverified"
+
+
+def table(*args) -> str:
+    """A command's table, as a terminal would show it (wide enough that no header wraps).
+
+    LINES is set with COLUMNS: when TERM=dumb, Rich ignores COLUMNS unless the height is set too,
+    and the compact feed URL is then cut before the video id.
+    """
+    return CliRunner().invoke(webcli_app.build(), ["youtube", *args, "--format", "table"],
+                              env={"COLUMNS": "200", "LINES": "40"}).stdout
+
+
+def test_compact_narrows_the_history_table(calls):
+    full, compact = table("history"), table("history", "--compact")
+    assert "duration" in full and "short" in full
+    assert "duration" not in compact and "short" not in compact
+    assert "Me at the zoo" in compact and "jNQXAC9IVRw" in compact and "2026-10-14 22:46" in compact
+
+
+def test_compact_narrows_the_feed_tables(monkeypatch):
+    video = {"source": "home", "id": "jNQXAC9IVRw", "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+             "title": "Me at the zoo", "author": "jawed", "publishedText": "19 years ago", "metrics": {"views": 1234}}
+
+    async def call(ident, site, op, *args, **kwargs):
+        return [video]
+
+    monkeypatch.setattr(daemon, "call", call)
+    full, compact = table("home"), table("home", "--compact")
+    assert "views" in full and "1,234" in full and "watch?v=" not in full
+    assert "views" not in compact and "1,234" not in compact
+    assert "19 years ago" in compact and "jawed" in compact and "watch?v=jNQXAC9IVRw" in compact

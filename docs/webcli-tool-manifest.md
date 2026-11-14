@@ -39,7 +39,7 @@ requests = ["POST notes.example.com/graphql op=AddLabel (mutation)"]
 
 | Field | Required | Rule |
 |---|---|---|
-| `name` | yes | 2–32 lowercase letters and digits, starting with a letter. No hyphens: the name is also the tool's identity, `<name>:default`. It can't be a built-in site (`gmail`, `loom`, ...) or a `webcli` command (`sites`, `feed`, `identity`, `doctor`, `serve`, `agent-help`, `new`, `dev`, `test`, `lint`, `tools`, `submit`). |
+| `name` | yes | 2–32 lowercase letters and digits, starting with a letter. No hyphens: the name is also the tool's identity, `<name>:default`. It can't be a built-in site (`gmail`, `loom`, ...), the provider a built-in signs in as (`google`, `meta`), `none`, or a `webcli` command (`sites`, `feed`, `identity`, `doctor`, `serve`, `agent-help`, `new`, `dev`, `test`, `lint`, `tools`, `submit`). webcli won't load a tool by any of these names, so `webcli lint`, `webcli new`, and `webcli tools install` refuse them too. |
 | `version` | yes | `X.Y.Z`, like `0.1.0`. A pre-release adds `a`, `b`, or `rc` and a number: `0.2.0rc1`. |
 | `adapter_api` | yes | The adapter API the tool was built for. This webcli supports `1`. |
 | `requires_webcli` | no | A version range for webcli, like `">=1.0.0rc1,<2"`. Note that `>=1.0` leaves out `1.0.0rc1`, because a release candidate comes before its release. |
