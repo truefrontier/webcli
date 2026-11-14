@@ -146,6 +146,19 @@ export function pageAction(spec) {
     "[contenteditable=true], [role=button], [role=link], [role=checkbox], [role=radio], [role=tab], [role=menuitem], " +
     "[role=switch], [role=combobox], [role=textbox], [role=option]";
 
+  // HTML's label activation: a click on a <label>, or on plain content inside one, also clicks the label's control.
+  // So <label for="pay">Continue</label> over a hidden <input type=submit id=pay> submits the form. That control is
+  // described as `activates`, so the gate, Jev's fallback, the confirm window and the fingerprint see it too. A link or
+  // field inside the label keeps its own click (Chrome forwards nothing then), so it reports none.
+  const OWN_CLICK = "a[href], button, input:not([type=hidden]), select, textarea";
+  function labelControl(node) {
+    for (let n = node; n && n.nodeType === 1; n = up(n)) {
+      if (n.tagName === "LABEL") { const c = n.control; return c && c !== node && !c.contains(node) ? c : null; }
+      if (n.matches(OWN_CLICK)) return null;
+    }
+    return null;
+  }
+
   function retarget(el) {
     if (!el.shadowRoot || el.matches(INTERACTIVE)) return el;
     const inner = Array.from(el.shadowRoot.querySelectorAll(INTERACTIVE)).filter((x) => !hidden(x));
@@ -216,8 +229,10 @@ export function pageAction(spec) {
   const resolved = ct.via ? { via: ct.via, from: brief(original) } : null;
   if (!el && spec.op !== "press") return fail("element_not_found", "No element.");
   const element = el ? describe(el, ct.via ? null : r.ref) : null;
+  const control = el ? labelControl(el) : null;
+  if (control) element.activates = describe(control);
   const rx = resolved ? { resolved } : {};
-  const fp = element ? fingerprint(element) : "focused:none";
+  const fp = element ? fingerprint(element) + (control ? "\u0002" + fingerprint(element.activates) : "") : "focused:none";
   if (el) {
     if (hidden(el)) return fail("element_not_found", "The element isn't visible.", { element, ...rx });
     if (el.disabled) return fail("element_not_found", "The element is disabled.", { element, ...rx });

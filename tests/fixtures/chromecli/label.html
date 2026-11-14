@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Label click targets</title>
+<style>body{font:14px sans-serif;margin:40px} .row{margin:20px 0} .btn{display:inline-block;padding:6px 12px;border:1px solid #888;cursor:pointer}</style></head>
+<body>
+<form id="checkout" action="/checkout" onsubmit="event.preventDefault(); log.push('submit:' + (event.submitter ? event.submitter.id : '?'))">
+  <!-- A common pattern: the real submit control is hidden, and a styled label stands in for it. -->
+  <input id="place" type="submit" value="Place order" hidden>
+  <div class="row"><label id="place-label" for="place" class="btn">Continue</label></div>
+  <div class="row"><label id="icon-label" for="place"><svg id="label-icon" width="16" height="16"><rect width="16" height="16"/></svg></label></div>
+  <div class="row"><label id="wrap-label"><span id="wrap-span" class="btn">Next step</span> <button id="wrapped" type="submit" hidden>Pay now</button></label></div>
+  <div class="row"><label id="tips-label"><input id="tips" type="checkbox" name="tips"> Email me tips <a id="tips-link" href="#tips">read more</a></label></div>
+</form>
+<div class="row"><label id="outside-label" for="outside-pay" class="btn">Go</label></div>
+<button id="outside-pay" form="checkout" hidden>Pay</button>
+<div class="row"><label id="plain-label" for="plain-btn" class="btn">Plain</label> <button id="plain-btn" type="button">Plain</button></div>
+<script>window.log = [];</script>
+</body></html>
