@@ -90,6 +90,8 @@ webcli 1.0.0rc1 predates built-in entries and refuses any index that has them. I
 
 A tool holds regular files only. A symlink or other special file fails the install.
 
+A tool holds source only, too. A `__pycache__/` folder, or any `.pyc`, `.pyo`, `.pyd`, or `.so` file, fails the install. Python runs those without the source a reviewer reads, and an unchecked-hash `.pyc` even runs in place of the `.py` file next to it. The `sha256` pin covers them, so the pin alone wouldn't catch one.
+
 webcli computes the hash for you:
 
 ```
@@ -106,7 +108,7 @@ python -m webcli.core.index_client sha256 /tmp/export/tools/<name>
 ## What `webcli tools` does with it
 
 - **Fetch.** It reads `https://raw.githubusercontent.com/truefrontier/webcli-tools/main/index.json` and saves it as `~/.webcli/tools/index-cache.json`. An index with the wrong shape is refused, and the old cache stays. Offline, `search`, `info`, and `install` use the cache and warn you. `update` needs a fresh index.
-- **Download.** It fetches the repo tarball at the pinned commit (`https://codeload.github.com/truefrontier/webcli-tools/tar.gz/<commit>`) and takes only the tool's folder, regular files only. It unpacks into a dot-named staging folder that core's loader skips.
+- **Download.** It fetches the repo tarball at the pinned commit (`https://codeload.github.com/truefrontier/webcli-tools/tar.gz/<commit>`) and takes only the tool's folder: regular files only, and no compiled code. It unpacks into a dot-named staging folder that core's loader skips.
 - **Check.** The files must match `sha256`. The manifest must be valid, and its name and version must match the index. Its `requires_webcli` range must include the running webcli. The tool can't be revoked, and its name can't belong to a built-in.
 - **Built-ins.** `search` lists them, marked installed `builtin` when this webcli ships them. `info` shows the catalog entry and downloads nothing. `install` on one does nothing and exits 0; if this webcli doesn't ship it yet, it exits 2 and says to update webcli. `update`, `remove`, `disable`, and `enable` on one exit 2. A community entry that uses a built-in's name is refused.
 - **Ask.** It shows the manifest: hosts, identity, and every command that writes or sends to people. Then it asks before it installs, unless you pass `--yes`.
