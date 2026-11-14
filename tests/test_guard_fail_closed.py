@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib
 import json
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
 
+from webcli import sites
 from webcli.core import guard
 from webcli.sites.chatgpt.guard import POLICY as CHATGPT
 from webcli.sites.gemini.guard import POLICY as GEMINI
@@ -186,3 +189,16 @@ def test_a_page_left_over_from_an_earlier_command_inherits_nothing():
     asyncio.run(stale(old))
     asyncio.run(fresh(new))
     assert (old.outcome, new.outcome) == ("blockedbyclient", "continue")
+
+
+GUARDED = sorted(p.parent.name for p in Path(sites.__path__[0]).glob("*/guard.py"))
+
+
+@pytest.mark.parametrize("site", GUARDED)
+def test_only_gemini_and_muse_let_the_page_get_an_unlisted_host(site):
+    # docs/reference.md ("How it stays hidden and private") says so. If this changes, change that line too.
+    module = importlib.import_module(f"webcli.sites.{site}.guard")
+    check = getattr(module, "request_allowed", None) or module.read_allowed  # gsc names its read check
+    wide = site in ("gemini", "muse")
+    assert check("GET", "https://attacker.example/x.png?d=1") is wide
+    assert check("GET", "http://attacker.example/x.png") is wide
