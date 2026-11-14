@@ -100,6 +100,24 @@ def test_ids_from_keys_and_urls():
         parse.photo_id("hello")
 
 
+@pytest.mark.parametrize("bad", ["AF1Qip", "AF1QipX/../../x", "AF1QipX/y", "AF1Qip?x=1", "AF1Qip key"])
+def test_a_bare_id_is_a_whole_key(bad):
+    """A bare id only had to start with AF1Qip. Ported from google-photos-cli's overflow/gphotostests (2a975b4)."""
+    with pytest.raises(ValueError, match="expected a photo id or URL"):
+        parse.photo_id(bad)
+    with pytest.raises(ValueError, match="expected an album id or URL"):
+        parse.album_id(bad)
+
+
+def test_the_not_found_check_matches_a_whole_path_segment(monkeypatch):
+    """Photos showing another photo (its path only contains the asked-for id) is not that photo."""
+    shown = {"title": "Photo", "aria": "Photo - Landscape - Oct 3, 2026", "image": True,
+             "url": f"https://photos.google.com/photo/{KEY}"}
+    install(monkeypatch, ScriptedPage(answers={"labelledSel": shown}))
+    with pytest.raises(NotFound, match=f"No photo {KEY[:-2]}"):
+        asyncio.run(fetch.info(KEY[:-2]))
+
+
 def test_labels_titles_and_download_names():
     assert parse.described("Photo - Portrait - Nov 10, 2016, 11:22:34 AM") == {
         "kind": "Photo", "taken_at": "Nov 10, 2016, 11:22:34 AM"}
@@ -185,7 +203,31 @@ def test_download_falls_back_to_the_still_original_and_never_trusts_the_name(mon
                f"{BASE}=d": APIResponse(200, b"jpeg!", {"content-type": "image/jpeg",
                                                         "content-disposition": 'filename="../../evil.jpg"'})}))
     saved = asyncio.run(fetch.download(KEY, str(tmp_path)))
-    assert saved["path"] == str(tmp_path / ".._.._evil.jpg") and (tmp_path / ".._.._evil.jpg").read_bytes() == b"jpeg!"
+    assert saved["path"] == str(tmp_path / "_.._evil.jpg") and (tmp_path / "_.._evil.jpg").read_bytes() == b"jpeg!"
+
+
+def test_download_never_replaces_a_dot_file(monkeypatch, tmp_path):
+    (tmp_path / ".zshrc").write_text("keep me")
+    install(monkeypatch, photo_page(
+        requests={f"https://photos.google.com/photo/{KEY}": [f"{BASE}=w800"]},
+        files={f"{BASE}=dv": APIResponse(200, b"poster", {"content-type": "image/jpeg"}),
+               f"{BASE}=d": APIResponse(200, b"jpeg!", {"content-type": "image/jpeg",
+                                                        "content-disposition": 'filename=".zshrc"'})}))
+    saved = asyncio.run(fetch.download(KEY, str(tmp_path)))
+    assert (tmp_path / ".zshrc").read_text() == "keep me"
+    assert saved["path"] == str(tmp_path / "zshrc") and (tmp_path / "zshrc").read_bytes() == b"jpeg!"
+
+
+def test_download_never_saves_an_html_page(monkeypatch, tmp_path):
+    """A 200 text/html answer is a sign-in or error page, never the original, even when it's as big as a video.
+    Ported from google-photos-cli's overflow/gphotostests (2a975b4)."""
+    install(monkeypatch, photo_page(
+        requests={f"https://photos.google.com/photo/{KEY}": [f"{BASE}=w800"]},
+        files={f"{BASE}=dv": APIResponse(200, b"<html>" + b" " * 60_000, {"content-type": "text/html; charset=utf-8"}),
+               f"{BASE}=d": APIResponse(200, b"<html>", {"content-type": "text/html"})}))
+    with pytest.raises(RuntimeError, match=f"^Google Photos answered no original for {KEY}.$"):
+        asyncio.run(fetch.download(KEY, str(tmp_path)))
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_poster_is_never_the_original_and_a_refusal_is_sign_in(monkeypatch, tmp_path):

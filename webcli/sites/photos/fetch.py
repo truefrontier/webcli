@@ -126,7 +126,7 @@ async def _photo_page(page: "Page", media_id: str) -> dict:
     await google.open_app(page, PHOTO_URL.format(id=quote(media_id, safe="")))
     await page.wait_for_timeout(INFO_MS)
     shown = await page.evaluate(INFO_JS, [sel.PHOTO_IMAGE, sel.LABELLED])
-    if media_id not in urlsplit(shown["url"]).path or not (shown["aria"] or shown["image"]):
+    if media_id not in urlsplit(shown["url"]).path.split("/") or not (shown["aria"] or shown["image"]):
         raise NotFound(f"No photo {media_id}.", hint="See `webcli photos list --id-only`.")
     return shown
 
@@ -141,8 +141,9 @@ async def info(media_id: str, *, headed: bool = False) -> dict:
 
 
 async def download(media_id: str, out_dir: str, *, headed: bool = False) -> dict:
-    """Save the original photo or video into `out_dir` (absolute) under the server's file name, else
-    <id>.<ext>; replaces a file of that name. {id, path, bytes, mime}."""
+    """Save the original photo or video into `out_dir` (absolute) under the server's file name made safe
+    (google.safe_name: never hidden, no folders), else <id>.<ext>; replaces a file of that name.
+    {id, path, bytes, mime}."""
     media: list[str] = []
 
     def on_request(request) -> None:
@@ -167,7 +168,10 @@ async def download(media_id: str, out_dir: str, *, headed: bool = False) -> dict
                                                             what="the original")
             if status in (401, 403):
                 raise AuthRequired(f"Google Photos refused the original of {media_id} (HTTP {status}).")
-            video = "video/" in headers.get("content-type", "") or len(body) > VIDEO_MIN_BYTES
+            ctype = headers.get("content-type", "").lower()
+            if "text/html" in ctype:  # a sign-in or error page, never the original
+                continue
+            video = "video/" in ctype or len(body) > VIDEO_MIN_BYTES
             if status == 200 and body and (suffix == "=d" or video):  # a small still from =dv is only a poster
                 chosen = (headers, body)
                 break

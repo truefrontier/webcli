@@ -64,7 +64,11 @@ def matches(row: dict, query: str) -> bool:
 
 
 def find(rows: list[dict], note_id: str) -> dict | None:
-    """The note whose id or server id is `note_id`, else the first whose id contains it."""
+    """The note whose id or server id is `note_id`, else the first whose id contains it. A blank id is no note (every
+    id contains "")."""
+    note_id = note_id.strip()
+    if not note_id:
+        return None
     exact = next((r for r in rows if note_id in (r["id"], r["server_id"])), None)
     return exact or next((r for r in rows if note_id in r["id"]), None)
 

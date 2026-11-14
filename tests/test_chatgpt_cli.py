@@ -137,6 +137,20 @@ def test_a_cap_notice_as_the_answer_exits_6_with_resets_at(monkeypatch):
     assert error["resets_at"].endswith(("-05:00", "-06:00"))
 
 
+def test_an_answer_that_talks_about_limits_prints_and_exits_0(monkeypatch):
+    answer = "A rate limit caps how many requests a client may send per minute; HTTP 429 means Too Many Requests."
+    stub(monkeypatch, "ask", {**ANSWER, "answer": answer})
+    result = run("ask", "What is a rate limit?", "--format", "text")
+    assert (result.exit_code, result.stdout) == (0, answer + "\n")
+
+
+def test_an_answer_that_starts_with_an_error_phrase_prints_and_exits_0(monkeypatch):
+    answer = "An error occurred. That's the generic message Windows shows when an installer fails."
+    stub(monkeypatch, "ask", {**ANSWER, "answer": answer})
+    result = run("ask", "What does this installer message mean?", "--format", "text")
+    assert (result.exit_code, result.stdout) == (0, answer + "\n")
+
+
 def test_a_refusal_raised_by_fetch_exits_6(monkeypatch):
     stub(monkeypatch, "ask", cli.fetch.RateLimited("You've reached our limit of messages per hour.", sent=True,
                                                    resets_at="2026-10-18T15:00:00-05:00"))
@@ -168,6 +182,21 @@ def test_a_challenge_with_headed_exits_4_as_cloudflare_challenge(monkeypatch):
     result = run("models", "--headed")
     assert result.exit_code == 4 and json.loads(result.stderr)["error"] == "cloudflare_challenge"
     assert calls[0][1]["headed"] is True
+
+
+@pytest.mark.parametrize("command", [("models",), ("ask", "q")])
+def test_a_challenge_the_api_sees_with_headed_is_still_cloudflare_challenge(monkeypatch, command):
+    """fetch.api_json and session_summary raise Challenged("page") when ChatGPT's API answers 403 cf-mitigated. In a
+    --headed run that is the visible window's check, not hidden Chrome's: the hint must not say no window is shown.
+    Ported from chatgpt-web-cli's overflow/chatgptwebclitests (68bd84c)."""
+    op = "models" if command == ("models",) else "ask"
+    stub(monkeypatch, op, Challenged("page"))
+    result = run(*command, "--headed")
+    error = json.loads(result.stderr)
+    assert (result.exit_code, error["error"]) == (4, "cloudflare_challenge")
+    assert "No window is ever shown" not in error["hint"]
+    result = run(*command)  # the same answer in hidden Chrome is hidden_browser_blocked
+    assert (result.exit_code, json.loads(result.stderr)["error"]) == (4, "hidden_browser_blocked")
 
 
 def test_image_out_saves_and_reports_original(monkeypatch, tmp_path):

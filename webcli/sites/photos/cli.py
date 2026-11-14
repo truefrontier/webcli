@@ -34,8 +34,9 @@ NOTES = [
     "kind and taken_at come from the photo's label (\"Photo - Portrait - Nov 10, 2016, 11:22:34 AM\"), as Photos "
     "words it.",
     "`download` saves the ORIGINAL (a video's =dv original, else the photo's =d original) into -o DIR (default: the "
-    "current directory, created if needed) under Google's file name, else <id>.<ext>. It replaces a file of that "
-    "name; the file is mode 0600.",
+    "current directory, created if needed) under Google's file name, else <id>.<ext>. The name is never hidden "
+    "(leading dots and spaces are dropped, so a shared file named .zshrc saves as zshrc), and anything but letters, "
+    "digits, space, . - _ becomes _. It replaces a file of that name; the file is mode 0600.",
     "No photos, albums, or results exits 3; when the page should have had some, the error names what the request "
     "guard blocked.",
     "Not signed in exits 4: a person runs `webcli identity login google:default`.",

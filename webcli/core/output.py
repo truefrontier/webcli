@@ -350,15 +350,17 @@ def die_rate_limited(message: str, resets: str | None, where: str, *, site: str)
         hint=f"Rate limited {until}: don't retry before then, or try another --model. {where}")
 
 
-def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: str | None = None) -> None:
+def fail(exc: BaseException, *, site: str, login: str, chats: str, challenge: str | None = None,
+         headed: bool = False) -> None:
     """Exit with the code for `exc` (the errors.py table). `site` names it in messages ("Gemini"), `login` is the
     sign-in hint, `chats` the command that lists chats (for "check before resending"), `challenge` the Cloudflare
-    hint."""
+    hint. `headed`: the command ran in a visible window, so any Cloudflare check (even one only the site's API
+    reported, mode "page") was that window's."""
     if isinstance(exc, SystemExit):
         raise exc
     if isinstance(exc, Challenged):
         hint = challenge or login
-        if exc.mode == "visible":
+        if headed or exc.mode == "visible":
             die(str(exc), EXIT_AUTH, error="cloudflare_challenge", hint=hint)
         die(f"Cloudflare needs a visible check: {login}", EXIT_AUTH, error="hidden_browser_blocked",
             hint=f"{hint} No window is ever shown for other commands.")
