@@ -41,7 +41,7 @@ def test_explicit_beats_env_beats_config_beats_default(monkeypatch):
 
 
 @pytest.mark.parametrize("bad", ["google", "Google:default", "google:", ":x", "google:../x", "google:a/b",
-                                 "goo-gle:x", "google:a b"])
+                                 "goo-gle:x", "google:a b", "google:default\n"])
 def test_bad_ids_are_config_errors(bad):
     with pytest.raises(ConfigError):
         Identity(bad)
@@ -92,6 +92,14 @@ def test_identity_list_and_login_site():
     assert identities.login_site(Identity("amazon:default"), all_sites).name == "amazon"
     with pytest.raises(ConfigError):
         identities.login_site(Identity("slack:default"), all_sites)
+
+
+def test_config_strings_with_control_characters_round_trip():
+    """TOML allows no raw control character but tab in a string or quoted key: they're escaped, so what was saved
+    loads back (a folder name with one, say, in dev.toml) and a key can't start a new line."""
+    odd = "a\rb\x00c\x1bd\x7fe\tf\ng\\h\"i"
+    data = {"path": odd, "list": [odd], "t": {odd: odd}, 'x\n[injected]\ny = "1"': 1, "k\n": 2}
+    assert config.tomllib.loads(config.dumps(data)) == data
 
 
 def test_config_round_trips_and_is_private():
