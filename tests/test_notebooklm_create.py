@@ -156,6 +156,16 @@ def test_uploads_only_on_the_app_hosts_upload_path_and_within_budget():
     assert guard.request_allowed("POST", f"https://notebook.google.com{ep.UPLOAD_PATH}", upload=True)
 
 
+def test_only_an_upload_post_spends_the_upload_budget():
+    # A GET to the upload path passes as an ordinary page load. It must not use up the slot the real upload needs.
+    policy = guard.write_policy({REGISTER: 1, ep.UPLOAD: 1})
+    ok = lambda *args: policy.allowed(request(*args), guard.Guard())  # noqa: E731
+    assert ok("GET", UPLOAD_URL) and ok("HEAD", UPLOAD_URL)
+    assert ok("GET", f"https://www.google.com{ep.UPLOAD_PATH}")  # another host's page with the same path
+    assert ok("POST", UPLOAD_URL + "?authuser=0")  # the one upload still goes out
+    assert not ok("POST", UPLOAD_URL + "?upload_id=FAKE")  # and the budget still counts
+
+
 def test_a_smuggled_write_under_a_read_label_is_still_blocked():
     policy = guard.write_policy({CREATE: 1})
     assert not policy.allowed(request("POST", *batch("WWINqb", label=CREATE)), guard.Guard())
