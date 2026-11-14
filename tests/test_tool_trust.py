@@ -226,6 +226,24 @@ def test_doctor_reports_community_and_skipped_tools(tools):
     assert [s["name"] for s in report["tools"]["skipped"]] == ["gmail"]
 
 
+def test_doctor_says_how_old_the_revoked_list_is(tools):
+    """Revocations arrive only when a `webcli tools` command refreshes index-cache.json, so doctor says how old it is,
+    and calls it stale once a community tool is installed and the list is missing or over a week old."""
+    def revocations():
+        return json.loads(run("doctor", "--no-browser").stdout)["tools"]["revocations"]
+
+    assert revocations() == {"cache": str(tools / "index-cache.json"), "ageDays": None, "stale": False, "hint": None}
+    make_tool(tools)
+    sites.reload()  # the first doctor run cached a registry with no tools
+    assert revocations()["stale"] is True and "webcli tools search" in revocations()["hint"]
+    cache = tools / "index-cache.json"
+    cache.write_text(json.dumps({"tools": [], "revoked": []}))
+    assert revocations()["ageDays"] == 0.0 and revocations()["stale"] is False
+    eight_days_ago = cache.stat().st_mtime - 8 * 86400
+    os.utime(cache, (eight_days_ago, eight_days_ago))
+    assert revocations()["ageDays"] == 8.0 and revocations()["stale"] is True
+
+
 # Revoked tools.
 
 def test_a_revoked_tool_is_not_loaded_and_its_code_never_runs(tools, capsys):
