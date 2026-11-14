@@ -431,7 +431,7 @@ class Host:
         start = time.monotonic()
         op, args = "?", {}
         try:
-            req = protocol.validate_request(json.loads(line.decode("utf-8")))
+            req = protocol.validate_request(protocol.loads(line.decode("utf-8")))
             op, args = req["op"], req["args"]
         except protocol.ProtocolError as exc:
             reply = protocol.reply_error(None, exc.code, exc.message)

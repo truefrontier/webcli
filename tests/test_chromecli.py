@@ -165,6 +165,39 @@ def test_frame_limits():
         protocol.read_frame(io.BytesIO(struct.pack("<I", 3) + b"{x}"))
 
 
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")])
+def test_a_frame_never_carries_nan_or_infinity(number):
+    # json.dumps would write NaN / Infinity, which isn't JSON: the extension's parser rejects the whole message.
+    with pytest.raises(protocol.ProtocolError) as exc:
+        protocol.encode_frame({"op": "grant.add", "args": {"maxAmount": number}})
+    assert exc.value.code == "bad_request"
+
+
+@pytest.mark.parametrize(("arg", "timeout_ms"), [("NaN", "1000"), ("Infinity", "1000"), ("-Infinity", "1000"),
+                                                  ("1", "NaN")])
+def test_the_host_refuses_a_request_with_nan_or_infinity(arg, timeout_ms):
+    # Before, the first three went on to Chrome (here: no answer within the 1s floor), and NaN crashed int().
+    line = ('{"v": 1, "op": "status", "args": {"x": %s}, "confirm": false, "client": {"timeoutMs": %s}}'
+            % (arg, timeout_ms)).encode()
+    reply = host.Host(io.BytesIO(), io.BytesIO()).handle(line)
+    assert reply["ok"] is False and reply["error"]["code"] == "bad_request"
+
+
+def test_the_bridge_never_sends_nan_or_infinity(ext):
+    fake = ext(fake_tabs).start()
+    reply = bridge.call("tabs.list", {"x": float("inf")})
+    assert reply["ok"] is False and reply["error"]["code"] == "bad_request"
+    assert not [m for m in fake.received if m.get("op") == "tabs.list"]
+
+
+def test_wait_timeout_nan_is_a_usage_error(ext):
+    # click's FloatRange lets nan through: every comparison with it is false.
+    fake = ext(fake_tabs).start()
+    result = run("wait", "--tab", "7", "--text", "done", "--timeout", "nan")
+    assert result.exit_code == 2, result.output
+    assert not [m for m in fake.received if m.get("op") == "page.wait"]
+
+
 def test_validate_request():
     assert protocol.validate_request({"v": 1, "op": "tabs.list"})["args"] == {}
     for bad in ({"v": 2, "op": "status"}, {"v": 1, "op": "page.elements"}, {"v": 1, "op": "x"},

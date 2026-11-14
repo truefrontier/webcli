@@ -54,6 +54,10 @@ def call(op: str, args: dict | None = None, *, timeout: float | None = None, con
         raise BridgeDown(f"No chromecli socket at {path}.")
     req = {"v": protocol.VERSION, "op": op, "args": args or {}, "confirm": confirm,
            "client": {"version": __version__, "pid": os.getpid(), "timeoutMs": int(secs * 1000)}}
+    try:
+        line = json.dumps(req, separators=(",", ":"), allow_nan=False).encode() + b"\n"
+    except ValueError:  # NaN / Infinity: not JSON, and never sent
+        return protocol.reply_error(None, "bad_request", protocol.NOT_FINITE)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(secs + 5)
     try:
@@ -61,7 +65,7 @@ def call(op: str, args: dict | None = None, *, timeout: float | None = None, con
             sock.connect(str(path))
         except (FileNotFoundError, ConnectionRefusedError) as exc:
             raise BridgeDown(f"Nothing is listening on {path} ({exc.__class__.__name__}).") from None
-        sock.sendall(json.dumps(req, separators=(",", ":")).encode() + b"\n")
+        sock.sendall(line)
         buf = b""
         while b"\n" not in buf:
             chunk = sock.recv(1 << 20)

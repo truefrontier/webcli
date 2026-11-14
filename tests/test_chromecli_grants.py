@@ -104,6 +104,8 @@ def test_grant_value_never_on_the_wire_back_or_in_the_log(ext, home, tmp_path):
     (["--ttl", "30"], "between 1m and 24h"),
     (["--ttl", "soon"], "isn't a duration"),
     (["--currency", "EUR"], "need --max-amount"),
+    (["--max-amount", "inf"], "--max-amount must be a finite amount"),
+    (["--max-amount", "1e999"], "--max-amount must be a finite amount"),
 ])
 def test_grant_add_validation(ext, extra, msg):
     ext(grant_ext).start()

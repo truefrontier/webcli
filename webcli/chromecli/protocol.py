@@ -140,9 +140,25 @@ def validate_request(req: Any) -> dict:
             "client": req.get("client") if isinstance(req.get("client"), dict) else {}}
 
 
+NOT_FINITE = "A number in the request is NaN or infinite, and JSON can't carry it."
+
+
+def _no_nan(token: str) -> Any:
+    raise ProtocolError("bad_request", NOT_FINITE)
+
+
+def loads(raw: bytes | str) -> Any:
+    """JSON as the extension reads it: Python's NaN, Infinity and -Infinity tokens are refused (bad_request)."""
+    return json.loads(raw, parse_constant=_no_nan)
+
+
 def encode_frame(message: Any, limit: int = HOST_TO_EXT_MAX) -> bytes:
-    """One native-messaging frame. Raises ProtocolError(too_large) past `limit` bytes of JSON."""
-    body = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    """One native-messaging frame. Raises ProtocolError(too_large) past `limit` bytes of JSON, and (bad_request) for
+    a NaN or infinite number: json.dumps would write NaN / Infinity, which the extension's parser rejects."""
+    try:
+        body = json.dumps(message, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except ValueError:
+        raise ProtocolError("bad_request", NOT_FINITE) from None
     if len(body) > limit:
         raise ProtocolError("too_large", f"Message is {len(body)} bytes; the limit is {limit}.")
     return struct.pack("<I", len(body)) + body
