@@ -19,6 +19,7 @@ from webcli.core.output import EXIT_API, EXIT_OK, EXIT_USAGE, agent_output_optio
 from webcli.sites.base import NO_IDENTITY
 
 CAPTURE_TIMEOUT = 600
+SKILL = Path(__file__).resolve().parent.parent / "skills" / "webcli-tool-from-capture"
 
 
 def check_name(name: str) -> None:
@@ -67,7 +68,8 @@ def run_capture(name: str, provider: str, url: str, timeout: int) -> dict:
                  f"first, then `webcli identity login {provider}:default`, then `webcli new {name} --capture`.")
     proposals = capture.propose(url, data)
     record = capture.write(name, {"tool": name, "identity": f"{provider}:default", **data, "proposals": proposals})
-    return {"proposals": proposals, "record": str(record), "fixture": capture.fixture(data.get("snapshot"))}
+    return {"proposals": proposals, "record": str(record), "fixture": capture.fixture(data.get("snapshot")),
+            "shapes": len(data.get("shapes") or {})}
 
 
 def save_fixture(folder: Path, fixture: dict | None) -> str | None:
@@ -99,6 +101,8 @@ def report(result: dict, fmt: str | None) -> None:
                            ("Blocked (not reads; a GraphQL \"(query)\" may be a read to add by hand)", "blocked")):
             if found.get(key):
                 click.echo(f"{label}:\n" + "\n".join(f"  {line}" for line in found[key]))
+        click.echo(f"JSON shapes (keys and types, no values) kept in the record: {result['capture']['shapes']}. "
+                   f"An agent can draft commands from them with the skill at {result['capture']['skill']}")
     if result.get("missingHosts"):
         click.echo("Add these to hosts in webcli-tool.toml and endpoints.py if the tool needs them: "
                    + ", ".join(result["missingHosts"]))
@@ -149,7 +153,8 @@ def new_cmd(name, url, identity, capture, timeout, fmt, quiet) -> None:
               "devToml": str(scaffold.register(name, folder)), "next": next_steps(name, provider)}
     if captured:
         result["capture"] = {"proposals": captured["proposals"], "record": captured["record"],
-                             "fixture": save_fixture(folder, captured["fixture"])}
+                             "fixture": save_fixture(folder, captured["fixture"]), "shapes": captured["shapes"],
+                             "skill": str(SKILL)}
     report(result, fmt)
     raise SystemExit(EXIT_OK)
 
@@ -174,7 +179,8 @@ def recapture(name: str, folder: Path, url: str | None, timeout: int, fmt: str |
               "devToml": str(scaffold.register(name, folder)), "next": next_steps(name, manifest.identity),
               "missingHosts": [h for h in found["hosts"] if not any(host_matches(p, h) for p in manifest.hosts)],
               "capture": {"proposals": found, "record": captured["record"],
-                          "fixture": save_fixture(folder, captured["fixture"])}}
+                          "fixture": save_fixture(folder, captured["fixture"]), "shapes": captured["shapes"],
+                          "skill": str(SKILL)}}
     report(result, fmt)
     raise SystemExit(EXIT_OK)
 

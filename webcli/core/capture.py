@@ -10,7 +10,9 @@ are the guard's describe() lines. Raw bodies are never kept. A dev aid: no comma
 Guided capture (`webcli new NAME --url URL --capture`) is for a site with no adapter yet: watch() opens the URL in a
 visible Chrome on the tool's identity for a person to click around in, with a guard that lets only reads out (GET,
 HEAD, OPTIONS; every POST, PUT, PATCH, DELETE and WebSocket is aborted and listed). propose() turns what it saw into
-the tool's hosts and candidate read commands, and fixture() scrubs the last page snapshot for tests/fixtures/.
+the tool's hosts and candidate read commands, and fixture() scrubs the last page snapshot for tests/fixtures/. Its
+record also keeps `shapes`: the keys and types (never the values) of the first-party JSON the pages read, by request
+line, so an agent can write a parser without seeing the person's data (webcli/skills/webcli-tool-from-capture).
 """
 
 from __future__ import annotations
@@ -28,10 +30,10 @@ from urllib.parse import parse_qsl, urlsplit
 
 from webcli.core import browser, config, daemon, guard
 from webcli.core.output import write_atomic
-from webcli.core.redact import post_body_keys, redact_text, redact_value
+from webcli.core.redact import post_body_keys, redact_text, redact_value, tokenish
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page, Request
+    from playwright.async_api import Page, Request, Response
 
 READ_METHODS = ("GET", "HEAD", "OPTIONS")
 # What a scaffolded tool reads off a page, and what guided capture snapshots for its fixture: one definition, so a
@@ -46,8 +48,19 @@ PAGE_JS = """() => ({
     .filter(l => l.text && /^https?:/.test(l.href)).slice(0, 200),
 })"""
 FIXTURE_ITEMS = 20  # headings and links kept in a captured fixture: enough to test parsing, little personal data
+# Response shapes (schema(), Shapes): bounds on what one capture reads and keeps.
+SHAPE_DEPTH = 12  # deeper than this is "<deep>"
+SHAPE_WIDE = 40  # an object with more keys than this is a map, so its keys are data: one "<key>"
+SHAPE_VARIANTS = 3  # distinct shapes kept per request line, per list's items, per map's values
+SHAPE_LINES = 40  # request lines with shapes, per capture
+SHAPE_READS = 10  # responses read per request line; later repeats (a page that polls) aren't read or counted
+SHAPE_BODY_BYTES = 2_000_000  # a bigger body isn't parsed. ponytail: Playwright reads a body whole, so one with
+# no Content-Length is in memory before the check; SHAPE_READS, SHAPE_LINES and the semaphore bound how many
+SHAPE_CHARS = 20_000  # a bigger shape is kept as {"dropped": "oversize"}
+SHAPE_WAIT = 10.0  # seconds to wait for bodies still loading when the window closes
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _GRAPHQL_KIND = re.compile(r"^\s*(query|mutation|subscription)\b")
+_FIELD = re.compile(r"[A-Za-z_$][\w$.:-]{0,39}")  # what a field name looks like; a title, an email, an id don't
 
 
 def graphql_op(body: str | None) -> str | None:
@@ -89,6 +102,97 @@ class Recorder:
             self.traffic.append(line)
 
 
+def field_name(key: Any) -> bool:
+    """Whether an object key reads as a field name ("title", "nextCursor", "@type") rather than data: an id, an
+    email, a title with spaces, anything with four or more digits. ponytail: a short plain-word key that is data
+    (a username) still passes; SHAPE_WIDE and the digit rule catch the maps that matter."""
+    return isinstance(key, str) and bool(_FIELD.fullmatch(key.removeprefix("@"))) \
+        and sum(c.isdigit() for c in key) < 4 and not tokenish(key)
+
+
+def _variants(shapes: Any) -> list:
+    out: list = []
+    for item in shapes:
+        if item not in out:
+            out.append(item)
+            if len(out) == SHAPE_VARIANTS:
+                break
+    return out
+
+
+def schema(node: Any, depth: int = 0) -> Any:
+    """A JSON value's keys and types, never its values: "str", "int", "float", "bool", "null"; a list is
+    ["<list>", item shapes...]; an object whose keys are data (field_name(), SHAPE_WIDE) is {"<key>": value shape}.
+    Up to SHAPE_VARIANTS distinct item or value shapes; several are ["<one of>", ...] under "<key>"."""
+    if depth >= SHAPE_DEPTH:
+        return "<deep>"
+    if isinstance(node, dict):
+        if len(node) <= SHAPE_WIDE and all(field_name(key) for key in node):
+            return {key: schema(value, depth + 1) for key, value in node.items()}
+        found = _variants(schema(value, depth + 1) for value in list(node.values())[:50])
+        return {"<key>": found[0] if len(found) == 1 else ["<one of>", *found]}
+    if isinstance(node, list):
+        return ["<list>", *_variants(schema(item, depth + 1) for item in node[:50])]
+    return "null" if node is None else type(node).__name__
+
+
+class Shapes:
+    """schema() of each first-party JSON GET a context's pages read with status 200, by request_line(): what an
+    agent writes a parser against. Bodies are read as they arrive and dropped; failures are counted, never kept
+    (an error's text can quote the body)."""
+
+    def __init__(self, url: str) -> None:
+        self.url, self.shapes, self.skipped = url, {}, 0
+        self.reads: dict[str, int] = {}
+        self.tasks: set[asyncio.Task] = set()
+        self.gate = asyncio.Semaphore(4)
+
+    def on_response(self, response: "Response") -> None:
+        try:
+            if response.request.method.upper() != "GET" or response.status != 200 \
+                    or not first_party(self.url, urlsplit(response.url).hostname or "") \
+                    or "json" not in (response.headers.get("content-type") or "").lower():
+                return
+            line = request_line("GET", response.url)
+        except Exception:
+            return
+        if line not in self.reads and len(self.reads) >= SHAPE_LINES:
+            self.skipped += 1
+            return
+        self.reads[line] = self.reads.get(line, 0) + 1
+        if self.reads[line] <= SHAPE_READS:
+            self.tasks.add(asyncio.get_running_loop().create_task(self._read(line, response)))
+
+    async def _read(self, line: str, response: "Response") -> None:
+        try:
+            async with self.gate:
+                if int(response.headers.get("content-length") or 0) > SHAPE_BODY_BYTES:
+                    raise ValueError
+                body = await response.body()
+            if len(body) > SHAPE_BODY_BYTES:
+                raise ValueError
+            found = schema(json.loads(body))
+        except Exception:
+            self.skipped += 1
+            return
+        if len(json.dumps(found)) > SHAPE_CHARS:
+            found = {"dropped": "oversize"}
+        kept = self.shapes.setdefault(line, [])
+        if found not in kept and len(kept) < SHAPE_VARIANTS:
+            kept.append(found)
+
+    async def finish(self, wait: float = SHAPE_WAIT) -> dict:
+        """{shapes, shapesSkipped} once the reads still loading are done, or `wait` seconds pass (the rest are
+        cancelled and counted as skipped)."""
+        if self.tasks:
+            _done, pending = await asyncio.wait(self.tasks, timeout=wait)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            self.skipped += len(pending)
+        return {"shapes": self.shapes, "shapesSkipped": self.skipped}
+
+
 def write(site: str, data: dict) -> Path:
     """sites/<site>/capture/<site>-<UTC>.json, 0600, every string redacted."""
     folder = config.private_dir(config.site_dir(site) / "capture")
@@ -121,22 +225,28 @@ def read_only_policy(name: str) -> guard.Policy:
                         lambda request: guard.describe(request.method, request.url))
 
 
-async def record(page: "Page", url: str, timeout: float, poll: float = 2.0) -> dict:
+async def record(page: "Page", url: str, timeout: float, poll: float = 2.0, shape_wait: float = SHAPE_WAIT) -> dict:
     """Open `url` in `page` and record its requests until a person closes the window or `timeout` runs out:
-    {url, traffic, blocked, snapshot}. snapshot: PAGE_JS on the last page that answered (None if none did)."""
-    recorder, snapshot = Recorder(), None
+    {url, traffic, blocked, snapshot, shapes, shapesSkipped}. snapshot: PAGE_JS on the last page that answered (None
+    if none did). shapes: Shapes, waited for up to `shape_wait` seconds."""
+    recorder, shapes, snapshot = Recorder(), Shapes(url), None
     page.context.on("request", recorder.on_request)
-    await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not page.is_closed() and loop.time() < deadline:
-        try:
-            snapshot = await page.evaluate(PAGE_JS)
-        except Exception:
-            pass  # between pages, or the window just closed
-        await asyncio.sleep(poll)
+    page.context.on("response", shapes.on_response)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not page.is_closed() and loop.time() < deadline:
+            try:
+                snapshot = await page.evaluate(PAGE_JS)
+            except Exception:
+                pass  # between pages, or the window just closed
+            await asyncio.sleep(poll)
+    finally:
+        page.context.remove_listener("response", shapes.on_response)
+        found = await shapes.finish(shape_wait)
     return {"url": redact_text(url), "traffic": recorder.traffic,
-            "blocked": list(dict.fromkeys(guard.state.blocked)), "snapshot": snapshot}
+            "blocked": list(dict.fromkeys(guard.state.blocked)), "snapshot": snapshot, **found}
 
 
 async def watch(name: str, url: str, timeout: float) -> dict:

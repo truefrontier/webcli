@@ -48,6 +48,7 @@ A tool imports from `webcli.adapter` and its own package only ([adapter API](ada
 - **Hosts.** The tool gets the URL's host plus the hosts under it that the page read from (for `www.example.com`, also `api.example.com`). Other hosts are listed but not added.
 - **Reads.** The read requests it saw are printed as candidates for each command's `requests`.
 - **Fixture.** The last page you were on is saved to `tests/fixtures/capture-<time>.json`. Tokens, session IDs, and signed links are redacted, and email addresses become `user@example.com`. Names and other page text stay, so read the file before you share the tool.
+- **Response shapes.** For each first-party JSON read that answered 200, the record keeps its *shape*: the keys and types, never the values. An object whose keys look like data (ids, emails, titles, or more than 40 keys) shows one `<key>` instead. That check is a heuristic: a short key that is data, like a first name, can still show. Shapes stay in the record; they never go into the tool's folder.
 - **The full record** goes to `~/.webcli/sites/NAME/capture/` (mode 0600). It stays on your machine.
 
 Capture can't sign in for you, since sign-in needs a POST. If the site needs it, make the tool first, sign in, then capture again:
@@ -59,6 +60,18 @@ webcli new acmenotes --capture
 ```
 
 On a tool that already exists, `--capture` adds a recorded page and suggests any new hosts. It doesn't change the tool's code or manifest.
+
+### Let an agent draft the commands
+
+webcli ships an agent skill, `webcli-tool-from-capture`, that turns a capture into draft read-only commands: the manifest's `[[commands]]`, a narrow guard, fetch ops, `parse.py`, and offline tests. The agent works from the response shapes, so it never sees your data. It writes made-up fixtures, runs `webcli lint` and `webcli test`, and then hands you the `webcli dev` commands for the live check.
+
+`webcli new --capture` prints the skill's folder. To use it with Claude Code, link that folder into your skills:
+
+```
+ln -s "<the folder it printed>" ~/.claude/skills/webcli-tool-from-capture
+```
+
+Other agents can read its `SKILL.md` directly. The source is [webcli/skills/webcli-tool-from-capture/SKILL.md](../webcli/skills/webcli-tool-from-capture/SKILL.md).
 
 ## `webcli dev NAME -- ARGS`
 

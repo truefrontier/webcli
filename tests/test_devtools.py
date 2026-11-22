@@ -439,24 +439,45 @@ def test_fixture_scrubs_tokens_and_emails_and_keeps_it_small():
 
 class FakeContext:
     def __init__(self) -> None:
-        self.handlers = []
+        self.handlers = {"request": [], "response": []}
 
     def on(self, event, handler):
-        assert event == "request"
-        self.handlers.append(handler)
+        self.handlers[event].append(handler)
+
+    def remove_listener(self, event, handler):
+        self.handlers[event].remove(handler)
+
+
+class Resp:
+    def __init__(self, url: str, body: bytes | None, *, method: str = "GET", status: int = 200,
+                 kind: str = "application/json; charset=utf-8", length: int | None = None, wait: float = 0) -> None:
+        self.request, self.url, self.status, self._body, self._wait = Req(method, url), url, status, body, wait
+        self.headers = {"content-type": kind, **({"content-length": str(length)} if length is not None else {})}
+
+    async def body(self):
+        await asyncio.sleep(self._wait)
+        if self._body is None:
+            raise RuntimeError("Response body is unavailable: secret page text")
+        return self._body
+
+
+NOTES_JSON = json.dumps({"notes": [{"id": "n_1", "title": "Buy milk", "pinned": True}], "nextCursor": None}).encode()
 
 
 class FakePage:
-    """Loads `url`, makes two requests, and is closed by the person after `polls` snapshots."""
+    """Loads `url`, makes two requests and reads one JSON response, and is closed by the person after `polls`
+    snapshots."""
 
     def __init__(self, polls: int) -> None:
         self.context, self.polls, self.url = FakeContext(), polls, None
 
     async def goto(self, url, **_options):
         self.url = url
-        for handler in self.context.handlers:
+        for handler in self.context.handlers["request"]:
             handler(Req("GET", url))
             handler(Req("POST", "https://notes.example.com/api/like", '{"id": 1}'))
+        for handler in self.context.handlers["response"]:
+            handler(Resp("https://notes.example.com/api/notes?cursor=abc", NOTES_JSON))
 
     async def evaluate(self, js):
         assert js == capture.PAGE_JS
@@ -468,15 +489,120 @@ class FakePage:
 
 
 def test_record_watches_until_the_window_closes():
-    data = asyncio.run(capture.record(FakePage(polls=2), "https://notes.example.com/", timeout=60, poll=0))
+    page = FakePage(polls=2)
+    data = asyncio.run(capture.record(page, "https://notes.example.com/", timeout=60, poll=0))
     assert data == {"url": "https://notes.example.com/", "traffic": [
         "GET notes.example.com/", "POST notes.example.com/api/like keys=['id']"], "blocked": [],
         "snapshot": {"url": "https://notes.example.com/", "title": "Notes", "loginForm": False,
-                     "headings": ["Notes"], "links": []}}
+                     "headings": ["Notes"], "links": []},
+        "shapes": {"GET notes.example.com/api/notes ?cursor": [
+            {"notes": ["<list>", {"id": "str", "title": "str", "pinned": "bool"}], "nextCursor": "null"}]},
+        "shapesSkipped": 0}
+    assert page.context.handlers["response"] == []
+
+
+def test_schema_keeps_field_names_and_types_never_values():
+    body = {"user": {"displayName": "Kevin K", "@type": "Person", "age": 40, "score": 1.5, "x": None},
+            "items": [{"id": 1}, {"id": 2}, {"id": 3, "note": "hi"}],
+            "byId": {"9f8e7d6c-5b4a-4928-8170-6f5e4d3c2b1a": {"name": "A"}, "c0ffee12": {"name": "B"}},
+            "byEmail": {"kevin@realmail.net": 1},
+            "byTitle": {"Buy milk": {"done": False}},
+            "wide": {f"k{i}": i for i in range(capture.SHAPE_WIDE + 1)},
+            "mixed": {"a": 1, "b": "two"}}
+    got = capture.schema(body)
+    assert got == {
+        "user": {"displayName": "str", "@type": "str", "age": "int", "score": "float", "x": "null"},
+        "items": ["<list>", {"id": "int"}, {"id": "int", "note": "str"}],
+        "byId": {"<key>": {"name": "str"}},
+        "byEmail": {"<key>": "int"},
+        "byTitle": {"<key>": {"done": "bool"}},
+        "wide": {"<key>": "int"},
+        "mixed": {"a": "int", "b": "str"}}
+    text = json.dumps(got)
+    for value in ("Kevin", "Person", "realmail", "Buy milk", "9f8e7d6c", "c0ffee12"):
+        assert value not in text
+    deep: dict = {}
+    node = deep
+    for _ in range(capture.SHAPE_DEPTH + 5):
+        node["next"] = {}
+        node = node["next"]
+    assert '"<deep>"' in json.dumps(capture.schema(deep))
+    assert capture.schema({"a": 1, "b": "x", "c": [1]}) == {"a": "int", "b": "str", "c": ["<list>", "int"]}
+    assert capture.schema({"x": 1, "y": "s", "z": None, "w": [], "v": {}}) == \
+        {"x": "int", "y": "str", "z": "null", "w": ["<list>"], "v": {}}
+    assert capture.schema({"2024": 1, "2025": "s"}) == {"<key>": ["<one of>", "int", "str"]}
+
+
+def test_shapes_read_only_first_party_json_gets_and_keep_no_error_text():
+    async def go():
+        shapes = capture.Shapes("https://www.notes.example.com/")
+        api = "https://api.notes.example.com/v1/notes"
+        for response in (
+                Resp(api, NOTES_JSON),
+                Resp(api + "?page=2", NOTES_JSON),  # same schema, another line
+                Resp(api, json.dumps({"notes": []}).encode()),  # a second variant of the first line
+                Resp(api, NOTES_JSON, method="POST"),
+                Resp(api, NOTES_JSON, status=404),
+                Resp(api, b"<html>", kind="text/html"),
+                Resp("https://ads.tracker.net/p.json", NOTES_JSON),
+                Resp("https://api.notes.example.com/v1/broken", b"not json {"),
+                Resp("https://api.notes.example.com/v1/gone", None),
+                Resp("https://api.notes.example.com/v1/huge", NOTES_JSON, length=capture.SHAPE_BODY_BYTES + 1),
+                Resp("https://api.notes.example.com/v1/feed", b'{"x": 1}', kind="application/vnd.api+json")):
+            shapes.on_response(response)
+        return await shapes.finish(wait=5)
+
+    got = asyncio.run(go())
+    notes = {"notes": ["<list>", {"id": "str", "title": "str", "pinned": "bool"}], "nextCursor": "null"}
+    assert got == {"shapes": {"GET api.notes.example.com/v1/notes": [notes, {"notes": ["<list>"]}],
+                              "GET api.notes.example.com/v1/notes ?page": [notes],
+                              "GET api.notes.example.com/v1/feed": [{"x": "int"}]},
+                   "shapesSkipped": 3}
+    assert "secret page text" not in json.dumps(got)
+
+
+def test_shapes_cap_reads_lines_and_slow_bodies():
+    async def go():
+        shapes = capture.Shapes("https://notes.example.com/")
+        for _ in range(capture.SHAPE_READS + 5):
+            shapes.on_response(Resp("https://notes.example.com/poll", b'{"n": 1}'))
+        for i in range(capture.SHAPE_LINES + 2):
+            shapes.on_response(Resp(f"https://notes.example.com/item/{chr(97 + i % 26)}{i}", b"{}"))
+        shapes.on_response(Resp("https://notes.example.com/slow", b"{}", wait=30))
+        return len(shapes.tasks), await shapes.finish(wait=0.2)
+
+    reads, got = asyncio.run(go())
+    assert reads == capture.SHAPE_READS + (capture.SHAPE_LINES - 1)  # one polled line, then 39 item lines
+    assert len(got["shapes"]) == capture.SHAPE_LINES
+    assert got["shapesSkipped"] == 4  # three item lines and the slow one, past SHAPE_LINES
+
+
+def test_a_slow_body_is_cancelled_and_counted_when_the_window_closes():
+    async def go():
+        shapes = capture.Shapes("https://notes.example.com/")
+        shapes.on_response(Resp("https://notes.example.com/fast", b'{"a": 1}'))
+        shapes.on_response(Resp("https://notes.example.com/slow", b'{"b": 1}', wait=30))
+        return await shapes.finish(wait=0.2)
+
+    assert asyncio.run(go()) == {"shapes": {"GET notes.example.com/fast": [{"a": "int"}]}, "shapesSkipped": 1}
+
+
+def test_an_oversize_shape_is_dropped_without_its_keys():
+    async def go():
+        shapes = capture.Shapes("https://notes.example.com/")
+        wide = {f"field_{chr(97 + i % 26)}{chr(97 + i // 26)}": {"value": i} for i in range(capture.SHAPE_WIDE)}
+        body = json.dumps({f"extra{chr(97 + k)}": wide for k in range(26)}).encode()
+        shapes.on_response(Resp("https://notes.example.com/big", body))
+        return await shapes.finish(wait=5)
+
+    assert asyncio.run(go()) == {"shapes": {"GET notes.example.com/big": [{"dropped": "oversize"}]},
+                                 "shapesSkipped": 0}
 
 
 CAPTURED = {"url": "https://www.notes.example.com/", "blocked": ["POST www.notes.example.com/graphql"],
             "traffic": ["GET www.notes.example.com/", "GET static.notes.example.com/app.js", "GET ads.tracker.net/p"],
+            "shapes": {"GET www.notes.example.com/api/notes": [{"notes": ["<list>", {"title": "str"}]}]},
+            "shapesSkipped": 0,
             "snapshot": {"url": "https://www.notes.example.com/?sid=abc123def456ghi789jk", "title": "Notes",
                          "loginForm": False, "headings": ["Your notes"],
                          "links": [{"text": "Mail kevin@realmail.net", "href": "https://www.notes.example.com/contact"}]}}
@@ -495,6 +621,9 @@ def test_new_with_capture_starts_the_tool_from_what_it_saw(workdir, monkeypatch)
     assert made["capture"]["proposals"]["blocked"] == ["POST www.notes.example.com/graphql"]
     record = Path(made["capture"]["record"])
     assert record.parent == config.home() / "sites" / "notes" / "capture" and record.stat().st_mode & 0o777 == 0o600
+    assert json.loads(record.read_text())["shapes"] == CAPTURED["shapes"] and made["capture"]["shapes"] == 1
+    skill = Path(made["capture"]["skill"]) / "SKILL.md"
+    assert skill.read_text().startswith("---\nname: webcli-tool-from-capture\n")
     folder = Path(made["folder"])
     fixture = json.loads((folder / made["capture"]["fixture"]).read_text())
     assert fixture["url"].startswith(f"https://www.notes.example.com/?sid={REDACTED}") and "abc123" not in fixture["url"]

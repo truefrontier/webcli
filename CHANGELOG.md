@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Guided capture keeps response shapes.** `webcli new NAME --capture` now records the keys and types (never the
+  values) of each first-party JSON read that answered 200, by request line, in the private capture record. Objects
+  keyed by data (ids, emails, titles, more than 40 keys) collapse to one `<key>`. Bodies over 2 MB, more than 40
+  request lines, and reads still loading 10 s after the window closes are skipped and counted, never kept.
+- **`webcli-tool-from-capture` skill** (in the package, at `webcli/skills/`). An agent turns a capture into draft
+  read-only commands from those shapes, with made-up fixtures and offline tests, then hands the person the live
+  check. The `new --capture` report prints its folder. See docs/making-a-tool.md.
+
 ## 1.0.0rc3 / llmcli 0.9.0rc3 (2026-11-14)
 
 Third release candidate. Folds the open hardening fixes and archived-CLI ports onto 1.0.0rc2. Still a **pre-release**:
