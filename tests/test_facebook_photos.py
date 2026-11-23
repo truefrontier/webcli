@@ -385,6 +385,11 @@ def test_signed_out_is_an_auth_error_and_a_blocked_empty_tab_is_not_an_empty_suc
     photo_page({photos_of_url(): fixture("profile_unavailable.html")})
     with pytest.raises(NotFound, match="isn't available"):
         asyncio.run(fetch.photos(WHO))
+    # A later scroll that turns into Facebook's error page must keep photos already parsed.
+    page1 = tab(fixture("photos_of.json"))
+    photo_page({photos_of_url(): [page1, fixture("profile_unavailable.html")]})
+    result = asyncio.run(fetch.photos(WHO))
+    assert "9001001" in _ids(result)
     photo_page({photos_of_url(): '<div role="main"><h1>Jane Doe</h1></div>'})
     guard.state.blocked.append("POST www.facebook.com/api/graphql/ op=SomeOtherQuery")
     with pytest.raises(RuntimeError, match="blocked"):

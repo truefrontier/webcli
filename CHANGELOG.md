@@ -33,6 +33,7 @@ Live check (2026-11-22, a signed-in facebook:default session):
   `friendship_closeness` (`NORMAL_FRIEND`), CTA `friendship_status`, or a "Friend" / "Friends" snippet.
 - The photos-tab grid has no tags or created times. `--solo` and `--since` open each photo page and
   read `tags.edges[].node` (and typeless photo objects that still carry `image` + `tags`).
+- If a later scroll of the tab turns into Facebook's "isn't available" page, already parsed photos are kept.
 
 ### Changed
 

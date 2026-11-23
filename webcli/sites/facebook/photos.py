@@ -125,6 +125,10 @@ async def _gather(page: "Page", url: str, *, limit: int | None, accept) -> dict:
         html = await page.evaluate(DOC_HTML_JS)
         html_seen = html_seen or bool(html)
         if html and parse.unavailable(html):
+            # After a long scroll Facebook sometimes replaces the tab with
+            # "This page isn't available right now". Keep photos already parsed.
+            if rows or seen:
+                break
             raise NotFound("That profile isn't available to you (deleted, private, or blocked).",
                            hint="Check the id with `webcli facebook friends search NAME`.")
         payloads = capture.take()
@@ -298,7 +302,9 @@ async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, 
         # The grid often has no tags or times, so --solo/--since cannot be applied until
         # each photo page is read. Collect the tab first, then enrich until `limit` matches.
         need_pages = bool(solo or since)
-        result = await _collect(page, person, mode=mode, limit=None if need_pages else limit,
+        # Enough grid photos to find `limit` solo/since matches, without scrolling the whole tab.
+        tab_limit = None if not need_pages else min(PHOTO_MAX, max((limit or 20) * 10, 50))
+        result = await _collect(page, person, mode=mode, limit=tab_limit if need_pages else limit,
                                 since=None if need_pages else since, solo=False)
         subject = result["subject"]
         candidates = result["photos"]
@@ -402,7 +408,9 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
     downloaded = skipped = dropped = 0
     async with browser.site_page(read_policy(PHOTO_QUERIES)) as page:
         need_pages = bool(solo or since)
-        result = await _collect(page, person, mode=mode, limit=None if need_pages else limit,
+        # Enough grid photos to find `limit` solo/since matches, without scrolling the whole tab.
+        tab_limit = None if not need_pages else min(PHOTO_MAX, max((limit or 20) * 10, 50))
+        result = await _collect(page, person, mode=mode, limit=tab_limit if need_pages else limit,
                                 since=None if need_pages else since, solo=False)
         subject = result["subject"]
         entries: list[dict] = []
