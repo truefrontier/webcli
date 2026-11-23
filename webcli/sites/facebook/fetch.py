@@ -297,3 +297,28 @@ async def about_many(people: list[dict], *, headed: bool = False) -> list[dict]:
                     raise
                 out.append({"person": who, "error": str(exc)})
     return out
+
+
+async def friend_search(name: str, limit: int = 20, *, headed: bool = False) -> dict:
+    """Friends matching `name`. headed is accepted for the daemon contract; data sites always run headless."""
+    from webcli.sites.facebook import photos as photos_io
+
+    return await photos_io.friend_search(name, limit)
+
+
+async def photos(who: dict, *, mode: str = "of", limit: int | None = None, since: str | None = None,
+                 solo: bool = False, max_faces: int | None = None, headed: bool = False) -> dict:
+    """Photos of a person (or their uploads). headed is accepted for the daemon contract."""
+    from webcli.sites.facebook import photos as photos_io
+
+    return await photos_io.list_photos(who, mode=mode, limit=limit, since=since, solo=solo, max_faces=max_faces)
+
+
+async def photos_download(who: dict, out_dir: str, *, mode: str = "of", limit: int | None = None,
+                          since: str | None = None, solo: bool = False, max_faces: int | None = None,
+                          headed: bool = False) -> dict:
+    """Download those photos. headed is accepted for the daemon contract."""
+    from webcli.sites.facebook import photos as photos_io
+
+    return await photos_io.download(who, out_dir, mode=mode, limit=limit, since=since, solo=solo,
+                                   max_faces=max_faces)

@@ -9,7 +9,7 @@ Only LinkedIn can write, and only two verbs: `messages send` and `post create`. 
 | Site | Verbs | Source | Identity | How it reads |
 |---|---|---|---|---|
 | `webcli linkedin` | `messages list`, `messages history`, `messages read`, `activity comments`, `activity reactions`, `activity posts`, `activity export`, `feed`, `posts search`, `posts from`, `posts read`, `boost list`, `boost stats`, `status`; writes: `messages send`, `post create` | linkedin-messages-cli (limsg) | `linkedin:default` | In-page Voyager and Campaign Manager GETs; Recent activity, post search, and company pages read from the rendered cards |
-| `webcli facebook` | `sync`, `search`, `about`, `enrich`, `export`, `status` | facebook-contacts-cli (fbc) | `facebook:default` | Full page loads read from the DOM; scrolling the Friends tab |
+| `webcli facebook` | `sync`, `search`, `about`, `enrich`, `export`, `status`, `friends search`, `photos list`, `photos download` | facebook-contacts-cli (fbc), plus the Photos of tab | `facebook:default` | Full page loads; the page's own GraphQL (DOM only when that JSON has no photos); image bytes from `*.fbcdn.net` through Chrome |
 | `webcli loom` | `list`, `info`, `transcript`, `status` | loom-cli | `loom:default` | Loom's own GraphQL queries in the page; the transcript file the share page fetches |
 
 All three:
@@ -79,7 +79,16 @@ No slot opens until the author check has passed, and each slot passes once. Anyt
 **Facebook** never clicks, types, or submits. `tests/test_facebook.py` keeps fbc's static check: no click, type, press, fill, submit, focus, hover, or dispatch call anywhere in `webcli/sites/facebook/` or the core modules its commands run through, and no selector names an action control. The guard allows:
 
 - GET/HEAD over https on `facebook.com`, its subdomains, and `*.fbcdn.net` (its static and image CDN), never GraphQL by GET and never sign-out;
-- `POST www.facebook.com/api/graphql/` only for the running command's read queries, named like a query: `sync` gets the Friends-tab pagination query, About pages get none.
+- `POST www.facebook.com/api/graphql/` only for the running command's read queries, named like a query: `sync` gets the Friends-tab pagination query, About pages get none, `photos` gets the Photos-tab and photo-page queries, `friends search` gets the people-search queries. A mutation is refused for every one of those sets. Doc ids are not pinned.
+- A photo file is fetched only from `*.fbcdn.net`, inside Chrome, so the session cookies stay in the browser. Printed image URLs drop `c_user`, `xs`, and the other session-cookie query names.
+
+`friends search NAME` loads Facebook's people search already filtered to friends (a page navigation, not a typed query) and keeps a person only when every word of the name is a whole word of theirs and Facebook says you're friends. No match exits 3. Signed out exits 4, which is an error, not an empty list.
+
+`photos list` and `photos download` read the profile's **Photos of** tab by default (photos the person is tagged in; the tabs there are Photos of, Uploads, Albums, and Videos). `--uploads` reads Uploads. Albums and Videos have no command. Each photo is `id`, `imageUrl` (the largest rendition in Facebook's own photo data), `caption`, `createdTime`, `owner` (who posted it), `photoUrl`, `tags` (`[{id, name}]`), and `tagCount`. `--solo` keeps a photo only when that tag list is exactly this person; a photo with no tags is left out. `--since` is inclusive, and a photo with no time is left out. `--limit` caps how many candidates are read; `--max-faces` can then keep fewer.
+
+`photos download --out DIR` saves the photo page's largest rendition and rewrites `manifest.json` after each file (mode 0600). A file already in the directory is skipped, so a stopped run can be re-run. There is a pause between photos. `--max-faces N` counts faces in the image on this machine and drops one with more than N. The count is `faceCount` in the JSON and in the manifest. The counter is optional (`pip install 'truefrontier-webcli[faces]'`, OpenCV's Haar cascade). It does not call a cloud API. If the extra is missing, the command exits 2 before Chrome starts and says how to install it. A face in profile or a small face can be missed, so a count under the real number is expected; a photo is dropped only when the count is over N.
+
+The Photos of and Uploads paths, and those GraphQL operation names, are the ones Facebook has used for those tabs. They are not confirmed against a live session: a query the guard blocks is named under `blocked`, and a blocked tab with nothing parsed is an error (exit 5), not an empty success.
 
 Every other request is aborted: friending, reactions, comments, messages, "seen" markers, telemetry, and every other host. WebSockets are closed.
 

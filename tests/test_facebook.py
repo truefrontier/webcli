@@ -26,7 +26,7 @@ from webcli.apps import webcli as webcli_app
 from webcli.core import browser, config, daemon, guard
 from webcli.core.errors import AuthRequired, NotFound
 from webcli.sites.facebook import endpoints, enrich, fetch, parse, store
-from webcli.sites.facebook.guard import POLICY, fb_host, read_policy, request_allowed
+from webcli.sites.facebook.guard import POLICY, fb_host, read_op, read_policy, request_allowed
 
 from conftest import FIXTURES, make_profile
 
@@ -153,9 +153,26 @@ UNSOURCED_WRITES = ("useCometUFICreateCommentMutation", "CometUserFollowMutation
 
 
 @pytest.mark.parametrize("op", endpoints.MUTATIONS + UNSOURCED_WRITES)
-@pytest.mark.parametrize("reads", [endpoints.SYNC_QUERIES, endpoints.ABOUT_QUERIES, frozenset()])
+@pytest.mark.parametrize("reads", [endpoints.SYNC_QUERIES, endpoints.ABOUT_QUERIES, endpoints.PHOTO_QUERIES,
+                                   endpoints.FRIEND_SEARCH_QUERIES, frozenset()])
 def test_every_known_mutation_is_blocked_for_every_command(op, reads):
     assert allowed("POST", GRAPHQL, {"x-fb-friendly-name": op}, form(op), reads=reads) is False
+
+
+def test_the_adapter_never_issues_a_mutation_graphql_request():
+    """Photos and friend search are reads. No command builds a mutation, and the guard refuses one even if named."""
+    root = PACKAGE / "sites" / "facebook"
+    for name in ("photos.py", "faces.py", "fetch.py", "cli.py", "parse.py"):
+        text = (root / name).read_text()
+        assert "Mutation" not in text, name
+        assert ".post(" not in text, name
+        assert "fb_api_req_friendly_name" not in text, name
+    for reads in (endpoints.SYNC_QUERIES, endpoints.ABOUT_QUERIES, endpoints.PHOTO_QUERIES,
+                  endpoints.FRIEND_SEARCH_QUERIES):
+        for op in reads:
+            assert read_op(op) and "mutation" not in op.lower()
+        for op in list(endpoints.MUTATIONS) + list(UNSOURCED_WRITES):
+            assert allowed("POST", GRAPHQL, {"x-fb-friendly-name": op}, form(op), reads=reads) is False
 
 
 def test_mutations_are_blocked_even_if_someone_lists_them():

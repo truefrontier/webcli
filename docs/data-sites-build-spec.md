@@ -115,7 +115,7 @@ REFUSES unless the dry-run author matches `kevnk` (the configured account handle
 `--expect-author` / author check, exit 4 on mismatch. Never send or post during the build.
 
 ### facebook — Facebook  (source: facebook-contacts-cli / fbc; provider "facebook", facebook:default)
-Verbs: `webcli facebook sync|search|about|enrich|export|status`. STRICTLY read-only on Facebook
+Verbs: `webcli facebook sync|search|about|enrich|export|status`, `webcli facebook friends search`, `webcli facebook photos list|download`. STRICTLY read-only on Facebook
 (the source has a test that the code contains no clicks — keep that guarantee). Friends cache
 moves under `~/.webcli/sites/facebook/`. `enrich`'s optional Tavily (`tvly`) dependency stays
 optional (LinkedIn left null when absent).

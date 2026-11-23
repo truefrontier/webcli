@@ -117,6 +117,18 @@ def _post(request: "Request") -> tuple[dict[str, str] | None, str | None]:
         return request.headers, None
 
 
+def image_url_allowed(url: str) -> bool:
+    """A photo file may be fetched only from Facebook's image CDN, over https. The profile's cookies stay in
+    Chrome (the browser sends them); this refuses every other host, so a photo URL can't be pointed at them."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.scheme != "https" or parts.port not in (None, 443) or "@" in parts.netloc:
+        return False
+    if host != "fbcdn.net" and not host.endswith(".fbcdn.net"):
+        return False
+    return parts.path not in GRAPHQL_PATHS and not _under(parts.path, "/webgraphql")
+
+
 def read_policy(reads: frozenset[str] = frozenset()) -> Policy:
     """A command's policy: page loads, plus the GraphQL queries in `reads`."""
 

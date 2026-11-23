@@ -1,0 +1,23 @@
+{
+  "data": {
+    "node": {
+      "pageItems": {
+        "edges": [
+          {
+            "node": {
+              "node": {
+                "__typename": "Photo",
+                "id": "9001005",
+                "created_time": 1727740800,
+                "message": {"text": "Just Jane"},
+                "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001005_full.jpg", "width": 1200, "height": 900},
+                "owner": {"__typename": "User", "id": "100009876543210", "name": "Eve Adams", "url": "https://www.facebook.com/eve.adams"},
+                "tags": {"edges": [{"node": {"taggee": {"__typename": "User", "id": "100004567890123", "name": "Jane Doe", "url": "https://www.facebook.com/jane.doe"}}}]}
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

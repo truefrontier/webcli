@@ -1,6 +1,6 @@
 [project]
 name = "truefrontier-webcli"
-version = "1.0.0rc3"
+version = "1.0.0rc4"
 description = "Agent-native CLIs (webcli, llmcli, chromecli) over your own signed-in Chrome sessions."
 readme = "README.md"
 license = "MIT"
@@ -27,6 +27,9 @@ dependencies = [
     "rich>=13",
     "tomli>=1.1; python_version < '3.11'",
 ]
+
+[project.optional-dependencies]
+faces = ["opencv-python-headless>=4.8"]
 
 [project.scripts]
 webcli = "webcli.apps.webcli:main"

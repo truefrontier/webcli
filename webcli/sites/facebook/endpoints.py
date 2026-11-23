@@ -52,6 +52,39 @@ SYNC_QUERIES = frozenset({
 # sections come back "missing" and "blocked" lists op=ProfileCometAboutAppSectionQuery, adding it here is the fix.
 ABOUT_QUERIES: frozenset[str] = frozenset()
 
+# Profile photo tabs. "Photos of <Name>" is photos the person is tagged in; "Uploads" is photos they posted.
+# UNVERIFIED against a live session (2026-11-23): these are the paths Facebook has served for those tabs.
+# `photos list` follows the redirect and reads photo nodes, so a renamed path shows up as a short or empty read
+# and the command's blocked list names the query the page actually sent.
+PHOTOS_OF_SECTION = "photos_of"
+PHOTOS_BY_SECTION = "photos_by"  # the Uploads tab
+# People search limited to the signed-in account's friends. The filters value is Facebook's own base64 JSON for
+# the Friends filter (the same shape the people-search page puts in ?filters=). UNVERIFIED live.
+FRIENDS_SEARCH_PATH = "/search/people/"
+
+# Read-only queries the photos tab and a photo page send while they render. UNVERIFIED live: doc_ids rotate, so
+# the guard allows the operation name, not a doc_id. A name that isn't here is blocked and listed under "blocked".
+PHOTO_QUERIES = frozenset({
+    "ProfileCometTopAppSectionQuery",
+    "ProfileCometAppCollectionPhotosRendererPaginationQuery",
+    "ProfileCometAppCollectionListRendererPaginationQuery",
+    "CometPhotoRootQuery",
+    "CometPhotoRootContentQuery",
+    "CometPhotoViewerQuery",
+    "CometPhotoViewerInitialQuery",
+})
+# The friends-filtered people search page. UNVERIFIED live, same fail-closed rule as PHOTO_QUERIES.
+FRIEND_SEARCH_QUERIES = frozenset({
+    "SearchCometResultsInitialResultsQuery",
+    "SearchCometResultsPaginatedResultsQuery",
+    "SearchCometResultsQuery",
+})
+
+# Polite gaps between photo-file reads, and a cap so a tab that never ends can't scroll forever.
+DOWNLOAD_PAUSE = (1.5, 3.0)
+PHOTO_MAX = 2000
+PHOTO_MAX_SCROLLS = 400
+
 # Known writes (fbc: CONFIRMED in togashigreat/fbchat-muqit facebook/client.py). The guard blocks them because they
 # are not in a read set, not because they are listed here; tests use them. Messenger send and mark-read go over the
 # chat socket (MQTT), which the core guard closes.
