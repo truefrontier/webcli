@@ -24,6 +24,16 @@ Fourth release candidate. Adds a read-only Facebook photos reader. Still a **pre
 The Photos of / Uploads paths and the GraphQL operation names are the ones Facebook has used for those tabs.
 A live session is what confirms them. Doc ids are not pinned. A blocked query is named in the output.
 
+Live check (2026-11-22, a signed-in facebook:default session):
+
+- `photos_of` / `photos_by` paths and `ProfileCometAppCollectionPhotosRendererPaginationQuery` /
+  `CometPhotoRootContentQuery` / `SearchCometResultsPaginatedResultsQuery` are the ones the site sent.
+- A friends-only `filters` token on `/search/people/` made Facebook render "This page isn't available
+  right now". Search now uses the unfiltered people-search URL and keeps friends by
+  `friendship_closeness` (`NORMAL_FRIEND`), CTA `friendship_status`, or a "Friend" / "Friends" snippet.
+- The photos-tab grid has no tags or created times. `--solo` and `--since` open each photo page and
+  read `tags.edges[].node` (and typeless photo objects that still carry `image` + `tags`).
+
 ### Changed
 
 - chromecli's extension `version` stays 0.18.3 (same key and extension ID). `version_name` is `1.0.0rc4`.

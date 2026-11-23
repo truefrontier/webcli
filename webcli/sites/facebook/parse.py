@@ -12,7 +12,6 @@ the h= of l.facebook.com/l.php), and none of those may reach the cache or an exp
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -552,7 +551,13 @@ def about(sections: dict[str, str | None], page_url: str, title: str | None = No
 # fallback, and it has no caption, owner, time, or tags.
 
 FRIEND_STATUSES = frozenset({"ARE_FRIENDS", "FRIENDS", "IS_FRIEND"})
-_NOT_FRIEND = re.compile(r"\bFriends\b")
+# Live people-search (2026-11-22) puts closeness on the result profile, not friendship_status.
+FRIEND_CLOSENESS = frozenset({"NORMAL_FRIEND", "CLOSE_FRIEND", "BEST_FRIEND", "ACQUAINTANCE", "FRIENDS"})
+NOT_FRIEND_STATUSES = frozenset({
+    "CAN_REQUEST", "CANNOT_REQUEST", "INCOMING_REQUEST", "OUTGOING_REQUEST",
+    "PENDING", "BLOCKED", "NOT_FRIENDS", "NOT_FRIENDED",
+})
+_NOT_FRIEND = re.compile(r"\bFriends?\b")
 _MUTUAL_FRIENDS = re.compile(r"mutual friends?", re.I)
 _PHOTO_MARK = re.compile(r'"__typename"\s*:\s*"Photo"|"__isMedia"\s*:\s*"Photo"')
 _USER_ID_MARK = re.compile(r'"userI[Dd]"\s*:\s*"(\d{5,20})"')
@@ -594,10 +599,10 @@ def photos_url(person: Person, mode: str) -> str:
 
 
 def friends_search_url(name: str) -> str:
-    """People search restricted to the signed-in account's friends."""
-    filters = {"friends": json.dumps({"name": "friends", "args": ""}, separators=(",", ":"))}
-    token = base64.b64encode(json.dumps(filters, separators=(",", ":")).encode()).decode()
-    return f"{ORIGIN}/search/people/?{urlencode({'q': name, 'filters': token})}"
+    """People search. A friends-only `filters` token was tried and Facebook rendered
+    "This page isn't available right now", so this URL has no filter; `friend_hits`
+    keeps only friends."""
+    return f"{ORIGIN}/search/people/?{urlencode({'q': name})}"
 
 
 def clean_image_url(url: str | None) -> str | None:
@@ -690,13 +695,22 @@ def _photo_objects_in_js(text: str) -> list[dict]:
                 continue
             if isinstance(obj, dict) and _is_photo(obj):
                 found.append(obj)
-                break
+                # Keep going: the nearest `{` is often a slim Photo; a parent
+                # object a few braces out has tags, created_time, and image.
     return found
 
 
 def _is_photo(node: dict) -> bool:
+    if not isinstance(node, dict):
+        return False
+    if not _FBID.match(str(node.get("id") or "")):
+        return False
     kind = node.get("__typename") or node.get("__isMedia") or node.get("__isNode")
-    return kind == "Photo" and bool(_FBID.match(str(node.get("id") or "")))
+    if kind == "Photo":
+        return True
+    # Some photo-page payloads omit __typename but still carry a photo id, image, and tags.
+    has_image = isinstance(node.get("image"), dict) or isinstance(node.get("viewer_image"), dict)
+    return has_image and isinstance(node.get("tags"), (dict, list))
 
 
 def _caption(node: dict) -> str | None:
@@ -754,6 +768,11 @@ def _tags(node: dict) -> tuple[list[dict], int]:
     def walk(obj) -> None:
         if isinstance(obj, dict):
             taggee = obj.get("taggee")
+            if not isinstance(taggee, dict):
+                # Live photo pages (2026-11-22): the person is tags.edges[].node, not taggee.
+                node = obj.get("node")
+                if isinstance(node, dict) and (node.get("name") or node.get("id")):
+                    taggee = node
             if isinstance(taggee, dict):
                 _add_tag(people, seen, taggee)
             elif obj.get("__typename") in ("User", "Page") and obj.get("name") and obj.get("id"):
@@ -890,8 +909,8 @@ def photos_in(payload) -> list[dict]:
     for node in nodes:
         for obj in _walk_dicts(node):
             photo = photo_record(obj)
-            if photo and photo["id"] not in found:
-                found[photo["id"]] = photo
+            if photo:
+                found[photo["id"]] = prefer_photo(found[photo["id"]], photo) if photo["id"] in found else photo
     if found:
         return list(found.values())
     if isinstance(payload, str):
@@ -1060,17 +1079,50 @@ def _snippet_says_friend(snippet: str) -> bool:
     return bool(_NOT_FRIEND.search(_MUTUAL_FRIENDS.sub("", snippet)))
 
 
+def _cta_friendship_status(view: dict) -> str | None:
+    """friendship_status often sits on the CTA's nested profile, not the result profile."""
+    found = []
+
+    def walk(obj) -> None:
+        if isinstance(obj, dict):
+            status = obj.get("friendship_status")
+            if isinstance(status, str):
+                found.append(status)
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    walk(view.get("ctas"))
+    for status in found:
+        if status in FRIEND_STATUSES:
+            return status
+    return found[0] if found else None
+
+
+def _is_friend(view: dict, profile: dict, snippet: str | None) -> bool:
+    status = profile.get("friendship_status") or view.get("friendship_status") or _cta_friendship_status(view)
+    closeness = profile.get("friendship_closeness") or view.get("friendship_closeness")
+    if isinstance(status, str) and status in NOT_FRIEND_STATUSES:
+        # An explicit not-friend status wins over a leftover closeness value.
+        if not (isinstance(closeness, str) and closeness in FRIEND_CLOSENESS):
+            return False
+    if isinstance(status, str) and status in FRIEND_STATUSES:
+        return True
+    if isinstance(closeness, str) and closeness in FRIEND_CLOSENESS:
+        return True
+    return _snippet_says_friend(snippet or "")
+
+
 def _friend_hit(view: dict, profile: dict, tokens: set[str]) -> dict | None:
     if profile.get("__typename") not in (None, "User"):
         return None
     name = profile.get("name")
     if not isinstance(name, str) or not tokens <= _words(name):
         return None
-    status = profile.get("friendship_status") or view.get("friendship_status")
     snippet = _snippet(view)
-    if isinstance(status, str) and status not in FRIEND_STATUSES:
-        return None
-    if not (isinstance(status, str) and status in FRIEND_STATUSES) and not _snippet_says_friend(snippet or ""):
+    if not _is_friend(view, profile, snippet):
         return None
     url = profile.get("url") if isinstance(profile.get("url"), str) else None
     person = person_from_url(url) if url else None
