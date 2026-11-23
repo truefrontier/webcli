@@ -18,24 +18,33 @@ from webcli.core.output import (
     EXIT_AUTH,
     EXIT_NOT_FOUND,
     EXIT_OK,
+    EXIT_USAGE,
     agent_output_options,
     die,
     effects,
     emit_json,
     emit_rows,
+    json_flag,
     note,
     resolve_format,
     write_atomic,
 )
 from webcli.sites import data
 from webcli.sites.facebook import ADAPTER as SITE
-from webcli.sites.facebook import enrich, fetch, store
+from webcli.sites.facebook import enrich, faces, fetch, parse, store
+from webcli.sites.facebook.endpoints import PHOTO_MAX
 from webcli.sites.facebook.parse import Person, person_from_arg
 
 SEARCH_FIELDS = ["key", "name", "subtitle", "city", "employer", "role", "linkedin", "profileUrl", "aboutFetchedAt",
                  "enrichedAt"]
 SEARCH_COMPACT = ("key", "name", "city", "employer")
 SEARCH_COLUMNS = ["key", "name", "city", "employer", "role", "subtitle"]
+FRIEND_FIELDS = ["id", "name", "username", "profileUrl", "snippet"]
+FRIEND_COMPACT = ("id", "name", "profileUrl")
+FRIEND_COLUMNS = ["name", "id", "profileUrl"]
+PHOTO_FIELDS = ["id", "imageUrl", "caption", "createdTime", "owner", "photoUrl", "tags", "tagCount", "faceCount"]
+PHOTO_COMPACT = ("id", "createdTime", "tagCount")
+PHOTO_COLUMNS = ["id", "createdTime", "caption", "tagCount"]
 NOTES = [
     "Identity facebook:default, its own profile (not Muse's meta:default). When `status` exits 4, a person runs "
     "`webcli identity login facebook:default` and signs in to Facebook; it finishes once Facebook's own session is "
@@ -51,17 +60,33 @@ NOTES = [
     "unless the About tab lists one, and webSearch says \"unavailable\".",
     "`sync` prints {synced, new, updated, cachedFriends, scrolls, complete, blocked}; complete false means the list "
     "may be short (run it again, or see blocked).",
+    "`friends search NAME` asks Facebook (it does not read the local cache) for friends whose name contains every "
+    "word, and prints id, name, username, profileUrl, snippet. No match exits 3. Signed out exits 4.",
+    "`photos list` and `photos download` read the profile's Photos of tab (photos they are tagged in) by default, "
+    "or Uploads with --uploads. Each photo is id, imageUrl (largest rendition in Facebook's own photo data), "
+    "caption, createdTime, owner (who posted it), photoUrl, tags [{id, name}], tagCount. --solo keeps a photo only "
+    "when that tag list is exactly this person. --since is inclusive (a photo with no time is left out). "
+    f"No --limit reads the tab until it ends, capped at {PHOTO_MAX}.",
+    "`photos download --out DIR` saves full-size images (the photo page's largest rendition) and manifest.json. "
+    "A file already in DIR is skipped, so a stopped run can be re-run. There is a pause between photos. "
+    "--max-faces N counts faces on the image on this machine and drops a photo with more than N; it needs "
+    "`pip install 'truefrontier-webcli[faces]'` (OpenCV, no cloud API). The count is faceCount in the manifest. "
+    "The detector can miss a face in profile or a small face.",
+    "The Photos of and Uploads paths, and the GraphQL operation names, are the ones Facebook has used for those "
+    "tabs. A live session is what confirms them: a blocked query is named in the output, and nothing is guessed "
+    "into an empty success.",
     "`export --format` is the FILE format (json|csv). Default file: ~/.webcli/sites/facebook/exports/"
     "facebook-<UTC time>.<format>, mode 0600.",
 ]
 WRITES = [
-    "Nothing on Facebook: no friending, messages, reactions, comments, posts, pokes, follows, or settings. Nothing "
-    "clicks, types, or submits; the guard aborts every request but page loads and the read-only queries in "
-    "endpoints.py.",
-    "Local only: `sync`, `about`, `enrich`, and `search --enrich` update the cache; `export` writes a file (0600).",
+    "Nothing on Facebook: no friending, messages, reactions, comments, posts, pokes, follows, tag changes, or "
+    "settings. Nothing clicks, types, or submits; the guard aborts every request but page loads and the read-only "
+    "queries in endpoints.py. A GraphQL mutation is never allowed, including for photos and friend search.",
+    "Local only: `sync`, `about`, `enrich`, and `search --enrich` update the cache; `export` writes a file (0600); "
+    "`photos download` writes image files and manifest.json into --out (0600).",
 ]
 
-group = data.site_group(SITE, "Facebook friends: sync, search, about, enrich, export; read-only on Facebook "
+group = data.site_group(SITE, "Facebook friends and photos of a person, read-only on Facebook "
                               "(unofficial). Identity facebook:default.")
 
 
@@ -74,9 +99,26 @@ def _person_arg(ctx: click.Context, param: click.Parameter, value: str | None) -
         raise click.BadParameter(str(exc)) from None
 
 
-def _call(op: str, *args) -> Any:
+def _call(op: str, *args, **kwargs) -> Any:
     data.need_profile()
-    return data.call(SITE, op, *args)
+    return data.call(SITE, op, *args, **kwargs)
+
+
+def _since_opt(ctx: click.Context, param: click.Parameter, value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return parse.since_iso(parse.parse_since(value))
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from None
+
+
+def _need_faces(max_faces: int | None) -> None:
+    if max_faces is None:
+        return
+    if not faces.available():
+        die("Face counting needs the optional on-device detector (OpenCV). It is not installed.", EXIT_USAGE,
+            hint="pip install 'truefrontier-webcli[faces]'  (on-device OpenCV; no cloud API)")
 
 
 def _cell(value: Any) -> str:
@@ -283,6 +325,96 @@ def export_cmd(fmt: str, out: str | None, quiet: bool) -> None:
         emit_json(summary)
     else:
         click.echo(f"Wrote {len(people)} people to {path}")
+    raise SystemExit(EXIT_OK)
+
+
+@group.group("friends")
+def friends_group() -> None:
+    """Look up one of your friends on Facebook (read-only; uses the signed-in session, not the local cache)."""
+
+
+@effects("never")
+@friends_group.command("search")
+@click.argument("name")
+@click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Max friends.")
+@json_flag
+@agent_output_options()
+def friends_search_cmd(name, limit, fmt, compact, select, as_csv, quiet) -> None:
+    """Resolve a friend's profile id and URL. Exit 3 when none match; exit 4 when signed out."""
+    result = _call("friend_search", name, limit)
+    rows = result["friends"]
+    if not rows:
+        die(f"No friend named {name!r}.", EXIT_NOT_FOUND)
+    emit_rows(rows, title=f"Friends matching {name}", fields=FRIEND_FIELDS, compact_fields=FRIEND_COMPACT,
+              columns=FRIEND_COLUMNS, noun="friends", fmt=fmt, compact=compact, select=select, quiet=quiet,
+              as_csv=as_csv)
+    if not result["complete"]:
+        note("The search may be cut short (see a later run's blocked list, or raise --limit).", quiet=quiet)
+    raise SystemExit(EXIT_OK)
+
+
+@group.group("photos")
+def photos_group() -> None:
+    """Photos a person is tagged in (Photos of), or photos they uploaded. Read-only."""
+
+
+@effects("never")
+@photos_group.command("list")
+@click.argument("profile", metavar="ID|URL", callback=_person_arg)
+@click.option("--of/--uploads", "tagged", default=True,
+              help="Photos of this person (tagged; the default), or their Uploads.")
+@click.option("--limit", default=None, type=click.IntRange(min=1),
+              help=f"At most N photos (default: the whole tab, cap {PHOTO_MAX}).")
+@click.option("--since", default=None, callback=_since_opt,
+              help="Only photos on or after this date (YYYY-MM-DD or ISO-8601).")
+@click.option("--solo", is_flag=True, help="Only photos where this person is the only one tagged.")
+@click.option("--max-faces", default=None, type=click.IntRange(min=0),
+              help="Keep a photo only when an on-device face count is at most N.")
+@json_flag
+@agent_output_options()
+def photos_list_cmd(profile, tagged, limit, since, solo, max_faces, fmt, compact, select, as_csv, quiet) -> None:
+    """Photos from the profile's Photos of tab (or Uploads). Exit 4 when signed out, 3 when none match."""
+    _need_faces(max_faces)
+    result = _call("photos", fetch.person_dict(profile), mode="of" if tagged else "uploads", limit=limit,
+                   since=since, solo=solo, max_faces=max_faces)
+    rows = result["photos"]
+    if not rows:
+        die(f"No photos of {profile.key} match.", EXIT_NOT_FOUND)
+    emit_rows(rows, title=f"Photos of {result['subject'].get('name') or profile.key}", fields=PHOTO_FIELDS,
+              compact_fields=PHOTO_COMPACT, columns=PHOTO_COLUMNS, noun="photos", fmt=fmt, compact=compact,
+              select=select, quiet=quiet, as_csv=as_csv)
+    if result.get("dropped"):
+        note(f"{result['dropped']} photos were over {max_faces} faces or unreadable.", quiet=quiet)
+    if not result["complete"] or result["blocked"]:
+        note("The list may be short. Blocked requests: " + ("; ".join(result["blocked"]) or "none") + ". "
+             "A blocked query name can be added to PHOTO_QUERIES once you know it only reads.", quiet=quiet)
+    raise SystemExit(EXIT_OK)
+
+
+@effects("never")
+@photos_group.command("download")
+@click.argument("profile", metavar="ID|URL", callback=_person_arg)
+@click.option("--out", required=True, type=click.Path(file_okay=False),
+              help="Directory for the images and manifest.json.")
+@click.option("--of/--uploads", "tagged", default=True,
+              help="Photos of this person (tagged; the default), or their Uploads.")
+@click.option("--limit", default=None, type=click.IntRange(min=1),
+              help=f"At most N photos (default: the whole tab, cap {PHOTO_MAX}).")
+@click.option("--since", default=None, callback=_since_opt,
+              help="Only photos on or after this date (YYYY-MM-DD or ISO-8601).")
+@click.option("--solo", is_flag=True, help="Only photos where this person is the only one tagged.")
+@click.option("--max-faces", default=None, type=click.IntRange(min=0),
+              help="Keep a photo only when an on-device face count is at most N. Recorded as faceCount.")
+@json_flag
+@agent_output_options(rows=False)
+def photos_download_cmd(profile, out, tagged, limit, since, solo, max_faces, fmt, quiet) -> None:
+    """Save full-size images and manifest.json. Skips files already downloaded. Exit 4 when signed out."""
+    _need_faces(max_faces)
+    saved = _call("photos_download", fetch.person_dict(profile), data.out_dir(out), mode="of" if tagged else "uploads",
+                  limit=limit, since=since, solo=solo, max_faces=max_faces)
+    _emit_record("facebook photos download", saved, fmt)
+    if not saved["complete"] or saved["blocked"]:
+        note("The save may be short. Blocked requests: " + ("; ".join(saved["blocked"]) or "none") + ".", quiet=quiet)
     raise SystemExit(EXIT_OK)
 
 

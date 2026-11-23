@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.0rc4 / llmcli 0.9.0rc4 (2026-11-23)
+
+Fourth release candidate. Adds a read-only Facebook photos reader. Still a **pre-release**:
+`pip install --pre truefrontier-webcli==1.0.0rc4`. Writes and sends stay behind `--confirm`.
+
+### Added
+
+- **`webcli facebook friends search NAME`.** Resolves a friend on the signed-in account (not the local cache):
+  id, name, username, profile URL. Every word of the name has to be a whole word of theirs, and they have to be a
+  friend. No match exits 3. Signed out exits 4.
+- **`webcli facebook photos list` and `photos download`.** Default is the profile's Photos of tab (photos that
+  person is tagged in). `--uploads` is the Uploads tab. Fields: id, full-size image URL, caption, created time,
+  owner, photo page URL, `tags`, `tagCount`. `--solo` keeps a photo only when Facebook's tag list is exactly that
+  person. `--since` is inclusive. Download writes full-size images and `manifest.json` into `--out` and skips files
+  already there.
+- **`--max-faces N`** (optional, with or without `--solo`). Counts faces on the downloaded image on this machine
+  and drops a photo with more than N. The count is `faceCount` in `--json` and in the manifest. Install with
+  `pip install 'truefrontier-webcli[faces]'` (OpenCV, no cloud API). Missing extra exits 2 and names that install.
+- Nothing on Facebook changes: no likes, comments, messages, tag changes, or friend requests. A GraphQL mutation
+  is refused for these commands the same way it is for `sync`.
+
+The Photos of / Uploads paths and the GraphQL operation names are the ones Facebook has used for those tabs.
+A live session is what confirms them. Doc ids are not pinned. A blocked query is named in the output.
+
+### Changed
+
+- chromecli's extension `version` stays 0.18.3 (same key and extension ID). `version_name` is `1.0.0rc4`.
+- llmcli and llmcli-bare are `0.9.0rc4` and depend on `truefrontier-webcli==1.0.0rc4`.
+
 ## 1.0.0rc3 / llmcli 0.9.0rc3 (2026-11-14)
 
 Third release candidate. Folds the open hardening fixes and archived-CLI ports onto 1.0.0rc2. Still a **pre-release**:

@@ -1,0 +1,79 @@
+{
+  "data": {
+    "userID": "100004567890123",
+    "node": {
+      "__typename": "TimelineAppCollection",
+      "pageItems": {
+        "edges": [
+          {
+            "node": {
+              "__typename": "Photo",
+              "id": "9001001",
+              "url": "https://www.facebook.com/photo/?fbid=9001001&set=pcb.1",
+              "created_time": 1719792000,
+              "accessibility_caption": "May be an image of one person",
+              "message": {"text": "At the lake"},
+              "viewer_image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001001_thumb.jpg", "width": 480, "height": 360},
+              "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001001_full.jpg", "width": 2048, "height": 1536},
+              "owner": {"__typename": "User", "id": "100009876543210", "name": "Eve Adams", "url": "https://www.facebook.com/eve.adams"},
+              "tags": {
+                "edges": [
+                  {
+                    "node": {
+                      "__typename": "PhotoTag",
+                      "taggee": {
+                        "__typename": "User",
+                        "id": "100004567890123",
+                        "name": "Jane Doe",
+                        "url": "https://www.facebook.com/jane.doe",
+                        "profile_picture": {"uri": "https://scontent.xx.fbcdn.net/v/t1/jane_avatar.jpg", "width": 40, "height": 40}
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "__typename": "Photo",
+              "id": "9001002",
+              "url": "https://www.facebook.com/photo/?fbid=9001002",
+              "created_time": 1722470400,
+              "message": {"text": "Family picnic"},
+              "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001002_full.jpg", "width": 1600, "height": 1200},
+              "owner": {"__typename": "User", "id": "100001111111111", "name": "Sam Rivera", "url": "https://www.facebook.com/sam.rivera"},
+              "tags": {
+                "count": 2,
+                "edges": [
+                  {"node": {"__typename": "PhotoTag", "taggee": {"__typename": "User", "id": "100004567890123", "name": "Jane Doe", "url": "https://www.facebook.com/jane.doe"}}},
+                  {"node": {"__typename": "PhotoTag", "taggee": {"__typename": "User", "id": "100001111111111", "name": "Sam Rivera", "url": "https://www.facebook.com/sam.rivera"}}}
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "__typename": "Photo",
+              "id": "9001003",
+              "created_time": 1546300800,
+              "message": {"text": "Old portrait"},
+              "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001003_full.jpg", "width": 1024, "height": 768},
+              "owner": {"__typename": "User", "id": "100004567890123", "name": "Jane Doe", "url": "https://www.facebook.com/jane.doe"},
+              "tags": {"edges": [{"node": {"__typename": "User", "id": "100004567890123", "name": "Jane Doe"}}]}
+            }
+          },
+          {
+            "node": {
+              "__typename": "Photo",
+              "id": "9001004",
+              "created_time": 1725148800,
+              "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001004_full.jpg", "width": 800, "height": 600},
+              "owner": {"__typename": "User", "id": "100009876543210", "name": "Eve Adams", "url": "https://www.facebook.com/eve.adams"}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

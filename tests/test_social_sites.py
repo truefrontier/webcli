@@ -36,14 +36,16 @@ from test_no_visible_window import assert_hidden
 SITES = {"linkedin": "linkedin", "facebook": "facebook", "loom": "loom", "messages": "messages"}
 VERBS = {
     "linkedin": {"messages", "activity", "boost", "post", "feed", "posts", "status", "agent-help"},
-    "facebook": {"sync", "search", "about", "enrich", "export", "status", "agent-help"},
+    "facebook": {"sync", "search", "about", "enrich", "export", "status", "friends", "photos", "agent-help"},
     "loom": {"list", "info", "transcript", "status", "agent-help"},
     "messages": {"list", "threads", "read", "search", "send", "status", "agent-help"},
 }
 SUBVERBS = {("linkedin", "messages"): {"list", "history", "read", "send"},
             ("linkedin", "activity"): {"comments", "reactions", "posts", "export"},
             ("linkedin", "boost"): {"list", "stats"}, ("linkedin", "post"): {"create"},
-            ("linkedin", "posts"): {"search", "from", "read"}}
+            ("linkedin", "posts"): {"search", "from", "read"},
+            ("facebook", "friends"): {"search"},
+            ("facebook", "photos"): {"list", "download"}}
 ROWS = {"--format", "--compact", "--select", "--csv", "--quiet"}
 RECORD = {"--format", "--quiet"}
 WINDOW = {"--since", "--until"}
@@ -73,6 +75,10 @@ WIRING = [
     ("facebook", "enrich", ["ID|URL"], {"--refresh", "--no-web"} | RECORD),
     ("facebook", "search", [], {"--name", "--city", "--employer", "--keyword", "--limit", "--enrich", "--no-web"} | ROWS),
     ("facebook", "export", [], {"--format", "--out", "--quiet"}),
+    ("facebook", "friends search", ["NAME"], {"--limit", "--json"} | ROWS),
+    ("facebook", "photos list", ["ID|URL"], {"--of", "--limit", "--since", "--solo", "--max-faces", "--json"} | ROWS),
+    ("facebook", "photos download", ["ID|URL"], {"--out", "--of", "--limit", "--since", "--solo", "--max-faces", "--json"}
+     | RECORD),
     ("loom", "status", [], RECORD),
     ("loom", "list", [], {"--limit", "--id-only"} | ROWS),
     ("loom", "info", ["VIDEO"], ROWS),
@@ -91,7 +97,9 @@ HIDDEN_COMMANDS = [
     ("loom", "status"), ("loom", "list"), ("loom", "list", "--limit", "3"), ("loom", "info", VID),
     ("loom", "transcript", f"https://www.loom.com/share/{VID}"),
     ("facebook", "status"), ("facebook", "sync"), ("facebook", "sync", "--limit", "5"), ("facebook", "about", "jane.doe"),
-    ("facebook", "enrich", "jane.doe"),
+    ("facebook", "enrich", "jane.doe"), ("facebook", "friends", "search", "Jane Doe"),
+    ("facebook", "photos", "list", "jane.doe"), ("facebook", "photos", "list", "jane.doe", "--solo"),
+    ("facebook", "photos", "download", "jane.doe", "--out", "/tmp/facebook-photos"),
     ("linkedin", "status"), ("linkedin", "messages", "list"), ("linkedin", "messages", "history", "Boardy"),
     ("linkedin", "messages", "read", "2-abc"), ("linkedin", "activity", "comments"),
     ("linkedin", "activity", "reactions", "--since", "2026-10-01"), ("linkedin", "activity", "posts"),
@@ -230,6 +238,9 @@ def test_identity_login_is_the_only_visible_path(fake_playwright, ident):
 
 @pytest.mark.parametrize("args", [("loom", "list"), ("loom", "info", VID), ("loom", "transcript", VID),
                                   ("facebook", "sync"), ("facebook", "about", "jane.doe"),
+                                  ("facebook", "friends", "search", "Jane"),
+                                  ("facebook", "photos", "list", "jane.doe"),
+                                  ("facebook", "photos", "download", "jane.doe", "--out", "/tmp/facebook-photos"),
                                   ("linkedin", "messages", "list"), ("linkedin", "activity", "export"),
                                   ("linkedin", "boost", "list"), ("linkedin", "messages", "send", "x", "--text", "hi"),
                                   ("messages", "list"), ("messages", "read", "Alice"), ("messages", "search", "ali"),
@@ -285,7 +296,10 @@ def test_notable_defaults():
                                   ("linkedin", "boost", "list", "--since", "2026-10-09", "--until", "2026-10-01"),
                                   ("linkedin", "messages", "send", "x", "--text", "   "),
                                   ("messages", "send", "--to", "x", "--text", "   "), ("messages", "read", "  "),
-                                  ("linkedin", "post", "create", "--text", "hi", "--image", "/nonexistent.png")])
+                                  ("linkedin", "post", "create", "--text", "hi", "--image", "/nonexistent.png"),
+                                  ("facebook", "photos", "list", "not a person!"),
+                                  ("facebook", "photos", "list", "jane.doe", "--since", "last tuesday"),
+                                  ("facebook", "friends", "search", "   ")])
 def test_bad_input_is_a_usage_error_before_any_chrome(fake_playwright, profiles, args):
     assert run(*args).exit_code == 2
     assert fake_playwright == []

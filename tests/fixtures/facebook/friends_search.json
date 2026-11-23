@@ -1,0 +1,52 @@
+{
+  "data": {
+    "serpResponse": {
+      "results": {
+        "edges": [
+          {
+            "node": {
+              "view_model": {
+                "profile": {
+                  "__typename": "User",
+                  "id": "100004567890123",
+                  "name": "Jane Doe",
+                  "url": "https://www.facebook.com/jane.doe",
+                  "friendship_status": "ARE_FRIENDS"
+                },
+                "primary_snippet_text": "Friends · Springfield, Missouri"
+              }
+            }
+          },
+          {
+            "node": {
+              "view_model": {
+                "profile": {
+                  "__typename": "User",
+                  "id": "100009876543210",
+                  "name": "Eve Adams",
+                  "url": "https://www.facebook.com/eve.adams",
+                  "friendship_status": "CAN_REQUEST"
+                },
+                "primary_snippet_text": "Lives in Springfield, Missouri"
+              }
+            }
+          },
+          {
+            "node": {
+              "view_model": {
+                "profile": {
+                  "__typename": "User",
+                  "id": "100008888888888",
+                  "name": "Janet Doe-Example",
+                  "url": "https://www.facebook.com/janet.doe.example",
+                  "friendship_status": "ARE_FRIENDS"
+                },
+                "primary_snippet_text": "Friends"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

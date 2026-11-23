@@ -7,7 +7,7 @@ webcli lets an AI agent use websites you're already signed in to, as you, from y
 webcli 1.0 lets you build a small tool for a site you use, keep it on your machine, and optionally share it.
 
 ```sh
-pip install --pre 'truefrontier-webcli==1.0.0rc3'   # pre-release; stable stays 0.18.x without --pre
+pip install --pre 'truefrontier-webcli==1.0.0rc4'   # pre-release; stable stays 0.18.x without --pre
 webcli new mysite --url https://example.com         # scaffold a read-only tool
 webcli lint mysite && webcli test mysite
 webcli tools search                                 # the library: community tools + official built-ins
@@ -77,7 +77,7 @@ Only a person should run sign-ins. They open a visible window, and some ask for 
 - `gnews`: your Google News "For you" feed. Read-only.
 - `perplexity`: Perplexity Discover's news. Read-only.
 - `linkedin`: your messages, activity, feed, post search, and Boost stats. Can send one DM or publish one post.
-- `facebook`: your friends list. Read-only on Facebook.
+- `facebook`: your friends list, and photos of a person (the Photos of tab, or Uploads). Read-only on Facebook. `--solo` keeps photos where that person is the only one tagged. `--max-faces N` counts faces on this machine (`pip install 'truefrontier-webcli[faces]'`, OpenCV, no cloud API) and drops a photo with more than N.
 - `loom`: your Loom library and official transcripts. Read-only.
 - `messages`: your phone's texts, through Google Messages for web. Can send a text.
 - `whatsapp`: your WhatsApp chats, through WhatsApp Web (unofficial). Can send a text to an existing chat.
