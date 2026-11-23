@@ -173,7 +173,16 @@ async def friend_search(name: str, limit: int = 20, *, headed: bool = False) -> 
         return fresh, len(fresh)
 
     async with browser.site_page(read_policy(FRIEND_SEARCH_QUERIES)) as page:
-        result = await _gather(page, parse.friends_search_url(query), limit=limit, accept=accept)
+        try:
+            result = await _gather(page, parse.friends_search_url(query), limit=limit, accept=accept)
+        except NotFound as exc:
+            if "isn't available" in str(exc).lower():
+                raise NotFound(
+                    "Facebook didn't render people search (the page said it isn't available).",
+                    hint="Retry, or look the person up in the local cache: webcli facebook search --name NAME "
+                         "(run `webcli facebook sync` first).",
+                ) from exc
+            raise
     if not result["rows"]:
         if result["blocked"]:
             raise RuntimeError("No friends parsed, and the guard blocked requests the search page sent. "
@@ -217,6 +226,15 @@ async def _collect(page: "Page", who: parse.Person, *, mode: str, limit: int | N
     return {**result, "photos": result.pop("rows"), "subject": subject, "mode": mode}
 
 
+def _needs_page(photo: dict, *, since: str | None, solo: bool) -> bool:
+    """The photos tab's grid JSON has no tags or times; those live on the photo page."""
+    if solo and not (photo.get("tags") and photo.get("tagCount")):
+        return True
+    if since and not photo.get("createdTime"):
+        return True
+    return False
+
+
 async def _file_bytes(page: "Page", url: str) -> tuple[bytes, str]:
     """GET one CDN image through Chrome. Errors name the host and path only, never the query or a cookie."""
     status, headers, body = await google.fetch_file(page, url, image_url_allowed, what="the photo")
@@ -229,8 +247,8 @@ async def _file_bytes(page: "Page", url: str) -> tuple[bytes, str]:
     return body, ctype
 
 
-async def _full_image(page: "Page", photo: dict) -> tuple[str, bytes, str]:
-    """The photo page's largest rendition, then its bytes. One polite pause per photo."""
+async def _photo_page_payloads(page: "Page", photo: dict) -> tuple[dict, list]:
+    """Open the photo page and return the merged record plus the payloads it produced."""
     await fetch.pause(DOWNLOAD_PAUSE)
     capture = ResponseCapture()
     capture.attach(page)
@@ -240,11 +258,30 @@ async def _full_image(page: "Page", photo: dict) -> tuple[str, bytes, str]:
     payloads = capture.take()
     if html:
         payloads.append(html)
-    url = parse.best_image_for(payloads, photo["id"], photo.get("imageUrl"))
+    richer = photo
+    for item in parse.photos_from(payloads):
+        if item["id"] == photo["id"]:
+            richer = parse.prefer_photo(richer, item)
+    url = parse.best_image_for(payloads, photo["id"], richer.get("imageUrl"))
+    if url:
+        richer = {**richer, "imageUrl": url}
+    return richer, payloads
+
+
+async def _enrich_photo(page: "Page", photo: dict) -> dict:
+    """Open the photo page and merge tags, time, caption, owner, and a larger image."""
+    richer, _payloads = await _photo_page_payloads(page, photo)
+    return richer
+
+
+async def _full_image(page: "Page", photo: dict) -> tuple[str, bytes, str, dict]:
+    """The photo page's largest rendition, then its bytes. One polite pause per photo."""
+    richer, payloads = await _photo_page_payloads(page, photo)
+    url = richer.get("imageUrl") or parse.best_image_for(payloads, photo["id"], photo.get("imageUrl"))
     if not url:
         raise RuntimeError(f"Photo {photo['id']} has no image URL. {fetch.SELECTOR_HINT}")
     body, ctype = await _file_bytes(page, url)
-    return url, body, ctype
+    return url, body, ctype, {**richer, "imageUrl": url}
 
 
 def _ext(ctype: str) -> str:
@@ -258,8 +295,30 @@ async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, 
         faces.require()
     person = fetch.person(who)
     async with browser.site_page(read_policy(PHOTO_QUERIES)) as page:
-        result = await _collect(page, person, mode=mode, limit=limit, since=since, solo=solo)
-        photos = result["photos"]
+        # The grid often has no tags or times, so --solo/--since cannot be applied until
+        # each photo page is read. Collect the tab first, then enrich until `limit` matches.
+        need_pages = bool(solo or since)
+        result = await _collect(page, person, mode=mode, limit=None if need_pages else limit,
+                                since=None if need_pages else since, solo=False)
+        subject = result["subject"]
+        candidates = result["photos"]
+        photos = []
+        if need_pages:
+            for photo in candidates:
+                if _needs_page(photo, since=since, solo=solo):
+                    try:
+                        photo = await _enrich_photo(page, photo)
+                    except AuthRequired:
+                        raise
+                    except (RuntimeError, ValueError, OSError):
+                        continue
+                if not _passes(photo, since, solo, subject):
+                    continue
+                photos.append(photo)
+                if limit and len(photos) >= limit:
+                    break
+        else:
+            photos = candidates
         dropped = 0
         if max_faces is not None:
             kept = []
@@ -267,7 +326,7 @@ async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, 
                 if limit and len(kept) >= limit:
                     break
                 try:
-                    url, body, _ctype = await _full_image(page, photo)
+                    url, body, _ctype, photo = await _full_image(page, photo)
                     count = faces.count_faces(body)
                 except AuthRequired:
                     raise
@@ -342,10 +401,17 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
     person = fetch.person(who)
     downloaded = skipped = dropped = 0
     async with browser.site_page(read_policy(PHOTO_QUERIES)) as page:
-        result = await _collect(page, person, mode=mode, limit=limit, since=since, solo=solo)
-        photos = result["photos"]
+        need_pages = bool(solo or since)
+        result = await _collect(page, person, mode=mode, limit=None if need_pages else limit,
+                                since=None if need_pages else since, solo=False)
+        subject = result["subject"]
         entries: list[dict] = []
-        for photo in photos:
+        kept_ids: list[str] = []
+        for photo in result["photos"]:
+            if limit and len(kept_ids) >= limit:
+                break
+            if (solo or since) and not _passes(photo, since, solo, subject) and not _needs_page(photo, since=since, solo=solo):
+                continue
             prior = previous.get(photo["id"]) or {}
             existing = _existing_file(out, photo["id"])
             have_count = prior.get("faceCount") is not None
@@ -354,6 +420,7 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
                 keep = True if max_faces is None else count <= max_faces
                 if keep:
                     skipped += 1
+                    kept_ids.append(photo["id"])
                     entries.append(_entry(photo, file=existing.name, size=existing.stat().st_size, kept=True,
                                           face_count=count))
                 else:
@@ -369,6 +436,7 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
                     count = None
                 if count is not None and count <= max_faces:
                     skipped += 1
+                    kept_ids.append(photo["id"])
                     entries.append(_entry(photo, file=existing.name, size=existing.stat().st_size, kept=True,
                                           face_count=count))
                     _save(manifest_path, result, entries, previous, max_faces, since, solo)
@@ -380,7 +448,7 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
                     _save(manifest_path, result, entries, previous, max_faces, since, solo)
                     continue
             try:
-                url, body, ctype = await _full_image(page, photo)
+                url, body, ctype, photo = await _full_image(page, photo)
             except AuthRequired:
                 raise
             except (RuntimeError, OSError) as exc:
@@ -388,6 +456,10 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
                 entries.append({**_entry(photo, file=None, size=0, kept=False, face_count=None), "error": str(exc)})
                 _save(manifest_path, result, entries, previous, max_faces, since, solo)
                 continue
+            if not _passes(photo, since, solo, subject):
+                continue
+            if limit and len(kept_ids) >= limit:
+                break
             count = None
             if max_faces is not None:
                 try:
@@ -402,6 +474,7 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
             name = f"{photo['id']}.{_ext(ctype)}"
             path = google.save_file(out, name, body)
             downloaded += 1
+            kept_ids.append(photo["id"])
             entries.append(_entry({**photo, "imageUrl": url}, file=path.name, size=len(body), kept=True,
                                   face_count=count))
             _save(manifest_path, result, entries, previous, max_faces, since, solo)

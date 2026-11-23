@@ -8,7 +8,6 @@ suite does not need the faces extra.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import stat
@@ -229,8 +228,7 @@ def test_photo_and_search_urls_and_the_friends_filter():
     url = parse.friends_search_url("Jane Doe")
     query = parse_qs(urlsplit(url).query)
     assert urlsplit(url).path == "/search/people/" and query["q"] == ["Jane Doe"]
-    filters = json.loads(base64.b64decode(query["filters"][0]))
-    assert json.loads(filters["friends"]) == {"name": "friends", "args": ""}
+    assert "filters" not in query  # a friends-only filters token made Facebook render an error page
 
 
 def test_friend_search_keeps_friends_and_whole_words():
@@ -245,6 +243,67 @@ def test_friend_search_keeps_friends_and_whole_words():
                                 "url": f"{FB}/pat.example"},
                     "primary_snippet_text": "Friends · Springfield"}
     assert parse.friend_hits([snippet_only], "Pat")[0]["id"] == "100007777777777"
+    singular = {"profile": {"__typename": "User", "id": "100007777777778", "name": "Pat Example",
+                            "url": f"{FB}/pat.example"},
+                "primary_snippet_text": "Friend · Springfield"}
+    assert parse.friend_hits([singular], "Pat")[0]["id"] == "100007777777778"
+
+
+def test_friend_search_reads_live_closeness_and_cta_status():
+    """Live people-search puts NORMAL_FRIEND / ARE_FRIENDS off the path the first fixtures used."""
+    closeness = {"profile": {"__typename": "User", "id": "100001234567890", "name": "Jane Doe",
+                             "url": f"{FB}/jane.doe", "friendship_closeness": "NORMAL_FRIEND"},
+                 "primary_snippet_text_with_entities": None}
+    assert parse.friend_hits([closeness], "Jane Doe")[0]["id"] == "100001234567890"
+    not_friend = {"profile": {"__typename": "User", "id": "100001234567891", "name": "Jane Doe",
+                              "url": f"{FB}/jane.doe", "friendship_closeness": "NOT_FRIENDED"},
+                  "ctas": {"primary": [{"__typename": "SearchCTATypeUserFriendRenderingStrategy",
+                                        "profile": {"__typename": "User", "id": "100001234567891",
+                                                    "friendship_status": "CAN_REQUEST"}}]}}
+    assert parse.friend_hits([not_friend], "Jane Doe") == []
+    via_cta = {"profile": {"__typename": "User", "id": "100001234567892", "name": "Jane Doe",
+                           "url": f"{FB}/jane.doe", "friendship_closeness": "NOT_FRIENDED"},
+               "ctas": {"primary": [{"profile": {"__typename": "User", "id": "100001234567892",
+                                                 "friendship_status": "ARE_FRIENDS"}}]}}
+    # closeness is the friend signal when present; an ARE_FRIENDS CTA also counts.
+    # This view has NOT_FRIENDED closeness and ARE_FRIENDS on the CTA: closeness wins only
+    # when it is a friend value. The CTA status should still keep a friend.
+    assert parse.friend_hits([via_cta], "Jane Doe")[0]["id"] == "100001234567892"
+
+
+def test_photo_tags_and_js_embeds_match_the_live_photo_page():
+    """The grid is a slim Photo; the photo page has tags on edges[].node, sometimes without __typename."""
+    slim = {"__typename": "Photo", "id": "9001001", "viewer_image": {
+        "uri": "https://scontent.xx.fbcdn.net/v/t39/9001001_thumb.jpg", "width": 48, "height": 48}}
+    rich = {
+        "__typename": "Photo",
+        "__isMedia": "Photo",
+        "id": "9001001",
+        "created_time": 1719792000,
+        "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001001_full.jpg", "width": 2048, "height": 1536},
+        "tags": {"edges": [{"node": {"__typename": "User", "id": JANE, "name": "Jane Doe",
+                                     "url": f"{FB}/jane.doe"},
+                            "tag": {"is_product_tag": False}}]},
+    }
+    typeless = {
+        "id": "9001999",
+        "image": {"uri": "https://scontent.xx.fbcdn.net/v/t39/9001999_full.jpg", "width": 800, "height": 600},
+        "tags": {"edges": [{"node": {"__typename": "User", "id": JANE, "name": "Jane Doe"}}]},
+    }
+    merged = parse.photos_from([slim, rich])
+    assert len(merged) == 1 and merged[0]["id"] == "9001001"
+    assert merged[0]["tagCount"] == 1 and merged[0]["tags"][0]["id"] == JANE
+    assert merged[0]["createdTime"] == "2024-07-01T00:00:00Z"
+    assert merged[0]["imageUrl"].endswith("9001001_full.jpg")
+    typeless_photos = parse.photos_from([typeless])
+    assert typeless_photos[0]["id"] == "9001999" and typeless_photos[0]["tagCount"] == 1
+    # A script that isn't JSON holds a slim Photo next to a richer parent; both must be found.
+    script = (
+        'boot(' + json.dumps({"nearby": slim, "currMedia": rich}, separators=(",", ":")) + ')'
+    )
+    from_js = parse.photos_from([f"<html><script>{script}</script></html>"])
+    found = {row["id"]: row for row in from_js}
+    assert found["9001001"]["tagCount"] == 1 and found["9001001"]["createdTime"]
 
 
 def test_photo_queries_are_reads_and_only_the_photos_command_may_send_them():
@@ -350,6 +409,10 @@ def test_friend_search_paginates_and_refuses_a_blocked_empty_page(photo_page):
     photo_page({parse.friends_search_url("Eve"): '<div role="main"><h1>Search</h1></div>'})
     with pytest.raises(NotFound, match="No friend"):
         asyncio.run(fetch.friend_search("Eve"))
+    photo_page({parse.friends_search_url("Error"):
+                "<div role='main'>This page isn't available right now. Try reloading this page.</div>"})
+    with pytest.raises(NotFound, match="didn't render people search"):
+        asyncio.run(fetch.friend_search("Error"))
     photo_page({parse.friends_search_url("Zoe"): LOGIN_PAGE})
     with pytest.raises(AuthRequired):
         asyncio.run(fetch.friend_search("Zoe"))
