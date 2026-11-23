@@ -206,8 +206,6 @@ async def _collect(page: "Page", who: parse.Person, *, mode: str, limit: int | N
     def accept(payloads, html: str) -> tuple[list[dict], int]:
         nonlocal subject
         batch = parse.photos_from(payloads)
-        if not subject:
-            subject = parse.photo_subject(who, page.url, payloads, html)
         fresh_raw = 0
         for photo in batch:
             current = photos.get(photo["id"])
@@ -219,14 +217,18 @@ async def _collect(page: "Page", who: parse.Person, *, mode: str, limit: int | N
                 if chosen is not current:
                     current.clear()
                     current.update(chosen)  # rows already handed out point at this dict
+        if not (subject.get("id") and subject.get("name")):
+            subject = _merge_subject(subject, parse.photo_subject(who, page.url, payloads, html))
+        subject = parse.bind_subject_from_photos(subject, list(photos.values()))
         matching = [item for item in photos.values() if item["id"] not in shown and _passes(item, since, solo, subject)]
         for item in matching:
             shown.add(item["id"])
         return matching, fresh_raw
 
     result = await _gather(page, parse.photos_url(who, mode), limit=limit, accept=accept)
-    if not subject:
-        subject = parse.photo_subject(who, page.url, [], result["html"])
+    if not (subject.get("id") and subject.get("name")):
+        subject = _merge_subject(subject, parse.photo_subject(who, page.url, [], result["html"]))
+    subject = parse.bind_subject_from_photos(subject, list(photos.values()))
     return {**result, "photos": result.pop("rows"), "subject": subject, "mode": mode}
 
 
@@ -292,6 +294,49 @@ def _ext(ctype: str) -> str:
     return _EXT.get(ctype, "jpg")
 
 
+
+def _merge_subject(old: dict, new: dict) -> dict:
+    """Keep known id/name from either pass; do not let an empty parse wipe a filled subject."""
+    ids: list[str] = []
+    for value in (*(old.get("ids") or []), old.get("id"), *(new.get("ids") or []), new.get("id")):
+        if value and value not in ids:
+            ids.append(value)
+    names: list[str] = []
+    for value in (*(old.get("names") or []), old.get("name"), *(new.get("names") or []), new.get("name")):
+        if value and value not in names:
+            names.append(value)
+    username = old.get("username") or new.get("username")
+    numeric = old.get("id") or new.get("id") or (ids[0] if ids else None)
+    name = old.get("name") or new.get("name")
+    merged = {**{k: v for k, v in new.items() if v}, **{k: v for k, v in old.items() if v}}
+    merged.update({"id": numeric, "ids": ids, "name": name, "names": names, "username": username})
+    return merged
+
+
+async def _ensure_subject(page: "Page", who: parse.Person, subject: dict, photos: list[dict]) -> dict:
+    """Fill a username-only subject from the profile page when the photos tab didn't name them."""
+    subject = parse.bind_subject_from_photos(subject or {}, photos)
+    if subject.get("name") and (subject.get("id") or subject.get("ids")):
+        return subject
+    profile_url = who.url
+    if not profile_url:
+        return subject
+    current = (page.url or "").rstrip("/")
+    if current != profile_url.rstrip("/"):
+        await fetch.open_fb(page, profile_url)
+    html = await page.evaluate(DOC_HTML_JS)
+    title = None
+    if hasattr(page, "title"):
+        try:
+            title = await page.title()
+        except TypeError:
+            title = page.title()
+        except Exception:
+            title = None
+    filled = parse.photo_subject(who, page.url, [], html, title)
+    return parse.bind_subject_from_photos(_merge_subject(subject, filled), photos)
+
+
 async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, since: str | None = None,
                       solo: bool = False, max_faces: int | None = None, headed: bool = False) -> dict:
     """Photos from the tab. With max_faces, each kept photo was counted on the downloaded image."""
@@ -306,7 +351,8 @@ async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, 
         tab_limit = None if not need_pages else min(PHOTO_MAX, max((limit or 20) * 10, 50))
         result = await _collect(page, person, mode=mode, limit=tab_limit if need_pages else limit,
                                 since=None if need_pages else since, solo=False)
-        subject = result["subject"]
+        subject = await _ensure_subject(page, person, result["subject"], result["photos"])
+        result["subject"] = subject
         candidates = result["photos"]
         photos = []
         if need_pages:
@@ -318,6 +364,8 @@ async def list_photos(who: dict, *, mode: str = "of", limit: int | None = None, 
                         raise
                     except (RuntimeError, ValueError, OSError):
                         continue
+                subject = parse.bind_subject_from_photos(subject, [photo])
+                result["subject"] = subject
                 if not _passes(photo, since, solo, subject):
                     continue
                 photos.append(photo)
@@ -412,7 +460,8 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
         tab_limit = None if not need_pages else min(PHOTO_MAX, max((limit or 20) * 10, 50))
         result = await _collect(page, person, mode=mode, limit=tab_limit if need_pages else limit,
                                 since=None if need_pages else since, solo=False)
-        subject = result["subject"]
+        subject = await _ensure_subject(page, person, result["subject"], result["photos"])
+        result["subject"] = subject
         entries: list[dict] = []
         kept_ids: list[str] = []
         for photo in result["photos"]:
@@ -464,6 +513,8 @@ async def download(who: dict, out_dir: str, *, mode: str = "of", limit: int | No
                 entries.append({**_entry(photo, file=None, size=0, kept=False, face_count=None), "error": str(exc)})
                 _save(manifest_path, result, entries, previous, max_faces, since, solo)
                 continue
+            subject = parse.bind_subject_from_photos(subject, [photo])
+            result["subject"] = subject
             if not _passes(photo, since, solo, subject):
                 continue
             if limit and len(kept_ids) >= limit:

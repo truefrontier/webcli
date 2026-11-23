@@ -316,12 +316,24 @@ def _title_name(title: str | None) -> str | None:
     return name if name and name.lower() not in ("facebook", "log in or sign up", "log into facebook", "log in to facebook") else None
 
 
+def _clean_profile_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    name = re.sub(r"^photos of\s+", "", name, flags=re.I).strip()
+    name = re.sub(r"['’]s photos$", "", name, flags=re.I).strip()
+    if name.casefold() in {"photos", "uploads", "facebook", "log in or sign up", "photos of", "albums"}:
+        return None
+    return name or None
+
+
 def profile_name(html: str, title: str | None = None) -> str | None:
-    main = find_main(build(html))
-    for h1 in main.iter("h1"):
-        if text := h1.text().strip():
-            return text
-    return _title_name(title)
+    """The person's display name: a real h1, else the document title. Tab labels like 'Photos of Jane' are cleaned."""
+    if html:
+        main = find_main(build(html))
+        for h1 in main.iter("h1"):
+            if cleaned := _clean_profile_name(h1.text().strip() or None):
+                return cleaned
+    return _clean_profile_name(_title_name(title))
 
 
 # --- Friends tab ---------------------------------------------------------------------------------
@@ -977,17 +989,63 @@ def _collect_user_ids(node, add, depth: int = 0) -> None:
             _collect_user_ids(value, add, depth + 1)
 
 
-def _clean_profile_name(name: str | None) -> str | None:
-    if not name:
+def _html_title(html: str | None) -> str | None:
+    if not html:
         return None
-    name = re.sub(r"^photos of\s+", "", name, flags=re.I).strip()
-    if name.casefold() in {"photos", "uploads", "facebook", "log in or sign up"}:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+    if not match:
         return None
-    return name
+    return re.sub(r"<[^>]+>", "", match.group(1)).strip() or None
 
 
-def photo_subject(who: Person, page_url: str, payloads: list, html: str | None) -> dict:
-    """Who the photos tab is about: the id we were given, else the one userID the page names, plus the h1 name."""
+def _username_of(node: dict) -> str | None:
+    username = node.get("username")
+    if isinstance(username, str) and username.strip():
+        return username.strip()
+    for key in ("url", "profile_url", "profileUrl"):
+        value = node.get(key)
+        if isinstance(value, str) and (person := person_from_url(value)) and person.username:
+            return person.username
+    return None
+
+
+def _ids_matching_username(username: str, payloads: list, html: str | None) -> list[str]:
+    """Numeric ids on User objects whose vanity or profile URL is this username."""
+    want = username.casefold()
+    found: list[str] = []
+
+    def consider(node) -> None:
+        if not isinstance(node, dict):
+            return
+        got = _username_of(node)
+        if not got or got.casefold() != want:
+            return
+        pid = str(node.get("id") or node.get("userID") or node.get("userId") or "")
+        if _FBID.match(pid) and pid not in found:
+            found.append(pid)
+
+    sources = list(payloads)
+    if html:
+        sources.append(html)
+    for payload in sources:
+        if isinstance(payload, str):
+            nodes = _json_values(payload)
+        else:
+            nodes = [payload]
+        for value in nodes:
+            for node in _walk_dicts(value):
+                consider(node)
+    return found
+
+
+def photo_subject(who: Person, page_url: str, payloads: list, html: str | None,
+                  title: str | None = None) -> dict:
+    """Who the photos are of: numeric id and display name for a username, vanity, URL, or id.
+
+    The id comes from the argument, a profile.php URL, or a User object whose vanity matches.
+    The name comes from the profile h1 or the page title. A lone userID on the page is used
+    only when the page names exactly one; a busy photos tab is not guessed.
+    """
     seen = person_from_url(page_url)
     found: list[str] = []
 
@@ -1011,14 +1069,18 @@ def photo_subject(who: Person, page_url: str, payloads: list, html: str | None) 
                 _collect_user_ids(value, add)
         else:
             _collect_user_ids(payload, add)
+    username = who.username or (seen.username if seen else None)
+    username_ids = _ids_matching_username(username, payloads, html) if username else []
     if who.numeric_id:
         match_ids = [who.numeric_id]
     elif seen and seen.numeric_id:
         match_ids = [seen.numeric_id]
+    elif len(username_ids) == 1:
+        match_ids = username_ids
     else:
         match_ids = found if len(found) == 1 else []
-    name = _clean_profile_name(profile_name(html, None) if html else None)
-    username = who.username or (seen.username if seen else None)
+    title = title or _html_title(html)
+    name = profile_name(html, title) if html else _clean_profile_name(_title_name(title))
     numeric = match_ids[0] if match_ids else None
     url_person = Person(username or numeric or who.key, username, numeric)
     return {
@@ -1030,6 +1092,33 @@ def photo_subject(who: Person, page_url: str, payloads: list, html: str | None) 
         "profileUrl": url_person.url if (username or numeric) else who.url,
         "key": username or numeric or who.key,
     }
+
+
+def bind_subject_from_photos(subject: dict, photos: list[dict]) -> dict:
+    """If the subject already has a display name, take a unique matching tag id as their numeric id."""
+    names = {(item or "").casefold() for item in (subject.get("names") or []) if item}
+    if subject.get("name"):
+        names.add(subject["name"].casefold())
+    ids = list(subject.get("ids") or [])
+    if subject.get("id") and subject["id"] not in ids:
+        ids.insert(0, subject["id"])
+    if not names:
+        return {**subject, "ids": ids}
+    matched: list[str] = []
+    for photo in photos:
+        for tag in photo.get("tags") or []:
+            tid = str(tag.get("id") or "")
+            tname = (tag.get("name") or "").strip()
+            if tname.casefold() in names and _FBID.match(tid) and tid not in matched:
+                matched.append(tid)
+    if len(matched) == 1 and matched[0] not in ids:
+        ids.append(matched[0])
+    numeric = subject.get("id")
+    if not numeric and len(matched) == 1:
+        numeric = matched[0]
+    elif not numeric and ids:
+        numeric = ids[0]
+    return {**subject, "id": numeric, "ids": ids}
 
 
 def _tag_is_subject(tag: dict, subject: dict) -> bool:

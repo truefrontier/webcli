@@ -131,6 +131,15 @@ class PhotoPage:
             return 1000 * self.scrolls
         raise AssertionError(f"unexpected page script: {script[:60]}")
 
+    async def title(self) -> str:
+        html = self.html()
+        start, end = html.lower().find("<title"), html.lower().find("</title>")
+        if start == -1 or end == -1:
+            return ""
+        inner = html[start:end]
+        gt = inner.find(">")
+        return inner[gt + 1:].strip() if gt != -1 else ""
+
 
 @pytest.fixture
 def photo_page(monkeypatch):
@@ -196,6 +205,44 @@ def test_solo_is_exactly_one_tag_and_it_is_the_subject():
     assert parse.is_solo(by_name, {"ids": [], "names": ["Jane Doe"], "username": None}) is True
     mismatch = {"tags": [{"id": "100001111111111", "name": "Jane Doe"}], "tagCount": 1}
     assert parse.is_solo(mismatch, {"id": JANE, "ids": [JANE], "names": ["Jane Doe"]}) is False
+
+
+def test_photo_subject_resolves_a_username_from_the_title_and_a_matching_profile_url():
+    """A username-only subject on a busy tab (many userIDs, no numeric id in the argument)."""
+    html = (
+        "<html><head><title>(3) Jane Doe | Facebook</title></head>"
+        '<div role="main"><h1>Photos of Jane Doe</h1></div>'
+        '<script type="application/json">{"userID":"111111111111111"}</script>'
+        '<script type="application/json">'
+        + json.dumps({"userID": "222222222222222", "__typename": "User", "id": JANE,
+                      "name": "Jane Doe", "url": f"{FB}/jane.doe"})
+        + "</script></html>"
+    )
+    who = parse.person_from_arg("jane.doe")
+    assert who.numeric_id is None
+    result = parse.photo_subject(who, f"{FB}/jane.doe/photos_of", [], html)
+    assert result["name"] == "Jane Doe"
+    assert result["id"] == JANE and result["ids"] == [JANE]
+    assert result["username"] == "jane.doe"
+    # title alone is enough for the name when there is no usable h1
+    titled = "<html><head><title>Jane Doe | Facebook</title></head><div role=\"main\"><h1>Photos</h1></div></html>"
+    named = parse.photo_subject(who, f"{FB}/jane.doe/photos_of", [], titled)
+    assert named["name"] == "Jane Doe" and named["id"] is None
+    # many userIDs and no vanity match: do not guess an id
+    busy = '<div role="main"></div><script>{"userID":"111111111111111"}</script><script>{"userID":"222222222222222"}</script>'
+    assert parse.photo_subject(who, f"{FB}/jane.doe/photos_of", [], busy)["ids"] == []
+
+
+def test_solo_binds_a_unique_tag_id_when_the_subject_only_has_a_name():
+    photo = {"tags": [{"id": JANE, "name": "Jane Doe", "username": None}], "tagCount": 1}
+    subject = {"id": None, "ids": [], "name": "Jane Doe", "names": ["Jane Doe"], "username": "jane.doe"}
+    assert parse.is_solo(photo, subject) is True
+    bound = parse.bind_subject_from_photos(subject, [photo])
+    assert bound["id"] == JANE and bound["ids"] == [JANE]
+    other = {"tags": [{"id": "100001111111111", "name": "Jane Doe"}], "tagCount": 1}
+    conflicted = parse.bind_subject_from_photos(subject, [photo, other])
+    assert conflicted["id"] is None and conflicted["ids"] == []
+    assert parse.is_solo(photo, conflicted) is True  # still matches by name
 
 
 def test_image_urls_drop_session_cookies_and_stay_on_the_cdn():
@@ -366,6 +413,46 @@ def test_list_reads_the_photos_of_tab_paginates_and_filters(photo_page):
                               headers={"x-fb-friendly-name": "CometPhotoRootQuery"},
                               post_data="fb_api_req_friendly_name=CometPhotoRootQuery&doc_id=1")
     assert policies[0].allowed(allowed, guard.Guard()) is True
+
+
+def test_list_solo_resolves_a_username_from_the_profile_when_the_tab_has_no_name(photo_page):
+    """Live photos tabs often have many userIDs and no h1; the profile page still has the name."""
+    tab_html = (
+        '<div role="main"><h1>Photos</h1></div>'
+        '<script type="application/json">'
+        + json.dumps({
+            "userID": "111111111111111",
+            "data": {"__typename": "Photo", "id": "9001001",
+                     "image": {"uri": FULL, "width": 8, "height": 8}},
+        })
+        + "</script>"
+        '<script type="application/json">{"userID":"222222222222222"}</script>'
+    )
+    profile_html = (
+        "<html><head><title>Jane Doe | Facebook</title></head>"
+        '<div role="main"><h1>Jane Doe</h1></div>'
+        '<script type="application/json">'
+        + json.dumps({"__typename": "User", "id": JANE, "name": "Jane Doe", "url": f"{FB}/jane.doe"})
+        + "</script></html>"
+    )
+    photo_html = (
+        '<div role="main"><h1>At the lake</h1></div>'
+        '<script type="application/json">'
+        + json.dumps({"__typename": "Photo", "id": "9001001",
+                      "image": {"uri": FULL, "width": 4096, "height": 3072},
+                      "tags": {"count": 1, "edges": [{"node": {"__typename": "User", "id": JANE,
+                                                               "name": "Jane Doe"}}]}})
+        + "</script>"
+    )
+    fake, _policies = photo_page({
+        photos_of_url(): tab_html,
+        f"{FB}/jane.doe": profile_html,
+        f"{FB}/photo/?fbid=9001001": photo_html,
+    })
+    result = asyncio.run(fetch.photos(WHO, solo=True, limit=1))
+    assert _ids(result) == ["9001001"]
+    assert result["subject"]["id"] == JANE and result["subject"]["name"] == "Jane Doe"
+    assert f"{FB}/jane.doe" in fake.visits
 
 
 def test_list_limit_stops_before_the_next_page_and_uploads_uses_photos_by(photo_page):

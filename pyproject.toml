@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-faces = ["opencv-python-headless>=4.8"]
+faces = ["opencv-python-headless>=4.8,<5"]
 
 [project.scripts]
 webcli = "webcli.apps.webcli:main"

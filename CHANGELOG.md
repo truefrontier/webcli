@@ -34,6 +34,11 @@ Live check (2026-11-22, a signed-in facebook:default session):
 - The photos-tab grid has no tags or created times. `--solo` and `--since` open each photo page and
   read `tags.edges[].node` (and typeless photo objects that still carry `image` + `tags`).
 - If a later scroll of the tab turns into Facebook's "isn't available" page, already parsed photos are kept.
+- `--solo` with a username, vanity, or profile URL looks up that person's numeric id and display name
+  (from the photos tab, the profile page, or a unique matching tag name) before comparing tags. A
+  username-only argument no longer misses photos whose tags carry the name but not the vanity.
+- The `[faces]` extra pins `opencv-python-headless` to `>=4.8,<5`. OpenCV 5.x removed
+  `cv2.CascadeClassifier`, which `--max-faces` uses.
 
 ### Changed
 
